@@ -102,6 +102,15 @@ else
   printf '提示: 未找到随插件附带的 skill 目录 %s，跳过安装。\n' "$SKILLS_SRC" >&2
 fi
 
+# Ship the reference personas next to the template: a fresh install should have
+# one worked example of 女娲 → SOUL.md instead of only an empty skeleton.
+PERSONAS_SRC="$SOURCE/personas"
+if [[ -d "$PERSONAS_SRC" ]]; then
+  mkdir -p "$PROFILE_HOME/personas"
+  cp -R "$PERSONAS_SRC/." "$PROFILE_HOME/personas/"
+  printf '已安装参考人格到: %s\n' "$PROFILE_HOME/personas"
+fi
+
 # Proactive beats: four daily check-ins (10/14/16/20) with a per-day ±60 minute
 # jitter. The monitor script keeps the agent asleep until a slot is actually
 # due, so the ticks that do not fire cost nothing.

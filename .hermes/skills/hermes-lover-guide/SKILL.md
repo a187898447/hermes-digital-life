@@ -58,6 +58,8 @@ hermes gateway list | grep "$P"
 
 这一步把人物 skill 变成 profile 能加载的人格文件。骨架用仓库里的 `personas/SOUL.template.md`，映射和常见坑见 `personas/README.md`。
 
+**参考样例**：`~/.hermes/profiles/<角色名>/personas/001-deepseek-xiaojingyu/` —— `SKILL.md` 是人物卡，`SOUL.md` 是同一人格的转译成稿。照结构（身份/镜片/启发式/DNA 正反例/反模式/边界），不要照抄它的群友语气。
+
 **输入**：源人物 skill（通常是 `~/.hermes/skills/personas/<名字>/SKILL.md`）、角色名（= profile 名）、一句关系设定、目标 profile（默认 `~/.hermes/profiles/<角色名>`，default profile 是 `~/.hermes`）。缺关系设定先问，不要替用户编。
 
 **步骤**：
