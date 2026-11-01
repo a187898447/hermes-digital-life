@@ -114,8 +114,10 @@ if [[ -f "$BEAT_SCRIPT" ]]; then
   if hermes -p "$PROFILE" cron create "*/5 9-21 * * *" "$BEAT_PROMPT" \
       --name hermes-lover-beat \
       --monitor-script "hermes-lover-beat.py" \
-      --deliver local >/dev/null; then
-    printf '已创建主动消息计划: 每天 10/14/16/20 点前后 60 分钟内随机触发一次\n'
+      --deliver local \
+      --paused --paused-reason "安装时默认停用，启用方法见 hermes-lover-guide 第 8 步" >/dev/null; then
+    printf '已创建主动消息计划（默认停用）: 每天 10/14/16/20 点前后 60 分钟内随机触发一次\n'
+    printf '启用方法: hermes -p %q cron resume <id>（先 cron list 取 id），详见 hermes-lover-guide\n' "$PROFILE"
   else
     printf '警告: 主动消息 cron 创建失败；稍后可手动创建。\n' >&2
   fi

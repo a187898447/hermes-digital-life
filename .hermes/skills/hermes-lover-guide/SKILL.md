@@ -38,7 +38,8 @@ hermes gateway list | grep "$P"
 | 4 | 按本文「转译流程」把草稿写成 `~/.hermes/profiles/<角色名>/SOUL.md` | SOUL.md 存在且 40–80 行 |
 | 5 | `hermes -p <角色名> hermes-lover status`；备份 `plugin-data/hermes-lover/data.db` | 返回激素/精力 JSON |
 | 6 | QQ：q.qq.com 建应用 → profile `.env` → `platforms.qqbot` → `hermes gateway restart` | `gateway list` 中该 profile served，私聊有回复 |
-| 7 | 主动消息默认已装 `hermes-lover-beat` 任务 | `cron list` 能看到，用户知道怎么暂停 |
+| 7 | 主动消息已随安装创建 `hermes-lover-beat` 任务（**默认暂停**） | `cron list` 能看到，状态 paused |
+| 8 | 用户确认后启用：`cron resume <id>` | 状态 active，用户知道怎么再关掉 |
 
 第 2 步的硬约束：**`install.sh` 拒绝已存在的 profile**，不要试图复用它去"重装"。
 
@@ -87,7 +88,7 @@ hermes gateway list | grep "$P"
 
 ## 子流程 D：主动消息
 
-默认已经装好：profile 里有一个 `hermes-lover-beat` 的 cron 任务，每天 10/14/16/20 前后 ±60 分钟内随机触发一次；模型按人格 + 最近记忆 + 当前状态写一句，用 `send_message` 发到 `QQBOT_HOME_CHANNEL`。没接通 QQ 就什么都不发。
+安装时创建 `hermes-lover-beat` 任务，但**默认暂停**，不会自己发消息。启用后每天 10/14/16/20 前后 ±60 分钟内随机触发一次；模型按人格 + 最近记忆 + 当前状态写一句，用 `send_message` 发到 `QQBOT_HOME_CHANNEL`。没接通 QQ 就什么都不发。
 
 - **不是技能触发**：定时靠 cron，会话关掉也会运行；monitor 门控保证只有到点那次才唤醒模型。
 - **查看 / 暂停 / 删除**：
@@ -101,6 +102,21 @@ hermes -p <p> cron remove <id>
 - **改时间**：编辑 `<profile>/scripts/hermes-lover-beat.py` 顶部的 `SLOTS`，或改 cron 表达式（默认 `*/5 9-21 * * *`）。
 - **`proactive-agent` 只是方法论技能**，不发消息；要用先复制进该 profile：`cp -R ~/.hermes/skills/openclaw-imports/proactive-agent ~/.hermes/profiles/<p>/skills/`。
 - 动开关前和用户确认：谁能收到、每天几条、静默时段；默认四个点就是上限，不要自动加。
+
+## 最后一步：启用主动消息
+
+任务在安装时是暂停状态。等 QQ 已接通、`QQBOT_HOME_CHANNEL` 已设好、其他步骤都验证过，再问用户：
+
+> 主动消息现在是暂停的。要开启吗？开启后每天 10/14/16/20 前后一小时内随机一次，它会按人格主动发一句。
+
+用户同意后：
+
+```bash
+hermes -p <p> cron list          # 确认 hermes-lover-beat 状态是 paused
+hermes -p <p> cron resume <id>
+```
+
+启用后想停：`hermes -p <p> cron pause <id>`。**用户没明确同意前不要 resume。**
 
 手动加更多时间点仍然可以（例如自定义一个每天 9 点的任务）：
 
