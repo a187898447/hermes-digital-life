@@ -43,22 +43,25 @@ hermes gateway list | grep "$P"
 
 按结果定位到下面的某一步，只讲那一步。
 
-## 主流程（顺序固定，不能跳）
+## 前置条件（不是步骤）
 
-| 步骤 | 动作 | 完成判据 |
+- profile 已存在，且 `plugins` 里启用了 `hermes-lover`。
+- 模型凭证能正常对话；不能对话就先 `hermes -p <角色名> setup`。
+- 缺哪条就补哪条，补完直接进第 1 步，不要把它编成新步骤。
+
+## 主流程（五步，顺序固定，不能跳）
+
+| 步 | 动作 | 完成判据 |
 |---|---|---|
-| 1 | 女娲造人格草稿：`~/.hermes/skills/personas/huashu-nuwa` | 有一个 `SKILL.md` 人物 skill |
-| 2 | `./install.sh --mode local --profile <角色名>` | `plugins list` 显示 hermes-lover enabled |
-| 3 | `hermes -p <角色名> setup`（**用户自己做**，不要代填密钥） | 能正常对话 |
-| 4 | 人格落地：直接用 001 参考人格，或按「转译流程」把草稿写成 `~/.hermes/profiles/<角色名>/SOUL.md` | SOUL.md 存在且 40–80 行 |
-| 5 | `hermes -p <角色名> hermes-lover status`；备份 `plugin-data/hermes-lover/data.db` | 返回激素/精力 JSON |
-| 6 | QQ：q.qq.com 建应用 → profile `.env` → `platforms.qqbot` → `hermes gateway restart` | `gateway list` 中该 profile served，私聊有回复 |
-| 7 | 主动消息已随安装创建 `hermes-lover-beat` 任务（**默认暂停**） | `cron list` 能看到，状态 paused |
-| 8 | 用户确认后启用：`cron resume <id>` | 状态 active，用户知道怎么再关掉 |
+| 1 | 人格落地：001 参考人格，或按「转译流程」写 `~/.hermes/profiles/<角色名>/SOUL.md` | SOUL.md 存在且非默认模板，40–80 行 |
+| 2 | `hermes -p <角色名> hermes-lover status`；备份 `plugin-data/hermes-lover/data.db` | 返回激素/精力 JSON，备份文件存在 |
+| 3 | QQ：q.qq.com 建应用 → profile `.env` → `platforms.qqbot` → `hermes gateway restart` | `gateway list` 中该 profile served，私聊有回复 |
+| 4 | 确认安装器已建好 `hermes-lover-beat`（默认 paused） | `cron list` 能看到，状态 paused |
+| 5 | 用户确认后启用：先把 Deliver 改成目标，再 `cron resume <id>` | 状态 active，用户知道怎么再关掉 |
 
-第 2 步的硬约束：**`install.sh` 拒绝已存在的 profile**，不要试图复用它去"重装"。
+前置的硬约束：**`install.sh` 拒绝已存在的 profile**，不要试图复用它去"重装"。
 
-第 1 步可以整步跳过：第 4 步选「001 参考人格」时直接产出 SOUL.md，不需要女娲草稿。
+人格就是第 1 步；用户没有女娲草稿就直接走 001 分支，不需要先补草稿。
 
 ## 提问规则（clarify）
 
@@ -66,10 +69,10 @@ hermes gateway list | grep "$P"
 - **禁止把问题 JSON 打进正文**：不要输出 `[{'qid': ...}]` 这类东西，也不要自己编 `qid`、`choices_offered` 字段——那些是宿主生成的。正文里出现 JSON，说明你根本没调用工具，用户也看不到选项按钮。
 - 如果 `clarify` 调用失败或界面没渲染出按钮，才退回普通文字：一行问题，选项写成 `1.` `2.` `3.`，然后停下等。
 - 先自己查：跑完「第一步：先查状态」，能自己确认的不要问用户。
-- 严格按主流程顺序：SOUL.md 落盘之前不要问 QQ 绑定、定时消息、投递方式——那些是第 6–8 步的事。
+- 严格按主流程顺序：SOUL.md 落盘之前不要问 QQ 绑定、定时消息、投递方式——那些是第 3–5 步的事。
 - 人格只问一个问题，三选一（用 `clarify`，`choices` 就是这三项）：
   `["直接用 001 号参考人格（小鲸鱼 · QQ 群友版）", "我有女娲草稿，帮我转译", "还没有，帮我先造一份"]`
-  - 选 001：按「选项：001 号参考人格」复制 SOUL.md，不要转译，然后跳到第 5 步。
+  - 选 001：按「选项：001 号参考人格」复制 SOUL.md，不要转译，然后跳到第 2 步。
   - 选草稿：走「转译流程」。选"先造"：先按女娲造草稿，再转译。
   - **不要用"温柔陪伴/理性参谋"这种菜单代替草稿**；列出女娲仓库里的现成人物时直接说名字（来自 `~/workSpace/nuwa-skill/examples/`），不要给整份 JSON。
 - 不要问"你有没有文件权限"。工具用不了，先按「疑难：Studio 里工具不全」排查；不要编造 `cua-driver` 之类不存在的方案，也不要让用户手动改权限。

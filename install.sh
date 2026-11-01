@@ -133,7 +133,7 @@ if [[ -f "$BEAT_SCRIPT" ]]; then
       --name hermes-lover-beat \
       --monitor-script "hermes-lover-beat.py" \
       --deliver local \
-      --paused --paused-reason "安装时默认停用，启用方法见 hermes-lover-guide 第 8 步" >/dev/null; then
+      --paused --paused-reason "安装时默认停用，启用方法见 hermes-lover-guide 最后一步" >/dev/null; then
     printf '已创建主动消息计划（默认停用）: 每天 10/14/16/20 点前后 60 分钟内随机触发一次\n'
     printf '启用方法: 先把 Deliver 改成你的 QQ，再 resume；步骤见 hermes-lover-guide 最后一步\n'
   else
