@@ -86,6 +86,22 @@ fi
 hermes -p "$PROFILE" plugins enable "$PLUGIN_NAME"
 hermes -p "$PROFILE" plugins doctor "$PLUGIN_NAME" --ci
 
+# Ship the bundled skills (onboarding guide + persona-forge) as profile-local
+# skills so the new agent can walk the user through setup, personas, QQ binding
+# and message delivery itself, and can translate 女娲 output into SOUL.md.
+SKILLS_SRC="$SOURCE/.hermes/skills"
+if [[ -d "$SKILLS_SRC" ]]; then
+  for skill_dir in "$SKILLS_SRC"/*/; do
+    [[ -f "$skill_dir/SKILL.md" ]] || continue
+    skill_name="$(basename "$skill_dir")"
+    mkdir -p "$PROFILE_HOME/skills/$skill_name"
+    cp "$skill_dir/SKILL.md" "$PROFILE_HOME/skills/$skill_name/SKILL.md"
+  done
+  printf '已安装随插件附带的 skill 到: %s\n' "$PROFILE_HOME/skills"
+else
+  printf '提示: 未找到随插件附带的 skill 目录 %s，跳过安装。\n' "$SKILLS_SRC" >&2
+fi
+
 if ((CONFIGURE == 1)); then
   hermes -p "$PROFILE" setup
 else
@@ -94,4 +110,5 @@ fi
 
 printf '\n验证状态读取：\n  hermes -p %q hermes-lover status\n' "$PROFILE"
 printf '后续独立会话：\n  hermes -p %q chat\n' "$PROFILE"
+printf '首次使用让 agent 引导你：\n  hermes -p %q chat  然后说「用 hermes-lover-guide 引导我配置」\n' "$PROFILE"
 printf '\n注意：这是独立 Hermes profile，不是 delegate_task 子 agent。插件状态/记忆与主 profile 分开；宿主用户级 HOME 凭证仍按 Hermes 默认策略共享。\n'
