@@ -1,0 +1,21 @@
+name: digital-life
+version: "0.1.0"
+description: "Generic digital-life runtime for Hermes: persistent affect, memory affinity, and bounded reflection."
+author: pengyu
+license: MIT
+requires_hermes: ">=0.22"
+kind: standalone
+config_schema:
+  dream_enabled: {type: bool, default: false, description: "Enable scheduled private reflection"}
+  dream_cron: {type: str, default: "0 3 * * *", description: "Dream schedule when enabled"}
+  proactive_enabled: {type: bool, default: false, description: "Enable proactive delivery"}
+  quiet_hours: {type: list, default: [23, 8], description: "Local quiet-hour start/end"}
+  daily_message_limit: {type: int, default: 2, description: "Maximum proactive messages per local day"}
+  delivery_platform: {type: str, default: "", description: "Hermes delivery platform"}
+  delivery_chat_id: {type: str, default: "", description: "Operator-configured destination identifier"}
+provides_tools:
+  - digital_life_status
+provides_hooks:
+  - post_tool_call
+  - post_llm_call
+  - api_request_error

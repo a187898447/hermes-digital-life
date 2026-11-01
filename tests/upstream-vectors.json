@@ -1,0 +1,16 @@
+{
+  "upstream": "digital-life-core",
+  "revision": "d984665ff2e452cf9f57d845cfb93bfb9a64b6b1",
+  "node": "26.12.1",
+  "decayToward": [70, 21.715728752538098, 27.5],
+  "normalizeTemperament": [
+    {"sensitivity": 1, "resilience": 1, "enthusiasm": 50, "metabolism": 1},
+    {"sensitivity": 2, "resilience": 0.5, "enthusiasm": 20, "metabolism": 1},
+    {"sensitivity": 1.25, "resilience": 1.5, "enthusiasm": 65, "metabolism": 0.75}
+  ],
+  "settleRest": [
+    {"energy": 28, "sleepMs": 1200000, "mode": "deep-sleep"},
+    {"energy": 52, "sleepMs": 0, "mode": "awake"},
+    {"energy": 99, "sleepMs": 0, "mode": "sated"}
+  ]
+}
