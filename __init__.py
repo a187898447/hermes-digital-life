@@ -97,9 +97,10 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
                 last = None
             if last is not None:
                 rewritten[user_index] = last
-                result["messages"] = rewritten
                 changed = True
-        if not changed:
+        if changed:
+            result["messages"] = rewritten
+        else:
             return None
         return {"request": result, "source": "digital-life", "reason": "per-request affect context"}
     api_input = request.get("input")
@@ -126,9 +127,9 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
                 last = None
             if last is not None:
                 rewritten[user_index] = last
-                result["input"] = rewritten
                 changed = True
     if changed:
+        result["input"] = rewritten
         return {"request": result, "source": "digital-life", "reason": "per-request affect context"}
     return None
 

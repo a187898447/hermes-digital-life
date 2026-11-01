@@ -224,6 +224,20 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(result["request"]["temperature"], 0.4)
         self.assertTrue(result["request"]["messages"][0]["content"].endswith("[affect]"))
 
+    def test_reorder_is_kept_when_last_user_content_is_not_text_block(self):
+        request = {
+            "messages": [
+                {"role": "system", "content": "original system text"},
+                {"role": "user", "content": {"type": "image_url", "image_url": "x"}},
+            ]
+        }
+        with patch.object(plugin.digital_life.runtime, "reorder_prompt_memories", return_value=("SYSTEM-REORDERED", 1)), \
+                patch.object(plugin.digital_life.runtime, "affect_note", return_value="[affect]"), \
+                patch.object(plugin.digital_life.runtime, "record_request"):
+            result = plugin._affect_request(request)
+        self.assertIsNotNone(result)
+        self.assertEqual(result["request"]["messages"][0]["content"], "SYSTEM-REORDERED")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -274,11 +274,16 @@ def reorder_formatted_memory_blocks(prompt: str, cortisol: float, dopamine: floa
         r"\[[^\]\n]*? (?P<used>[0-9,]+)/[0-9,]+ chars\]\n═{46}\n"
     )
     spans = []
+    last_end = 0
     for match in pattern.finditer(prompt):
+        if match.start() < last_end:
+            # A header-like line nested inside an entry must not extend the outer span.
+            continue
         units = int(match.group("used").replace(",", ""))
         end = _utf16_end(prompt, match.end(), units)
         if end is None:
             continue
+        last_end = end
         body = prompt[match.end():end]
         entries = body.split("\n§\n")
         ranked = rank_memories(entries, cortisol, dopamine)

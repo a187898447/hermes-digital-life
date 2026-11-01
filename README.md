@@ -4,24 +4,7 @@ This is a generic, independently installable Hermes standalone plugin. It does n
 
 Install the repository into the target Hermes home as `plugins/digital-life/`, then enable it with `hermes plugins enable digital-life`. It is opt-in. Requires Hermes `>=0.22` and a Python runtime with the host's plugin APIs.
 
-The manifest declares these optional settings under `plugins.entries.digital-life.settings`:
-
-```yaml
-plugins:
-  enabled: [digital-life]
-  entries:
-    digital-life:
-      settings:
-        dream_enabled: false
-        dream_cron: "0 3 * * *"
-        proactive_enabled: false
-        quiet_hours: [23, 8]
-        daily_message_limit: 2
-        delivery_platform: ""
-        delivery_chat_id: ""
-```
-
-Schedules and delivery remain disabled by default. These settings are reserved until those workflows are implemented; they do not start jobs or send messages in this release.
+This release reads no plugin settings: there is no `settings` block to configure. Scheduled reflection is created explicitly through the `dream-reflection` automation blueprint, and delivery is not implemented, so no job starts and no message is sent from configuration.
 
 Uninstall with `hermes plugins disable digital-life` followed by `hermes plugins remove digital-life`. Plugin removal leaves profile data under `plugin-data/digital-life/`; handle that directory separately if deleting the saved state is desired.
 

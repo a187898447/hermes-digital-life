@@ -134,6 +134,36 @@ class MemoryAffinityTests(unittest.TestCase):
         for entry in entries:
             self.assertEqual(rewritten.count(entry), 1)
 
+    def test_nested_header_inside_an_entry_does_not_extend_the_span(self):
+        separator = "═" * 46
+        nested_body = "tail-of-tail"
+        nested = (
+            f"{separator}\nMEMORY (your personal notes) [1% — {len(nested_body)}/2200 chars]\n"
+            f"{separator}\n{nested_body}"
+        )
+        entries = ["日常：周末吃了蛋糕", "危机：服务器发生故障\n" + nested]
+        body = "\n§\n".join(entries)
+        prompt = (
+            f"{separator}\nMEMORY (your personal notes) [1% — "
+            f"{len(body.encode('utf-16-le')) // 2}/2200 chars]\n{separator}\n{body}"
+        )
+        rewritten, blocks = reorder_formatted_memory_blocks(prompt, cortisol=90, dopamine=50)
+        self.assertEqual(blocks, 1)
+        for entry in entries:
+            self.assertEqual(rewritten.count(entry), 1)
+        self.assertEqual(rewritten.count(nested_body), 1)
+
+    def test_declared_length_mismatch_leaves_the_prompt_untouched(self):
+        separator = "═" * 46
+        body = "日常：周末吃了蛋糕"
+        prompt = (
+            f"{separator}\nMEMORY (your personal notes) [1% — "
+            f"{len(body) + 1}/2200 chars]\n{separator}\n{body}"
+        )
+        rewritten, blocks = reorder_formatted_memory_blocks(prompt, cortisol=90, dopamine=50)
+        self.assertEqual(blocks, 0)
+        self.assertEqual(rewritten, prompt)
+
 
 if __name__ == "__main__":
     unittest.main()
