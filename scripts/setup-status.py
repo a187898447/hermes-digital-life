@@ -93,13 +93,9 @@ def main() -> int:
             return False
 
     qq_ok = qq_key_present(pdir / ".env")
-    if qq_ok:
-        qq_detail = ".env 有 QQ_APP_ID"
-    elif qq_key_present(hermes_home() / ".env"):
-        qq_detail = "default profile 已有 QQ 机器人凭证，复制过来即可（无需新建应用）"
-    else:
-        qq_detail = "profile .env 里没有 QQ_APP_ID"
-    rows.append(("QQ 凭证", qq_ok, qq_detail))
+    rows.append(("QQ 绑定（扫码）", qq_ok,
+                 ".env 有 QQ_APP_ID" if qq_ok
+                 else "跑 `hermes -p <角色名> gateway setup`，平台选 QQ Bot 扫码"))
 
     # Steps 4-5: the paused beat job exists, and whether the operator enabled it.
     beat, beat_active = None, False
