@@ -177,8 +177,8 @@ def register(ctx) -> None:
     ctx.register_hook("post_tool_call", _post_tool_call)
     ctx.register_middleware("llm_request", _affect_request)
     ctx.register_cli_command(
-        name="digital-life",
-        help="Inspect and control digital-life state",
+        name="hermes-lover",
+        help="Inspect and control hermes-lover digital-life state",
         setup_fn=setup_parser,
         handler_fn=run_command,
     )

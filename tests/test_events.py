@@ -157,7 +157,7 @@ class RegistrationTests(unittest.TestCase):
         ctx = RecordingContext()
         plugin.register(ctx)
         self.assertEqual([entry["name"] for entry in ctx.tools], ["digital_life_status"])
-        self.assertEqual([entry["name"] for entry in ctx.cli], ["digital-life"])
+        self.assertEqual([entry["name"] for entry in ctx.cli], ["hermes-lover"])
         self.assertEqual({kind for kind, _ in ctx.middleware}, {"llm_request"})
         self.assertEqual(ctx.blueprints[0][0], ("dream-reflection",))
         self.assertEqual(ctx.blueprints[0][1]["deliver_default"], "local")

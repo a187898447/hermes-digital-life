@@ -17,7 +17,7 @@ For upgrades, back up the target profile's `plugin-data/hermes-lover/` directory
 - Profile-scoped SQLite life state using Hermes `plugin_db()`.
 - Read-only `digital_life_status` tool and per-provider-request affect middleware.
 - Lossless memory affinity ranking helpers.
-- Operator CLI: `hermes digital-life status|stop|resume|resolve-gap <id>`.
+- Operator CLI: `hermes hermes-lover status|stop|resume|resolve-gap <id>`.
 
 No model-callable tool mutates life state or accepts user-supplied hormone/energy values. Fixed plugin rules respond only to host-observed provider requests, completed turns, transient errors, search results, and elapsed time. Operator stop/resume and gap closure require typing an explicit confirmation. No cron job is installed automatically; the optional “Quiet digital-life reflection” blueprint creates a local-only scheduled turn when an operator chooses it. Proactive delivery and gateway injection remain disabled: Hermes deliberately does not expose `send_message` as a model tool, and automated delivery needs a persisted wake claim/recipient policy that this release does not yet implement.
 

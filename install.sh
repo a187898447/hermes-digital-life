@@ -11,7 +11,7 @@ usage() {
   local   将当前仓库或 --source 指定的工作树链接到新 profile。
   remote  在新 profile 中通过 Hermes 插件管理器从 Git URL 安装。
 
-默认 profile 名: digital-life
+默认 profile 名: hermes-lover
 不会克隆、改写或删除现有 profile、主 agent 配置、密钥或记忆。
 EOF
 }
@@ -19,7 +19,7 @@ EOF
 fail() { printf '错误: %s\n' "$*" >&2; exit 1; }
 
 MODE=""
-PROFILE="digital-life"
+PROFILE="hermes-lover"
 SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO=""
 REF=""
@@ -92,6 +92,6 @@ else
   printf '\n插件 profile 已创建并启用。首次运行前配置模型/API 凭证：\n  hermes -p %q setup\n' "$PROFILE"
 fi
 
-printf '\n验证状态读取：\n  hermes -p %q digital-life status\n' "$PROFILE"
+printf '\n验证状态读取：\n  hermes -p %q hermes-lover status\n' "$PROFILE"
 printf '后续独立会话：\n  hermes -p %q chat\n' "$PROFILE"
 printf '\n注意：这是独立 Hermes profile，不是 delegate_task 子 agent。插件状态/记忆与主 profile 分开；宿主用户级 HOME 凭证仍按 Hermes 默认策略共享。\n'
