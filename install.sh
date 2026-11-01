@@ -102,6 +102,25 @@ else
   printf '提示: 未找到随插件附带的 skill 目录 %s，跳过安装。\n' "$SKILLS_SRC" >&2
 fi
 
+# Proactive beats: four daily check-ins (10/14/16/20) with a per-day ±60 minute
+# jitter. The monitor script keeps the agent asleep until a slot is actually
+# due, so the ticks that do not fire cost nothing.
+BEAT_SCRIPT="$SOURCE/scripts/hermes-lover-beat.py"
+if [[ -f "$BEAT_SCRIPT" ]]; then
+  mkdir -p "$PROFILE_HOME/scripts"
+  cp "$BEAT_SCRIPT" "$PROFILE_HOME/scripts/hermes-lover-beat.py"
+  chmod +x "$PROFILE_HOME/scripts/hermes-lover-beat.py"
+  BEAT_PROMPT='这是 hermes-lover 的主动联系触发点，监控输出里的 FIRE 标记表示刚刚到点（MORNING 上午 / MIDDAY 午后 / AFTERNOON 傍晚前 / NIGHT 夜里）。按顺序做：1) 读当前 profile 的 SOUL.md 人格；2) 参考最近记忆与 hermes-lover 当前状态（激素、精力、gap）；3) 结合此刻时间段，用这个人物的口吻写一句话（不超过 40 字，像他/她真的会主动发的那一句；不报状态数字，不客套，不重复最近发过的内容）；4) 用 send_message 发到 QQBOT_HOME_CHANNEL。若拿不到可用的发送渠道，就什么都不发，直接结束。'
+  if hermes -p "$PROFILE" cron create "*/5 9-21 * * *" "$BEAT_PROMPT" \
+      --name hermes-lover-beat \
+      --monitor-script "hermes-lover-beat.py" \
+      --deliver local >/dev/null; then
+    printf '已创建主动消息计划: 每天 10/14/16/20 点前后 60 分钟内随机触发一次\n'
+  else
+    printf '警告: 主动消息 cron 创建失败；稍后可手动创建。\n' >&2
+  fi
+fi
+
 if ((CONFIGURE == 1)); then
   hermes -p "$PROFILE" setup
 else
