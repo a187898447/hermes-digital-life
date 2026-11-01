@@ -123,6 +123,23 @@ if [[ -f "$BEAT_SCRIPT" ]]; then
   fi
 fi
 
+# `hermes profile create` drops a generic alias wrapper that forwards straight
+# to the host CLI, which makes `hermes-lover status` print Hermes' own status.
+# Route the plugin's operator verbs back to the plugin command; keep chat etc.
+WRAPPER="$HOME/.local/bin/$PROFILE"
+if [[ -d "$(dirname "$WRAPPER")" ]]; then
+  HERMES_BIN="$(command -v hermes)"
+  cat > "$WRAPPER" <<EOF
+#!/bin/sh
+case "\${1:-}" in
+  status|stop|resume|resolve-gap) exec "$HERMES_BIN" -p $PROFILE $PLUGIN_NAME "\$@" ;;
+  *) exec "$HERMES_BIN" -p $PROFILE "\$@" ;;
+esac
+EOF
+  chmod +x "$WRAPPER"
+  printf '已更新命令包装: %s（hermes-lover status 等走插件命令）\n' "$WRAPPER"
+fi
+
 if ((CONFIGURE == 1)); then
   hermes -p "$PROFILE" setup
 else
