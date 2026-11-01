@@ -40,6 +40,8 @@ done
 
 [[ "$MODE" == local || "$MODE" == remote ]] || { usage >&2; fail "必须指定 --mode local 或 --mode remote"; }
 command -v hermes >/dev/null 2>&1 || fail "找不到 hermes 命令，请先安装 Hermes。"
+PLUGIN_NAME="$(sed -n 's/^name:[[:space:]]*//p' "$SOURCE/plugin.yaml" | head -n1)"
+[[ -n "$PLUGIN_NAME" ]] || fail "无法从 plugin.yaml 读取插件名: $SOURCE/plugin.yaml"
 [[ "$PROFILE" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]] || fail "profile 名称须以小写字母/数字开头，只含小写字母、数字、下划线和连字符，最长 64 字符。"
 
 if hermes profile show "$PROFILE" >/dev/null 2>&1; then
@@ -68,7 +70,7 @@ CREATED=1
 PROFILE_HOME="$(hermes profile show "$PROFILE" | sed -n 's/^Path:[[:space:]]*//p')"
 [[ -n "$PROFILE_HOME" ]] || fail "无法从 Hermes 解析新 profile 的路径。"
 if [[ "$MODE" == local ]]; then
-  PLUGIN_HOME="$PROFILE_HOME/plugins/digital-life"
+  PLUGIN_HOME="$PROFILE_HOME/plugins/$PLUGIN_NAME"
   mkdir -p "$(dirname "$PLUGIN_HOME")"
   [[ ! -e "$PLUGIN_HOME" ]] || fail "插件目标已存在: $PLUGIN_HOME"
   ln -s "$(cd "$SOURCE" && pwd)" "$PLUGIN_HOME"
@@ -81,8 +83,8 @@ else
   fi
 fi
 
-hermes -p "$PROFILE" plugins enable digital-life
-hermes -p "$PROFILE" plugins doctor digital-life --ci
+hermes -p "$PROFILE" plugins enable "$PLUGIN_NAME"
+hermes -p "$PROFILE" plugins doctor "$PLUGIN_NAME" --ci
 
 if ((CONFIGURE == 1)); then
   hermes -p "$PROFILE" setup

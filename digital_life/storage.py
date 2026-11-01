@@ -7,7 +7,7 @@ from typing import Any
 
 from plugins.plugin_storage import plugin_db
 
-PLUGIN_NAME = "digital-life"
+PLUGIN_NAME = "hermes-lover"
 STATE_ID = "life-state"
 MAX_STATE_BYTES = 512 * 1024
 
@@ -72,7 +72,7 @@ def update_state(now_ms: float, mutate) -> dict[str, Any]:
 def _write_unlocked(conn, state: dict[str, Any], now_ms: float) -> None:
     payload = json.dumps(state, ensure_ascii=False, separators=(",", ":"))
     if len(payload.encode("utf-8")) > MAX_STATE_BYTES:
-        raise ValueError("digital-life state exceeds its storage limit")
+        raise ValueError("hermes-lover state exceeds its storage limit")
     conn.execute(
         "INSERT INTO life_state(id, payload, updated_at) VALUES(?, ?, ?) "
         "ON CONFLICT(id) DO UPDATE SET payload=excluded.payload, updated_at=excluded.updated_at",

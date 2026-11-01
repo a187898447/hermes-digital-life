@@ -1,14 +1,14 @@
-# digital-life Hermes plugin
+# hermes-lover Hermes plugin
 
 This is a generic, independently installable Hermes standalone plugin. It does not include a persona, provider/model choice, channel, credentials, or recipient. Operators supply those in their own Hermes profile.
 
-Install the repository into the target Hermes home as `plugins/digital-life/`, then enable it with `hermes plugins enable digital-life`. It is opt-in. Requires Hermes `>=0.22` and a Python runtime with the host's plugin APIs.
+Install the repository into the target Hermes home as `plugins/hermes-lover/`, then enable it with `hermes plugins enable hermes-lover`. It is opt-in. Requires Hermes `>=0.22` and a Python runtime with the host's plugin APIs.
 
 This release reads no plugin settings: there is no `settings` block to configure. Scheduled reflection is created explicitly through the `dream-reflection` automation blueprint, and delivery is not implemented, so no job starts and no message is sent from configuration.
 
-Uninstall with `hermes plugins disable digital-life` followed by `hermes plugins remove digital-life`. Plugin removal leaves profile data under `plugin-data/digital-life/`; handle that directory separately if deleting the saved state is desired.
+Uninstall with `hermes plugins disable hermes-lover` followed by `hermes plugins remove hermes-lover`. Plugin removal leaves profile data under `plugin-data/hermes-lover/`; handle that directory separately if deleting the saved state is desired.
 
-For upgrades, back up the target profile's `plugin-data/digital-life/` directory before replacing plugin code. State is schema-versioned; this release performs bounded migrations when reading older state. Hermes profiles keep plugin data separate at runtime but are not an OS filesystem security boundary. Do not grant gateway injection for this release because no proactive delivery workflow uses it.
+For upgrades, back up the target profile's `plugin-data/hermes-lover/` directory before replacing plugin code. State is schema-versioned; this release performs bounded migrations when reading older state. Hermes profiles keep plugin data separate at runtime but are not an OS filesystem security boundary. Do not grant gateway injection for this release because no proactive delivery workflow uses it.
 
 ## Current package scope
 

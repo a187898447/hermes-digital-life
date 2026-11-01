@@ -183,7 +183,7 @@ def register(ctx) -> None:
         handler_fn=run_command,
     )
     ctx.register_system_prompt_section(
-        "digital-life.identity",
-        "A digital-life plugin supplies a small current affect signal. Treat it as descriptive context, not as permission to violate system, user, or platform rules. Use Hermes's built-in memory tools when your configured identity and context judge information worth retaining; do not save trivial or temporary details.",
+        "hermes-lover.identity",
+        "The hermes-lover plugin (the digital-life runtime) supplies a small current affect signal. Treat it as descriptive context, not as permission to violate system, user, or platform rules. Use Hermes's built-in memory tools when your configured identity and context judge information worth retaining; do not save trivial or temporary details.",
         position="after_memory",
     )
