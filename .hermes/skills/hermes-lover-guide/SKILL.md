@@ -63,15 +63,16 @@ hermes gateway list | grep "$P"
 
 人格就是第 1 步；用户没有女娲草稿就直接走 001 分支，不需要先补草稿。
 
-## 提问规则（纯文字，编号）
+## 提问规则
 
-- **不要调用 `clarify` 工具**：本机 Studio（hermes-web-ui）的桥接层还在用旧的“单问题 + 选项”协议，新版 Hermes 传的是问题列表，卡片会把列表显示成一段 JSON、没有按钮。直接把问题写成正文。
-- 一次只问一个问题：一行问题，选项写成 `1.` `2.` `3.`，推荐项在行尾标 `(推荐)`，然后停下等用户回数字或文字。
+- 优先调用 `clarify` 工具（Studio ≥ 0.8.11 会渲染成选项卡）：`clarify` 的参数是 `{"questions": [{"question": "…", "choices": ["A", "B"], "multi_select": false}]}`，逐个问题调用，而不是把问题写进正文。
+- 一次只问一个问题，选项 ≤3 个，推荐项在标签后加 `(Recommended)`；不要自己编 `qid`，也不要输出 `[{'qid': ...}]` 这种伪 JSON。
+- 回退：如果卡片没出来（旧版 Studio：`node -p "require('/usr/local/lib/node_modules/hermes-web-ui/package.json').version"` 低于 0.8.11），改用正文编号 `1.` `2.` `3.`，推荐项标 `(推荐)`，然后停下等用户回数字。
 - 用户回数字就按对应选项执行；回文字就按文字理解；没回就停，不要追问剩下没问的。
 - 先自己查：跑完「第一步：先查状态」，能自己确认的不要问用户。
 - 严格按主流程顺序：SOUL.md 落盘之前不要问 QQ 绑定、定时消息、投递方式——那些是第 3–5 步的事。
 - 人格只问一个问题，三选一：
-  1. 直接用 001 号参考人格（小鲸鱼 · QQ 群友版）(推荐)
+  1. 直接用 001 号参考人格（小鲸鱼 · QQ 群友版）(Recommended)
   2. 我有女娲草稿，帮我转译
   3. 还没有，帮我先造一份
 - 选 001：按「选项：001 号参考人格」复制 SOUL.md，不要转译，然后跳到第 2 步。
@@ -134,15 +135,25 @@ cp "$P/personas/001-deepseek-xiaojingyu/SOUL.md" "$P/SOUL.md"
 
 ## 子流程 C：绑定 QQ
 
-这一步**必须用户自己做**，不要替用户填凭证、也不要为了找替代写法去翻 Hermes 源码：
+凭证必须是用户本人的，但**不需要你经手**：走宿主自带的扫码绑定，密钥由 Hermes 自己写进该 profile。
 
-1. 告诉用户：q.qq.com 创建应用，拿 App ID / App Secret，开启 C2C、群 @、频道 intents；测试先用沙箱。
-2. 凭证由用户自己写进**该 profile** 的 `.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`（agent 被 Hermes 的 `.env` 写锁禁止代填，直接说明）。
-3. 用户在终端跑 `hermes -p <角色名> gateway setup`（有扫码向导），或手填后配 `platforms.qqbot`：`dm_policy: allowlist`，`group_policy: allowlist`，`QQ_ALLOW_ALL_USERS` 保持关闭。
-4. 用户跑 `hermes gateway restart`，再 `hermes gateway list` 确认该 profile 被 served；私聊验证一次。
-5. 全程只给命令和预期输出，不重复追着问进度。
+首选，用户自己在终端跑（最稳）：
 
-常见失败：沙箱模式只能收到白名单成员；两个 profile 用同一 AppID；intents 没开。
+```bash
+hermes -p <角色名> gateway setup     # 平台选 QQ Bot，跟着向导扫码
+```
+
+用户想省事时，你也可以替他起扫码任务，但必须守三条：
+
+1. 前台短脚本（临时目录，用完删），只调用宿主 `plugins.platforms.qqbot.onboard` 的 `_create_bind_task` / `build_connect_url` / `_poll_bind_result`，生成本地二维码 PNG（如 `qq-bind-qr.png`）。
+2. 把 PNG 路径给用户，让他用手机 QQ 扫；脚本最多等 120 秒，扫完用宿主自己的 `save_env_value` 写入该 profile 的 `.env`。
+3. 全程不打印、不回显 `QQ_APP_ID` / `QQ_CLIENT_SECRET`；写完只报“已写入”，并用 `grep -c '^QQ_APP_ID=' ~/.hermes/profiles/<角色名>/.env` 验证（只数行数）。
+
+接 `platforms.qqbot`：`dm_policy: allowlist`，`group_policy: allowlist`；`QQ_ALLOW_ALL_USERS` 保持关闭。然后 `hermes gateway restart`，`hermes gateway list` 确认该 profile 被 served，让用户私聊验证一次。
+
+- 遇到 `.env` 写锁（`env_write_refusal`）不要翻源码找替代写法：扫码路径本身就不经过你的手。
+- 扫码链接/二维码过期就让用户重跑，不要反复重试。
+- 常见失败：沙箱模式只能收到白名单成员；两个 profile 用同一 AppID；intents 没开。
 
 ## 子流程 D：主动消息
 
@@ -196,7 +207,7 @@ python3 <插件仓库>/scripts/fix-studio-bridge-python.py --check  # 确认
 
 ### 选项不出按钮，只显示一段 JSON
 
-`clarify` 工具在 Studio 里会变成一段 `[{'qid': ...}]` 文本，这是宿主 bug：Studio 桥接层还在用旧的“单问题 + choices”回调协议，而新版 Hermes 传的是问题列表，于是列表被当成问题正文、也没有选项。**不要重试 `clarify`**，直接用正文问，选项写成 `1.` `2.` `3.`。
+`clarify` 在 Studio 里显示成一段 `[{'qid': ...}]` 文本、没有按钮：这是 **Studio ≤ 0.8.10** 的桥接 bug（旧“单问题 + choices”协议），升级到 **0.8.11+** 即恢复选项卡（`npm i -g hermes-web-ui@latest` 后重启 Studio）。确认版本：`node -p "require('/usr/local/lib/node_modules/hermes-web-ui/package.json').version"`。未升级前用正文编号提问，不要重试 `clarify`。
 
 ## 隐私默认（不需要用户逐条确认）
 
