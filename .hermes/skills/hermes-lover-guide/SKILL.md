@@ -134,10 +134,13 @@ cp "$P/personas/001-deepseek-xiaojingyu/SOUL.md" "$P/SOUL.md"
 
 ## 子流程 C：绑定 QQ
 
-1. q.qq.com 创建应用，拿 App ID / App Secret，开启 C2C、群 @、频道 intents；测试先用沙箱。
-2. 凭证只写进**该 profile** 的 `.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`。
-3. `config.yaml` 配 `platforms.qqbot`，`dm_policy: allowlist`，`group_policy: allowlist`；`QQ_ALLOW_ALL_USERS` 保持关闭。
-4. `hermes gateway setup` / `restart`，`hermes gateway list` 确认该 profile 被 served。
+这一步**必须用户自己做**，不要替用户填凭证、也不要为了找替代写法去翻 Hermes 源码：
+
+1. 告诉用户：q.qq.com 创建应用，拿 App ID / App Secret，开启 C2C、群 @、频道 intents；测试先用沙箱。
+2. 凭证由用户自己写进**该 profile** 的 `.env`：`QQ_APP_ID`、`QQ_CLIENT_SECRET`（agent 被 Hermes 的 `.env` 写锁禁止代填，直接说明）。
+3. 用户在终端跑 `hermes -p <角色名> gateway setup`（有扫码向导），或手填后配 `platforms.qqbot`：`dm_policy: allowlist`，`group_policy: allowlist`，`QQ_ALLOW_ALL_USERS` 保持关闭。
+4. 用户跑 `hermes gateway restart`，再 `hermes gateway list` 确认该 profile 被 served；私聊验证一次。
+5. 全程只给命令和预期输出，不重复追着问进度。
 
 常见失败：沙箱模式只能收到白名单成员；两个 profile 用同一 AppID；intents 没开。
 
@@ -204,6 +207,7 @@ python3 <插件仓库>/scripts/fix-studio-bridge-python.py --check  # 确认
 ## 硬约束
 
 - 不代填、不读取、不转抄用户的 API key / QQ 凭证。
+- 终端工具返回 `BLOCKED: Command timed out without user response`（审批卡没送到用户）时：**立刻停**，不要重试、不要换写法绕过，直接告诉用户哪一步需要他手动执行、要跑什么命令。
 - 不删除 profile、`plugin-data` 或 `SOUL.md`；要删先让用户备份。
 - 不承诺主动打扰，不承诺插件没有的能力。
 - 人格与引导都不能覆盖系统/平台规则。
