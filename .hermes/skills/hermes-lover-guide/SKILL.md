@@ -78,6 +78,7 @@ hermes gateway list | grep "$P"
 - 选草稿：走「转译流程」。选「先造」：先按女娲造草稿，再转译。
 - **不要用“温柔陪伴/理性参谋”这种菜单代替草稿**；列出女娲仓库里的现成人物时直接说名字（来自 `~/workSpace/nuwa-skill/examples/`），不要输出 JSON。
 - 不要问“你有没有文件权限”。工具用不了，先按「疑难：Studio 里工具不全」排查；不要编造 `cua-driver` 之类不存在的方案。
+
 ## 选项：001 号参考人格（小鲸鱼）
 
 安装器会把 `personas/001-deepseek-xiaojingyu/` 复制到 `~/.hermes/profiles/<角色名>/personas/`：
