@@ -14,3 +14,5 @@ provides_hooks:
   - post_tool_call
   - post_llm_call
   - api_request_error
+provides_middleware:
+  - llm_request
