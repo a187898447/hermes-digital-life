@@ -110,17 +110,28 @@ if [[ -f "$BEAT_SCRIPT" ]]; then
   mkdir -p "$PROFILE_HOME/scripts"
   cp "$BEAT_SCRIPT" "$PROFILE_HOME/scripts/hermes-lover-beat.py"
   chmod +x "$PROFILE_HOME/scripts/hermes-lover-beat.py"
-  BEAT_PROMPT='这是 hermes-lover 的主动联系触发点，监控输出里的 FIRE 标记表示刚刚到点（MORNING 上午 / MIDDAY 午后 / AFTERNOON 傍晚前 / NIGHT 夜里）。按顺序做：1) 读当前 profile 的 SOUL.md 人格；2) 参考最近记忆与 hermes-lover 当前状态（激素、精力、gap）；3) 结合此刻时间段，用这个人物的口吻写一句话（不超过 40 字，像他/她真的会主动发的那一句；不报状态数字，不客套，不重复最近发过的内容）；4) 用 send_message 发到 QQBOT_HOME_CHANNEL。若拿不到可用的发送渠道，就什么都不发，直接结束。'
+  BEAT_PROMPT='这是 hermes-lover 的主动联系触发点，监控输出里的 FIRE 标记表示刚刚到点（MORNING 上午 / MIDDAY 午后 / AFTERNOON 傍晚前 / NIGHT 夜里）。按顺序做：1) 读当前 profile 的 SOUL.md 人格；2) 参考最近记忆与 hermes-lover 当前状态（激素、精力、gap）；3) 结合此刻时间段，用这个人物的口吻写一句话（不超过 40 字，像他/她真的会主动发的那一句；不报状态数字，不客套，不重复最近发过的内容）；4) 只输出这句话，不要再加解释，也不要自己调用发送工具——投递目标由这个 cron 任务的 Deliver 决定。'
   if hermes -p "$PROFILE" cron create "*/5 9-21 * * *" "$BEAT_PROMPT" \
       --name hermes-lover-beat \
       --monitor-script "hermes-lover-beat.py" \
       --deliver local \
       --paused --paused-reason "安装时默认停用，启用方法见 hermes-lover-guide 第 8 步" >/dev/null; then
     printf '已创建主动消息计划（默认停用）: 每天 10/14/16/20 点前后 60 分钟内随机触发一次\n'
-    printf '启用方法: hermes -p %q cron resume <id>（先 cron list 取 id），详见 hermes-lover-guide\n' "$PROFILE"
+    printf '启用方法: 先把 Deliver 改成你的 QQ，再 resume；步骤见 hermes-lover-guide 最后一步\n'
   else
     printf '警告: 主动消息 cron 创建失败；稍后可手动创建。\n' >&2
   fi
+fi
+
+# Studio starts each non-default profile's agent in a bridge worker pinned to
+# Hermes' managed tools python, which ships no third-party packages.  Every tool
+# module that imports ruamel.yaml then fails to load and the agent silently
+# loses terminal/files/memory/skills.  A normal install always creates a new
+# profile, so apply the idempotent host fix here too (README has the details).
+BRIDGE_FIX="$SOURCE/scripts/fix-studio-bridge-python.py"
+if [[ -f "$BRIDGE_FIX" ]] && command -v python3 >/dev/null 2>&1; then
+  python3 "$BRIDGE_FIX" ||
+    printf '提示: Studio 桥接补丁未应用；若在 Studio 里遇到工具缺失，见 README 已知问题。\n' >&2
 fi
 
 # `hermes profile create` drops a generic alias wrapper that forwards straight

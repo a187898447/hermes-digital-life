@@ -21,9 +21,23 @@ For upgrades, back up the target profile's `plugin-data/hermes-lover/` directory
 - Lossless memory affinity ranking helpers.
 - Operator CLI: `hermes hermes-lover status|stop|resume|resolve-gap <id>`.
 
-No model-callable tool mutates life state or accepts user-supplied hormone/energy values. Fixed plugin rules respond only to host-observed provider requests, completed turns, transient errors, search results, and elapsed time. Operator stop/resume and gap closure require typing an explicit confirmation. No cron job is installed automatically; the optional “Quiet digital-life reflection” blueprint creates a local-only scheduled turn when an operator chooses it. Proactive delivery and gateway injection remain disabled: Hermes deliberately does not expose `send_message` as a model tool, and automated delivery needs a persisted wake claim/recipient policy that this release does not yet implement.
+No model-callable tool mutates life state or accepts user-supplied hormone/energy values. Fixed plugin rules respond only to host-observed provider requests, completed turns, transient errors, search results, and elapsed time. Operator stop/resume and gap closure require typing an explicit confirmation. The installer creates one paused `hermes-lover-beat` cron job that delivers locally; it stays silent until an operator points its Deliver target at a real channel and resumes it (guide, last step). The optional “Quiet digital-life reflection” blueprint creates a local-only scheduled turn when an operator chooses it. The plugin itself implements no delivery logic and registers no gateway injection hook.
 
 Hermes's built-in `memory` tool remains responsible for memory writes. Per-request middleware reorders the exact rendered `MEMORY.md`/`USER.md` blocks by DLC affinity and preserves every entry; it does not replace or own the memory store. The reflection blueprint may write identity-judged memory through Hermes's built-in tool; it cannot mutate life-state values. Proactive wakes are not implemented.
+
+## Known issue: Studio loses most tools for non-default profiles
+
+Hermes Studio runs each non-default profile's agent in a bridge worker pinned to Hermes' managed `tools` python. That runtime ships no third-party packages, and the worker never imports `hermes_bootstrap`, so `ruamel.yaml` and friends are missing; every tool module that needs them (terminal, files, memory, skills, web) fails to import and the agent silently sees only a handful of tools.
+
+`install.sh` applies an idempotent host fix that adds the install venv to that runtime through a `sitecustomize.py`. For an existing install run it manually and then open a new Studio conversation:
+
+```sh
+python3 scripts/fix-studio-bridge-python.py          # apply, safe to repeat
+python3 scripts/fix-studio-bridge-python.py --check  # verify
+python3 scripts/fix-studio-bridge-python.py --remove # undo
+```
+
+CLI and TUI sessions, and the default profile, are unaffected.
 
 ## Validate
 

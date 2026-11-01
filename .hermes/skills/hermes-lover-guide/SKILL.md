@@ -109,24 +109,32 @@ hermes -p <p> cron remove <id>
 
 > 主动消息现在是暂停的。要开启吗？开启后每天 10/14/16/20 前后一小时内随机一次，它会按人格主动发一句。
 
-用户同意后：
+用户同意后，先确认投递目标，再恢复：
 
 ```bash
-hermes -p <p> cron list          # 确认 hermes-lover-beat 状态是 paused
+hermes -p <p> cron list   # 取 hermes-lover-beat 的 id，确认状态是 paused
+hermes -p <p> cron edit <id> --deliver qqbot:<chat_id>   # 安装时是 local，只存本地
 hermes -p <p> cron resume <id>
 ```
 
-启用后想停：`hermes -p <p> cron pause <id>`。**用户没明确同意前不要 resume。**
+`--deliver` 填子流程 C 里确认的 QQ 会话（私聊 `chat_id` 或群）；不改 Deliver 就 resume，句子只会存在本地、不会发出去。
 
-手动加更多时间点仍然可以（例如自定义一个每天 9 点的任务）：
+启用后想停：`hermes -p <p> cron pause <id>`。**用户没明确同意前不要 resume，也不要改 Deliver。**
+
+要加时间点就 `cron edit <id> --schedule ...`，或另建任务时把 `--deliver` 一起设好。
+
+## 疑难：Studio 里工具不全
+
+如果 Studio 里的 agent 说 `terminal`、`read_file`、`memory` 或 skill 工具"用不了/调不到"，那通常不是 profile 配置问题，而是宿主 bug：Studio 给非默认 profile 起 worker 时用了 Hermes 自带、不带第三方包的精简 python，`ruamel.yaml` 等导入失败，工具模块被静默丢弃。安装脚本已经带上修复（`scripts/fix-studio-bridge-python.py`）。
+
+旧安装或没走安装脚本时，手动补：
 
 ```bash
-hermes -p <p> cron create "0 9 * * *" \
-  "用 send_message 给 <chat_id> 发一句早安，符合当前人格" \
-  --name custom-hello --skill hermes-lover-guide --deliver qqbot:<chat_id>
+python3 <插件仓库>/scripts/fix-studio-bridge-python.py          # 应用，可重复执行
+python3 <插件仓库>/scripts/fix-studio-bridge-python.py --check  # 确认
 ```
 
-先用 `hermes -p <p> cron create --help` 确认 `--deliver` 目标语法。
+补完必须**新开一个 Studio 对话**，已打开的 worker 不会重载。CLI/TUI 不受影响。
 
 ## 隐私默认（不需要用户逐条确认）
 
