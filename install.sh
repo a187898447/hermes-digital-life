@@ -114,6 +114,15 @@ fi
 # Proactive beats: four daily check-ins (10/14/16/20) with a per-day ±60 minute
 # jitter. The monitor script keeps the agent asleep until a slot is actually
 # due, so the ticks that do not fire cost nothing.
+# Deterministic onboarding gate: the guide must print its NEXT step instead of
+# guessing the order (users hit agents that skipped straight to step 5+).
+GATE_SCRIPT="$SOURCE/scripts/setup-status.py"
+if [[ -f "$GATE_SCRIPT" ]]; then
+  mkdir -p "$PROFILE_HOME/scripts"
+  cp "$GATE_SCRIPT" "$PROFILE_HOME/scripts/setup-status.py"
+  printf '已安装初始化检查脚本: %s/scripts/setup-status.py\n' "$PROFILE_HOME"
+fi
+
 BEAT_SCRIPT="$SOURCE/scripts/hermes-lover-beat.py"
 if [[ -f "$BEAT_SCRIPT" ]]; then
   mkdir -p "$PROFILE_HOME/scripts"
