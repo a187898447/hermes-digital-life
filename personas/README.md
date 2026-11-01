@@ -35,7 +35,7 @@ Hermes 加载人格靠 profile 根目录的 `SOUL.md`。所以中间需要一次
 - `SKILL.md`：女娲风格的人物 skill（三副镜片、8 条启发式、表达 DNA、反模式、诚实边界），可直接当人物卡读。
 - `SOUL.md`：同一人格转译后的成稿，40–80 行，可直接放进 profile 根目录。
 
-用法（不要直接覆盖现有角色）：
+`hermes-lover-guide` 初始化到第 4 步时会把这份人格作为三个选项之一（另两个是「转译女娲草稿」和「先造一份」）。选它时 guide 会先备份已有 `SOUL.md` 再复制成稿。手动用法（不要直接覆盖现有角色）：
 
 ```bash
 cp ~/.hermes/profiles/<角色>/personas/001-deepseek-xiaojingyu/SOUL.md /tmp/001-SOUL.md

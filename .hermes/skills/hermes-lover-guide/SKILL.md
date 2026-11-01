@@ -23,6 +23,7 @@ hermes -p "$P" plugins list --plain | grep hermes-lover
 hermes -p "$P" hermes-lover status
 test -f ~/.hermes/profiles/"$P"/SOUL.md && echo "SOUL ok" || echo "no SOUL"
 grep -q '^QQ_APP_ID=' ~/.hermes/profiles/"$P"/.env 2>/dev/null && echo "QQ creds ok" || echo "no QQ creds"
+test -f ~/.hermes/profiles/"$P"/personas/001-deepseek-xiaojingyu/SOUL.md && echo "001 persona ok" || echo "no 001 persona"
 hermes gateway list | grep "$P"
 ```
 
@@ -35,7 +36,7 @@ hermes gateway list | grep "$P"
 | 1 | 女娲造人格草稿：`~/.hermes/skills/personas/huashu-nuwa` | 有一个 `SKILL.md` 人物 skill |
 | 2 | `./install.sh --mode local --profile <角色名>` | `plugins list` 显示 hermes-lover enabled |
 | 3 | `hermes -p <角色名> setup`（**用户自己做**，不要代填密钥） | 能正常对话 |
-| 4 | 按本文「转译流程」把草稿写成 `~/.hermes/profiles/<角色名>/SOUL.md` | SOUL.md 存在且 40–80 行 |
+| 4 | 人格落地：直接用 001 参考人格，或按「转译流程」把草稿写成 `~/.hermes/profiles/<角色名>/SOUL.md` | SOUL.md 存在且 40–80 行 |
 | 5 | `hermes -p <角色名> hermes-lover status`；备份 `plugin-data/hermes-lover/data.db` | 返回激素/精力 JSON |
 | 6 | QQ：q.qq.com 建应用 → profile `.env` → `platforms.qqbot` → `hermes gateway restart` | `gateway list` 中该 profile served，私聊有回复 |
 | 7 | 主动消息已随安装创建 `hermes-lover-beat` 任务（**默认暂停**） | `cron list` 能看到，状态 paused |
@@ -50,9 +51,30 @@ hermes gateway list | grep "$P"
 - 如果 `clarify` 调用失败或界面没渲染出按钮，才退回普通文字：一行问题，选项写成 `1.` `2.` `3.`，然后停下等。
 - 先自己查：跑完「第一步：先查状态」，能自己确认的不要问用户。
 - 严格按主流程顺序：SOUL.md 落盘之前不要问 QQ 绑定、定时消息、投递方式——那些是第 6–8 步的事。
-- 人格只有一个问题："有没有女娲草稿"。有就转译；没有就问要不要先造一份，**不要用"温柔陪伴/理性参谋"这种菜单代替草稿**。列出女娲仓库里的现成人物时，直接说名字（来自 `~/workSpace/nuwa-skill/examples/`），不要给整份 JSON。
+- 人格只问一个问题，三选一（用 `clarify`，`choices` 就是这三项）：
+  `["直接用 001 号参考人格（小鲸鱼 · QQ 群友版）", "我有女娲草稿，帮我转译", "还没有，帮我先造一份"]`
+  - 选 001：按「选项：001 号参考人格」复制 SOUL.md，不要转译，然后跳到第 5 步。
+  - 选草稿：走「转译流程」。选"先造"：先按女娲造草稿，再转译。
+  - **不要用"温柔陪伴/理性参谋"这种菜单代替草稿**；列出女娲仓库里的现成人物时直接说名字（来自 `~/workSpace/nuwa-skill/examples/`），不要给整份 JSON。
 - 不要问"你有没有文件权限"。工具用不了，先按「疑难：Studio 里工具不全」排查；不要编造 `cua-driver` 之类不存在的方案，也不要让用户手动改权限。
 - 用户没答完就停下等，不要追问剩下没答的。
+
+## 选项：001 号参考人格（小鲸鱼）
+
+安装器会把 `personas/001-deepseek-xiaojingyu/` 复制到 `~/.hermes/profiles/<角色名>/personas/`：
+
+- `SKILL.md` 是人物卡；`SOUL.md` 是同一人格的成稿，可以直接用。
+- 用户选 001 时执行（先备份已有 SOUL.md，有冲突先问是否覆盖）：
+
+```bash
+P=~/.hermes/profiles/<角色名>
+[ -f "$P/SOUL.md" ] && cp "$P/SOUL.md" "$P/SOUL.md.bak"
+cp "$P/personas/001-deepseek-xiaojingyu/SOUL.md" "$P/SOUL.md"
+```
+
+- 告诉用户：这是 QQ 群友型人格（1~10 字短句、会怼人、会潜水），适合群聊；想要温柔陪伴或理性参谋，走女娲草稿转译，不要硬改它。
+- 若 profile 里没有 `personas/001-deepseek-xiaojingyu/`：说明装的是旧版安装器，提示重新跑安装器，或手动 `cp -R <仓库>/hermes-digital-life/personas "$P/personas"`；不要自己编一份。
+- 不转译、不改写、不混入别的语气；用户后续改过的 SOUL.md 归用户，不要覆盖。
 
 ## 转译流程：女娲 skill → SOUL.md
 
