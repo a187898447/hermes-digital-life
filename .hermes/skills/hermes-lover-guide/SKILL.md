@@ -135,25 +135,36 @@ cp "$P/personas/001-deepseek-xiaojingyu/SOUL.md" "$P/SOUL.md"
 
 ## 子流程 C：绑定 QQ
 
-凭证必须是用户本人的，但**不需要你经手**：走宿主自带的扫码绑定，密钥由 Hermes 自己写进该 profile。
-
-首选，用户自己在终端跑（最稳）：
+先判断是**复用现有机器人**还是新建应用——默认复用，不要一上来就让用户去 q.qq.com 建应用。
 
 ```bash
-hermes -p <角色名> gateway setup     # 平台选 QQ Bot，跟着向导扫码
+grep -c '^QQ_APP_ID=' ~/.hermes/.env    # >0 说明 default profile 已经绑过 QQ
 ```
 
-用户想省事时，你也可以替他起扫码任务，但必须守三条：
+**有现成的（>0）**：直接复用，告诉用户“用你现有的 QQ 机器人，不用再建应用”。凭证用 Hermes 自己的键复制（只搬键值，不打印）：
 
-1. 前台短脚本（临时目录，用完删），只调用宿主 `plugins.platforms.qqbot.onboard` 的 `_create_bind_task` / `build_connect_url` / `_poll_bind_result`，生成本地二维码 PNG（如 `qq-bind-qr.png`）。
-2. 把 PNG 路径给用户，让他用手机 QQ 扫；脚本最多等 120 秒，扫完用宿主自己的 `save_env_value` 写入该 profile 的 `.env`。
-3. 全程不打印、不回显 `QQ_APP_ID` / `QQ_CLIENT_SECRET`；写完只报“已写入”，并用 `grep -c '^QQ_APP_ID=' ~/.hermes/profiles/<角色名>/.env` 验证（只数行数）。
+```bash
+grep -E '^QQ_(APP_ID|CLIENT_SECRET|ALLOW_ALL_USERS|ALLOWED_USERS|BOT_HOME_CHANNEL)=' ~/.hermes/.env >> ~/.hermes/profiles/<角色名>/.env
+```
 
-接 `platforms.qqbot`：`dm_policy: allowlist`，`group_policy: allowlist`；`QQ_ALLOW_ALL_USERS` 保持关闭。然后 `hermes gateway restart`，`hermes gateway list` 确认该 profile 被 served，让用户私聊验证一次。
+然后在角色 profile 的 `config.yaml` 里启用平台（一个 QQ 应用只能挂一个 profile，所以 default profile 的 qqbot 必须停用，否则会抢答）：
 
-- 遇到 `.env` 写锁（`env_write_refusal`）不要翻源码找替代写法：扫码路径本身就不经过你的手。
-- 扫码链接/二维码过期就让用户重跑，不要反复重试。
-- 常见失败：沙箱模式只能收到白名单成员；两个 profile 用同一 AppID；intents 没开。
+```yaml
+platforms:
+  qqbot:
+    enabled: true
+    extra:
+      dm_policy: allowlist
+      group_policy: allowlist
+```
+
+最后 `hermes gateway restart`，`hermes gateway list` 确认该 profile 被 served，让用户私聊验证一次。
+
+**没有现成的**：才走宿主扫码向导 `hermes -p <角色名> gateway setup`（平台选 QQ Bot，用户本人扫码），或让用户自己在 q.qq.com 建应用后手填 `.env`。
+
+- 复用只搬键值，不读取、不回显、不转抄密钥内容；复制完只报“已复用现有 QQ 机器人”。
+- 遇到 `.env` 写锁（`env_write_refusal`）不要翻源码找替代写法：复制是普通文件操作，不经过写锁。
+- 常见失败：两个 profile 同时启用同一 AppID（抢答）；没开 intents；沙箱只回白名单成员。
 
 ## 子流程 D：主动消息
 

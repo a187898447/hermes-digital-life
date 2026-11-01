@@ -83,14 +83,23 @@ def main() -> int:
     rows.append(("状态可读 + 备份", status_ok and bool(backups),
                  "status 返回 JSON" + ("，已有备份" if backups else "；还没有 data.db 备份")))
 
-    # Step 3: QQ credentials live in the profile .env.
-    qq_ok = False
-    try:
-        qq_ok = any(line.startswith("QQ_APP_ID=") and line.split("=", 1)[1].strip()
-                    for line in (pdir / ".env").read_text().splitlines())
-    except OSError:
-        pass
-    rows.append(("QQ 凭证", qq_ok, ".env 有 QQ_APP_ID" if qq_ok else "profile .env 里没有 QQ_APP_ID"))
+    # Step 3: QQ credentials live in the profile .env. An already-bound QQ app in
+    # the default profile can be reused instead of creating a new q.qq.com app.
+    def qq_key_present(env: Path) -> bool:
+        try:
+            return any(line.startswith("QQ_APP_ID=") and line.split("=", 1)[1].strip()
+                       for line in env.read_text().splitlines())
+        except OSError:
+            return False
+
+    qq_ok = qq_key_present(pdir / ".env")
+    if qq_ok:
+        qq_detail = ".env 有 QQ_APP_ID"
+    elif qq_key_present(hermes_home() / ".env"):
+        qq_detail = "default profile 已有 QQ 机器人凭证，复制过来即可（无需新建应用）"
+    else:
+        qq_detail = "profile .env 里没有 QQ_APP_ID"
+    rows.append(("QQ 凭证", qq_ok, qq_detail))
 
     # Steps 4-5: the paused beat job exists, and whether the operator enabled it.
     beat, beat_active = None, False

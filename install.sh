@@ -177,5 +177,9 @@ fi
 
 printf '\n验证状态读取：\n  hermes -p %q hermes-lover status\n' "$PROFILE"
 printf '后续独立会话：\n  hermes -p %q chat\n' "$PROFILE"
+if grep -q '^QQ_APP_ID=' "${HERMES_HOME:-$HOME/.hermes}/.env" 2>/dev/null; then
+  printf '检测到已有 QQ 机器人凭证（default profile）：绑定 QQ 时直接复用，不必新建应用（见 hermes-lover-guide 第 3 步）。\n'
+fi
+
 printf '首次使用让 agent 引导你：\n  hermes -p %q chat  然后说「用 hermes-lover-guide 引导我配置」\n' "$PROFILE"
 printf '\n注意：这是独立 Hermes profile，不是 delegate_task 子 agent。插件状态/记忆与主 profile 分开；宿主用户级 HOME 凭证仍按 Hermes 默认策略共享。\n'
