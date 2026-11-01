@@ -18,7 +18,7 @@ Hermes 加载人格靠 profile 根目录的 `SOUL.md`。所以中间需要一次
 ## 用法
 
 1. 先用女娲造出人物 skill（`~/.hermes/skills/personas/huashu-nuwa`）。
-2. 让 agent 用 `persona-forge` skill 转译：给它女娲 skill 的路径 + 角色名 + 一句关系设定。
+2. 让 agent 用 `hermes-lover-guide` 的转译流程：给它女娲 skill 的路径 + 角色名 + 一句关系设定。
 3. 产物写到 `~/.hermes/profiles/<角色名>/SOUL.md`（默认 profile 是 `~/.hermes/SOUL.md`），可以直接从本目录的 `SOUL.template.md` 起步。
 
 ## 常见坑

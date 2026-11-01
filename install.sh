@@ -86,7 +86,7 @@ fi
 hermes -p "$PROFILE" plugins enable "$PLUGIN_NAME"
 hermes -p "$PROFILE" plugins doctor "$PLUGIN_NAME" --ci
 
-# Ship the bundled skills (onboarding guide + persona-forge) as profile-local
+# Ship the bundled onboarding guide as a profile-local
 # skills so the new agent can walk the user through setup, personas, QQ binding
 # and message delivery itself, and can translate 女娲 output into SOUL.md.
 SKILLS_SRC="$SOURCE/.hermes/skills"

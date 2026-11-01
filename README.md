@@ -4,7 +4,7 @@ This is a generic, independently installable Hermes standalone plugin. It does n
 
 Install the repository into the target Hermes home as `plugins/hermes-lover/`, then enable it with `hermes plugins enable hermes-lover`. It is opt-in. Requires Hermes `>=0.22` and a Python runtime with the host's plugin APIs.
 
-End-to-end walkthrough (persona → life system → QQ bot), in Chinese: [使用引导.md](使用引导.md). The installer also bundles it as the `hermes-lover-guide` skill (plus `persona-forge`) into the new profile, so the agent can guide the setup itself.
+End-to-end walkthrough (persona → life system → QQ bot), in Chinese: [使用引导.md](使用引导.md). The installer also bundles it as the `hermes-lover-guide` skill into the new profile, so the agent can guide the setup and the persona translation itself.
 
 This release reads no plugin settings: there is no `settings` block to configure. Scheduled reflection is created explicitly through the `dream-reflection` automation blueprint, and delivery is not implemented, so no job starts and no message is sent from configuration.
 
