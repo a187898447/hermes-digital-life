@@ -64,9 +64,9 @@ cleanup_on_error() {
 trap cleanup_on_error ERR
 
 hermes profile create "$PROFILE"
+CREATED=1
 PROFILE_HOME="$(hermes profile show "$PROFILE" | sed -n 's/^Path:[[:space:]]*//p')"
 [[ -n "$PROFILE_HOME" ]] || fail "无法从 Hermes 解析新 profile 的路径。"
-CREATED=1
 if [[ "$MODE" == local ]]; then
   PLUGIN_HOME="$PROFILE_HOME/plugins/digital-life"
   mkdir -p "$(dirname "$PLUGIN_HOME")"
