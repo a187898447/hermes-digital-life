@@ -87,10 +87,31 @@ hermes gateway list | grep "$P"
 
 ## 子流程 D：主动消息
 
-- 能发：QQ 接通后模型有 `send_message`。
-- 会定时：cron + `proactive-agent` skill。
-- 插件不投递：hermes-lover 没有自己的定时发送逻辑，别跟用户说"插件会自己找你"。
-- 要开先定三件事：谁能收到、每天最多几条、什么时段静默。
+先把机制讲清楚，再给命令：
+
+- **能发**：QQ 接通后模型有 `send_message`。
+- **会定时**：该 profile 的 cron job，不是会话里的技能。会话关掉后模型不会自己醒来，只有 cron / heartbeat 会让它醒来。
+- **插件不投递**：hermes-lover 没有定时发送逻辑；那个 "Quiet digital-life reflection" 蓝图只做本地反思，不外发。别跟用户说"插件会自己找你"。
+- **`proactive-agent` 只是方法论技能**（WAL、反向提问、cron 用法），它本身不发消息；而且它现在只在 default profile 的 `~/.hermes/skills/openclaw-imports/` 下，hermes-lover 里没有。要用先复制：
+
+```bash
+cp -R ~/.hermes/skills/openclaw-imports/proactive-agent \
+   ~/.hermes/profiles/<角色名>/skills/
+```
+
+- **真正定时**的写法（QQ 已接通、目标 chat_id 已知）：
+
+```bash
+hermes -p <角色名> cron create "0 9 * * *" \
+  "用 send_message 给 <chat_id> 发一句早安，符合当前人格，不要复述状态数字" \
+  --name morning-hello \
+  --skill hermes-lover-guide \
+  --deliver qqbot:<chat_id>
+```
+
+先 `hermes -p <角色名> cron create --help` 确认 `--deliver` 的目标语法，再用 `cron list` 看是否生效。
+
+- 开之前和用户确认三件事：谁能收到、每天最多几条、什么时段静默。静默由 cron 表达式和人格约束实现，不是插件配置项。
 
 ## 隐私默认（不需要用户逐条确认）
 
