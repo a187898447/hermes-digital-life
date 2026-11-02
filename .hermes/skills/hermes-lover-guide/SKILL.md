@@ -261,3 +261,7 @@ hermes-web-ui restart
 
 - 一次只推进一步，给命令和预期结果。
 - 出错时先跑 `hermes -p "$P" plugins doctor hermes-lover --ci`，再看 `hermes gateway status`。
+
+## 完成之后
+
+`NEXT=done` 时只做收尾汇报：五步各是什么状态、还剩什么要用户自己做。**不要**再自查配置、不要顺手改网关或 skill、不要继续跑检查命令；用户没问就停在那里。
