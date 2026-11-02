@@ -94,6 +94,10 @@ hermes -p "$PROFILE" plugins doctor "$PLUGIN_NAME" --ci
 # `hermes-qqbot` toolset (terminal, file writes, MCP). `no_mcp` is a sentinel that
 # keeps globally enabled MCP servers out of the resolved set. Operators who want
 # more can widen this afterwards; existing choices are never overwritten.
+# Beat deliveries are just the sentence: without this, every cron push carries a
+# "Cronjob Response: ... / To stop or manage this job" wrapper.
+hermes -p "$PROFILE" config set cron.wrap_response false >/dev/null 2>&1 || true
+
 qqbot_enabled="$(hermes -p "$PROFILE" config get platforms.qqbot.enabled 2>/dev/null || true)"
 if [[ "$qqbot_enabled" == "true" ]] && ! hermes -p "$PROFILE" config get platform_toolsets.qqbot >/dev/null 2>&1; then
   hermes -p "$PROFILE" config set platform_toolsets.qqbot '["web","vision","todo","memory","no_mcp"]'

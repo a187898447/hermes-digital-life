@@ -262,6 +262,10 @@ hermes-web-ui restart
 - 一次只推进一步，给命令和预期结果。
 - 出错时先跑 `hermes -p "$P" plugins doctor hermes-lover --ci`，再看 `hermes gateway status`。
 
+## 投递格式
+
+安装器会把 `cron.wrap_response` 设为 `false`，所以主动消息只投递模型写的那句话，不会带 “Cronjob Response: … / To stop or manage this job” 的头尾。新建 profile 若手动改了这项，记得改回 false。
+
 ## 完成之后
 
 `NEXT=done` 时只做收尾汇报：五步各是什么状态、还剩什么要用户自己做。**不要**再自查配置、不要顺手改网关或 skill、不要继续跑检查命令；用户没问就停在那里。
