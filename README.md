@@ -105,8 +105,9 @@ Selected domain rules are derived from `digital-life-core` by mashangshui (温�
   `memory`，插件也只对 `platform == "qqbot"` 的回合做自动捕获。每条捕获都带
   `chat_id`/`chat_type`/`speaker`，召回按当前会话隔离，私聊与群聊不会混记。
 - 在 QQ 里对机器人发 `/new`（或 `/reset`）会清空当前会话在记忆宫殿里的条目、并把 digital-life
-  状态恢复成默认值（化学物质/精力/未解决的事）；只有 `QQ_OWNER_ID` 或 `QQ_ALLOWED_USERS` 里的
-  所有者/管理者能触发，其他人发 `/new` 只新开会话、不动记忆。
+  状态恢复成默认值（化学物质/精力/未解决的事）；`/new all` 连其他会话的宫殿记录一起清空。
+  只有 `QQ_OWNER_ID` 或 `QQ_ALLOWED_USERS` 里的所有者/管理者能触发，其他人发 `/new` 只新开会话、
+  不动记忆。
 - 日记不靠定时任务（笔记本合盖就会错过）：每天第一条 QQ 消息到达时，插件检查昨天有没有
   `journal` 条目，没有就让模型读昨天的宫殿记录和当前 digital-life 状态，写一篇 120–400 字的
   第一人称日记（`memory_write(kind="journal", day="YYYY-MM-DD")`，权重 2.5，锚定在被总结的那天）。

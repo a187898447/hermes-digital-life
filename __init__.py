@@ -81,7 +81,7 @@ def _post_tool_call(tool_name: str = "", args: dict[str, Any] | None = None, res
     digital_life.runtime.observe_tool_result(time.time() * 1000, tool_name=tool_name, args=args or {}, result=result)
 
 
-_RESET_COMMAND = re.compile(r"^/(?:new|reset)(?:\s|$)", re.IGNORECASE)
+_RESET_COMMAND = re.compile(r"^/(?:new|reset)(?:\s+(?P<scope>all|全部))?(?:\s|$)", re.IGNORECASE)
 _RESET_SCRUB = 0
 
 
@@ -113,7 +113,8 @@ def _on_gateway_dispatch(event=None, **kwargs):
         text = (getattr(event, "text", "") or "").strip()
         source = getattr(event, "source", None)
         platform = getattr(getattr(source, "platform", None), "value", "") or ""
-        if platform != "qqbot" or not _RESET_COMMAND.match(text):
+        match = _RESET_COMMAND.match(text)
+        if platform != "qqbot" or not match:
             return None
         sender = (getattr(event, "sender_id", "") or getattr(source, "user_id", "") or "")
         sender = str(sender)
@@ -124,7 +125,8 @@ def _on_gateway_dispatch(event=None, **kwargs):
         factory = _MEMORY_STORE.get("factory")
         store = factory() if factory is not None else None
         if store is not None:
-            cleared = store.clear(chat_id or None)
+            cleared = store.clear(None if (match.group("scope") or "").lower() in {"all", "全部"}
+                                  else (chat_id or None))
         else:
             cleared = 0
         now_ms = time.time() * 1000
