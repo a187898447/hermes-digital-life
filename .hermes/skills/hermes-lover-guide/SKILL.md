@@ -137,7 +137,19 @@ cp "$P/personas/001-deepseek-xiaojingyu/SOUL.md" "$P/SOUL.md"
 
 网关是**一个宿主服务所有 profile**，不要给单个 profile 起网关。
 
-1. 扫码：`hermes -p <角色名> gateway setup`，平台选 QQ Bot，按向导生成二维码，用户手机 QQ 扫码。凭证由 Hermes 写进该 profile 的 `.env`。这一步只有扫码一条路，不要替用户判断、不要复制其它 profile 的凭据。
+1. 出二维码（**你自己跑，不要让用户去敲命令**）：
+
+```bash
+python3 ~/.hermes/profiles/<角色名>/scripts/qq-bind.py start --profile <角色名>
+```
+
+把输出里的二维码和链接原样贴给用户，请他用手机 QQ 扫码并确认。不要跑 `gateway setup`（那是需要按键的 TUI）。用户说扫完后执行：
+
+```bash
+python3 ~/.hermes/profiles/<角色名>/scripts/qq-bind.py wait --profile <角色名>
+```
+
+它会在扫码成功后自动把 `QQ_APP_ID` / `QQ_CLIENT_SECRET` 写进该 profile 的 `.env`、打开平台、重启网关；过期就重新 `start` 出码。不要复制其它 profile 的凭据。
 2. 打开该 profile 的平台并设策略：
 
 ```bash

@@ -137,6 +137,9 @@ GATE_SCRIPT="$SOURCE/scripts/setup-status.py"
 if [[ -f "$GATE_SCRIPT" ]]; then
   mkdir -p "$PROFILE_HOME/scripts"
   cp "$GATE_SCRIPT" "$PROFILE_HOME/scripts/setup-status.py"
+  if [[ -f "$SOURCE/scripts/qq-bind.py" ]]; then
+    cp "$SOURCE/scripts/qq-bind.py" "$PROFILE_HOME/scripts/qq-bind.py"
+  fi
   printf '已安装初始化检查脚本: %s/scripts/setup-status.py\n' "$PROFILE_HOME"
 fi
 
