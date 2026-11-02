@@ -10,7 +10,7 @@ from .domain import decay_chemistry, float_or, reorder_formatted_memory_blocks, 
 def settle_state(now_ms: float) -> dict[str, Any]:
     def mutate(state):
         if state["emergency_stop"]:
-            return state
+            return None
         elapsed = max(0.0, now_ms - state["last_settled_at"])
         if elapsed <= 0:
             return state
@@ -56,7 +56,7 @@ def record_request(now_ms: float) -> None:
     """Charge the observed provider request; retry attempts are independently charged."""
     def mutate(state):
         if state["emergency_stop"]:
-            return state
+            return None
         state = settle_before_transition(state, now_ms)
         state["energy"] = max(0.0, state["energy"] - 0.05 * state["temperament"]["metabolism"])
         state["last_interaction_at"] = now_ms
@@ -72,7 +72,7 @@ def record_turn(now_ms: float, *, success: bool) -> None:
         return
     def mutate(state):
         if state["emergency_stop"]:
-            return state
+            return None
         state = settle_before_transition(state, now_ms)
         state["chemistry"]["dopamine"] = min(100.0, state["chemistry"]["dopamine"] + 5.0)
         state["last_interaction_at"] = now_ms
@@ -91,7 +91,7 @@ def record_api_error(now_ms: float, *, error_type: str, retryable: bool | None) 
         return
     def mutate(state):
         if state["emergency_stop"]:
-            return state
+            return None
         state = settle_before_transition(state, now_ms)
         sensitivity = state["temperament"]["sensitivity"]
         state["chemistry"]["cortisol"] = min(100.0, state["chemistry"]["cortisol"] + 20.0 * sensitivity)
@@ -129,7 +129,7 @@ def observe_tool_result(now_ms: float, *, tool_name: str, args: dict[str, Any], 
             return
         def close_observed(state):
             if state["emergency_stop"]:
-                return state
+                return None
             state = settle_before_transition(state, now_ms)
             targets = [gap for gap in state["gaps"] if gap.get("status") == "open"
                        and (gap.get("query") == successful_query or _gap_similarity(
@@ -159,7 +159,7 @@ def observe_tool_result(now_ms: float, *, tool_name: str, args: dict[str, Any], 
 
     def mutate(state):
         if state["emergency_stop"]:
-            return state
+            return None
         state = settle_before_transition(state, now_ms)
         _open_or_reactivate_gap(state, summary, f"tool:{tool_name}", now_ms, query=query)
         state["last_interaction_at"] = now_ms
@@ -167,6 +167,22 @@ def observe_tool_result(now_ms: float, *, tool_name: str, args: dict[str, Any], 
         return state
 
     from .storage import update_state
+    update_state(now_ms, mutate)
+
+
+def observe_assistant_unknown(now_ms: float, summary: str) -> None:
+    """Record an assistant uncertainty through the guarded internal gap transition."""
+    from .storage import update_state
+
+    def mutate(state):
+        if state["emergency_stop"]:
+            return None
+        state = settle_before_transition(state, now_ms)
+        _open_or_reactivate_gap(state, summary, "assistant_unknown_claim", now_ms)
+        state["last_interaction_at"] = now_ms
+        state["last_settled_at"] = now_ms
+        return state
+
     update_state(now_ms, mutate)
 
 
@@ -277,6 +293,40 @@ def reorder_prompt_memories(prompt: str, now_ms: float) -> tuple[str, int]:
         state["chemistry"]["cortisol"],
         state["chemistry"]["dopamine"],
     )
+
+
+def append_open_loops(system_text: str, gaps: list[dict[str, Any]], now_ms: float) -> str:
+    """Append a bounded summary of the highest-tension unresolved gaps."""
+    # A-class PRD M8.6: expose unresolved loops; formatting/budget are the task's host adaptation.
+    open_gaps = sorted(
+        (gap for gap in gaps if isinstance(gap, dict) and gap.get("status") == "open"),
+        key=lambda gap: float_or(gap.get("tension"), 0.0), reverse=True,
+    )[:3]
+    if not open_gaps:
+        return system_text
+
+    def age_label(gap: dict[str, Any]) -> str:
+        age_ms = max(0.0, now_ms - float_or(gap.get("created_at"), now_ms))
+        minutes = int(age_ms // 60_000)
+        if minutes >= 24 * 60:
+            return f"{minutes // (24 * 60)}d"
+        if minutes >= 60:
+            return f"{minutes // 60}h"
+        return f"{minutes}m"
+
+    entries = [
+        f"tension={float_or(gap.get('tension'), 0.0):.0f}: {str(gap.get('summary', ''))}（{age_label(gap)}）"
+        for gap in open_gaps
+    ]
+    while entries:
+        suffix = "[open loops] " + "；".join(entries)
+        separator = "\n\n" if system_text else ""
+        if len(separator + suffix) <= 400:
+            return f"{system_text}{separator}{suffix}"
+        if len(entries) == 1:
+            return system_text + separator + suffix[:400 - len(separator)]
+        entries.pop()
+    return system_text
 
 
 def stop_state(now_ms: float, stopped: bool) -> None:

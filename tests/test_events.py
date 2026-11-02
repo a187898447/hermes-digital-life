@@ -34,6 +34,7 @@ sys.modules[plugin_spec.name] = plugin
 plugin_spec.loader.exec_module(plugin)
 
 from digital_life.domain import default_state
+from digital_life.domain import find_gap_sentence, pick_temperature
 from digital_life.runtime import record_api_error, record_request, record_turn
 from digital_life import storage
 
@@ -67,6 +68,15 @@ class RecordingContext:
 
 
 class ObservedTransitionTests(unittest.TestCase):
+    def test_stopped_request_and_reply_do_not_write_sqlite(self):
+        self.patcher.stop()
+        plugin.digital_life.runtime.stop_state(1_000_000, True)
+        plugin_storage = sys.modules[plugin.digital_life.runtime.__package__ + ".storage"]
+        with patch.object(plugin_storage, "_write_unlocked", wraps=plugin_storage._write_unlocked) as write:
+            plugin._affect_request({"messages": [{"role": "system", "content": "base"}]})
+            plugin._post_llm_call("我不知道火星营业时间")
+            write.assert_not_called()
+
     def setUp(self):
         self.state = default_state(1_000_000)
         self.patcher = patch.object(storage, "update_state", self._update)
@@ -76,7 +86,9 @@ class ObservedTransitionTests(unittest.TestCase):
         self.patcher.stop()
 
     def _update(self, now_ms, mutate):
-        self.state = mutate(self.state)
+        next_state = mutate(self.state)
+        if next_state is not None:
+            self.state = next_state
         return self.state
 
     def test_provider_request_charges_fixed_cost_not_model_supplied_amount(self):
@@ -97,6 +109,19 @@ class ObservedTransitionTests(unittest.TestCase):
         from digital_life.runtime import observe_tool_result
         observe_tool_result(1_010_000, tool_name="terminal", args={"command": "echo"}, result="")
         self.assertEqual(self.state["gaps"], [])
+
+    def test_assistant_unknown_gap_deduplicates_and_respects_stop(self):
+        from digital_life.runtime import observe_assistant_unknown
+        observe_assistant_unknown(1_010_000, "我不知道火星的营业时间")
+        gap_id = self.state["gaps"][0]["id"]
+        observe_assistant_unknown(1_020_000, "我不确定火星的营业时间")
+        self.assertEqual(len(self.state["gaps"]), 1)
+        self.assertEqual(self.state["gaps"][0]["id"], gap_id)
+        self.assertEqual(self.state["gaps"][0]["source"], "assistant_unknown_claim")
+        self.state["emergency_stop"] = True
+        before = repr(self.state)
+        observe_assistant_unknown(1_030_000, "我不知道火星的营业时间")
+        self.assertEqual(repr(self.state), before)
 
     def test_observed_empty_search_creates_deduplicated_gap(self):
         from digital_life.runtime import observe_tool_result
@@ -153,6 +178,62 @@ class ObservedTransitionTests(unittest.TestCase):
 
 
 class RegistrationTests(unittest.TestCase):
+    def test_temperature_and_system_only_requests(self):
+        state = default_state(1_000_000)
+        runtime = plugin.digital_life.runtime
+        with patch.object(runtime, "status_snapshot", return_value=state), patch.object(runtime, "record_request"):
+            for request in ({"system": "base"}, {"messages": []}, {"input": []}, {"messages": [], "temperature": None}):
+                with self.subTest(request=request):
+                    result = plugin._affect_request(request)["request"]
+                    self.assertAlmostEqual(result["temperature"], pick_temperature(state["chemistry"], state["energy"]))
+                    self.assertEqual(set(result), set(request) | {"temperature"})
+            for temperature in (0, 0.3, 1.0):
+                request = {"messages": [{"role": "user", "content": "hello"}], "temperature": temperature, "top_p": 0.8, "max_tokens": 100}
+                result = plugin._affect_request(request)["request"]
+                for key in ("temperature", "top_p", "max_tokens"):
+                    self.assertEqual(result[key], request[key])
+
+    def test_gap_append_supported_system_shapes(self):
+        runtime = plugin.digital_life.runtime
+        now_ms = 2_000_000
+        state = default_state(now_ms)
+        state["gaps"] = [{"summary": "question", "status": "open", "tension": 87, "created_at": 0}]
+        requests = [
+            ({"system": "base"}, lambda r: r["system"]),
+            ({"system": [{"type": "text", "text": "base"}]}, lambda r: r["system"][0]["text"]),
+            ({"messages": [{"role": "system", "content": "base"}]}, lambda r: r["messages"][0]["content"]),
+            ({"messages": [{"role": "system", "content": [{"type": "text", "text": "base"}]}]}, lambda r: r["messages"][0]["content"][0]["text"]),
+            ({"input": [{"role": "developer", "content": [{"type": "input_text", "text": "base"}]}]}, lambda r: r["input"][0]["content"][0]["text"]),
+        ]
+        with (
+            patch.object(runtime, "status_snapshot", return_value=state),
+            patch.object(runtime, "record_request"),
+            patch.object(runtime, "reorder_prompt_memories", return_value=("reordered", 1)),
+            patch.object(plugin.time, "time", return_value=now_ms / 1000),
+        ):
+            for request, extract in requests:
+                with self.subTest(request=request):
+                    result = plugin._affect_request(request)["request"]
+                    self.assertEqual(extract(result), runtime.append_open_loops("reordered", state["gaps"], now_ms))
+                    self.assertEqual(set(result), set(request) | {"temperature"})
+
+    def test_post_llm_unknown_claim_is_guarded(self):
+        runtime = plugin.digital_life.runtime
+        with patch.object(plugin, "record_turn"), patch.object(runtime, "observe_assistant_unknown") as observe:
+            plugin._post_llm_call("我不知道火星营业时间。")
+            self.assertEqual(observe.call_args.args[1], "我不知道火星营业时间")
+            observe.reset_mock()
+            for reply in ("", "/我不知道火星营业时间", "😀", "嗯", "这意味着我不知道火星营业时间", "我不知道执念张力"):
+                plugin._post_llm_call(reply)
+            observe.assert_not_called()
+        with patch.object(plugin, "record_turn"), patch.object(runtime, "observe_assistant_unknown", side_effect=RuntimeError):
+            plugin._post_llm_call("我不知道火星营业时间。")
+
+    def setUp(self):
+        self.snapshot = patch.object(plugin.digital_life.runtime, "status_snapshot", return_value=default_state(1_000_000))
+        self.snapshot.start()
+        self.addCleanup(self.snapshot.stop)
+
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)
@@ -165,8 +246,11 @@ class RegistrationTests(unittest.TestCase):
         self.assertIn("Do not", ctx.blueprints[0][1]["prompt_template"])
 
     def test_per_request_affect_preserves_both_supported_payload_shapes(self):
-        with patch.object(plugin.digital_life.runtime, "affect_note", return_value="[observed affect]"), \
-                patch.object(plugin.digital_life.runtime, "record_request"):
+        with (
+            patch.object(plugin.digital_life.runtime, "status_snapshot", return_value=default_state(1_000_000)),
+            patch.object(plugin.digital_life.runtime, "affect_note", return_value="[observed affect]"),
+            patch.object(plugin.digital_life.runtime, "record_request"),
+        ):
             chat = {"messages": [{"role": "user", "content": "hello"}], "temperature": 0.4}
             chat_result = plugin._affect_request(chat)
             responses = {"input": [{"role": "user", "content": "hello"}], "max_output_tokens": 40}

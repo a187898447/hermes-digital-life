@@ -99,6 +99,82 @@ def float_or(value: Any, fallback: float) -> float:
     return number if math.isfinite(number) else fallback
 
 
+def pick_temperature(chemistry: dict[str, Any], energy: float) -> float:
+    """Map current chemistry and energy to the task-defined request temperature."""
+    # B-class policy: only cortisol-before-dopamine precedence is borrowed from upstream.
+    cortisol = float_or(chemistry.get("cortisol"), 20.0)
+    dopamine = float_or(chemistry.get("dopamine"), 50.0)
+    serotonin = float_or(chemistry.get("serotonin"), 50.0)
+    if cortisol >= 80:
+        return 1.0
+    if dopamine >= 70:
+        return 0.85
+    temperature = 0.70
+    temperature += 0.20 * clamp((cortisol - 40.0) / 40.0, 0.0, 1.0)
+    temperature += 0.10 * clamp((70.0 - serotonin) / 35.0, 0.0, 1.0)
+    temperature += 0.10 * clamp((dopamine - 50.0) / 20.0, 0.0, 1.0)
+    if float_or(energy, 100.0) < 20.0:
+        temperature -= 0.15
+    return min(1.10, max(0.30, temperature))
+
+
+_UNKNOWN_RE = re.compile(r"我[^，。；！？\n]{0,4}(?:不知道|不晓得|不清楚|不明白|不确定|没找到|没有找到|查不到|搜不到|没查到|说不准|搞不清|弄不清|无法确定|无从得知)")
+_INQUIRY_RE = re.compile(r"我[^，。；！？\n]{0,3}(?:想知道|想查|想弄明白|想搞清楚|想确认|想了解|查一下|查查|查查看)")
+_SELF_REFERENTIAL_RE = re.compile(
+    r"执念|缺口|心结|内省|唤醒|潜意识|化学池|激素|张力|状态文件|收割|闭环|gap|genome|chemicals|digital_life_", re.I
+)
+_EXPOSITORY_RE = re.compile(
+    r"意味着|差别在于|也就是说|换句话说|这说明|之所以|因此|总的来说|总之|区别在于|某种意义上|某种程度上|另一方面|与此同时|关键在于", re.I
+)
+_MARKDOWN_RE = re.compile(r"(?:```.*?```|`([^`]*)`|!\[[^]]*\]\([^)]*\)|\[([^]]+)\]\([^)]*\)|[*_~>#])", re.S)
+
+
+def _clean_gap_candidate(text: str) -> str:
+    text = _MARKDOWN_RE.sub(lambda match: match.group(1) or match.group(2) or "", text)
+    text = re.sub(r"^\s*(?:[-*+]\s+|\d+[.)]\s+|[○●✓✔☑]\s*)", "", text)
+    return text.strip().strip(" \t\r\n|:：-—")
+
+
+def _is_meaningful_gap_candidate(text: str) -> bool:
+    return len(text) >= 4 and sum(char.isalnum() for char in text) >= 3
+
+
+def is_unknown_claim(text: str) -> bool:
+    return bool(text and _UNKNOWN_RE.search(text))
+
+
+def is_gap_worthy(sentence: str) -> bool:
+    if not sentence or _SELF_REFERENTIAL_RE.search(sentence) or _EXPOSITORY_RE.search(sentence):
+        return False
+    return is_unknown_claim(sentence) or bool(_INQUIRY_RE.search(sentence))
+
+
+def find_gap_sentence(text: str, max_len: int = 100) -> str | None:
+    """Extract the longest meaningful uncertainty/inquiry sentence, if any."""
+    if not text or text.lstrip().startswith("/"):
+        return None
+    # B-class adaptation: upstream's UNKNOWN_RE/INQUIRY_RE/EXPOSITORY_RE mix English and Chinese.
+    # This implementation borrows the extraction/filtering structure but uses task-defined Chinese terms.
+    candidates = []
+    for raw in re.split(r"[。！？!?\n]+", text):
+        raw = raw.strip()
+        if not raw:
+            continue
+        if "|" in raw:
+            parts = [_clean_gap_candidate(cell) for cell in raw.split("|")]
+            parts = [part for part in parts if _is_meaningful_gap_candidate(part) and is_gap_worthy(part)]
+            candidate = max(parts, key=len, default="")
+        else:
+            candidate = _clean_gap_candidate(raw)
+        if not _is_meaningful_gap_candidate(candidate) or not is_gap_worthy(candidate):
+            continue
+        candidates.append(candidate)
+    if not candidates:
+        return None
+    result = max(candidates, key=len)[:max_len]
+    return result.rstrip(" \t，,、；;:：。.!！?？") or None
+
+
 def default_state(now_ms: float) -> dict[str, Any]:
     temperament = dict(DEFAULT_TEMPERAMENT)
     chemistry = {key: value["initial"] for key, value in DEFAULT_CHEMICALS.items()}

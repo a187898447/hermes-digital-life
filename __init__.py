@@ -20,6 +20,14 @@ def _status(args: dict[str, Any], **kwargs) -> str:
 def _post_llm_call(assistant_response: str = "", **kwargs) -> None:
     if assistant_response:
         record_turn(time.time() * 1000, success=True)
+        try:
+            if assistant_response.lstrip().startswith("/"):
+                return
+            unknown = digital_life.domain.find_gap_sentence(assistant_response)
+            if unknown:
+                digital_life.runtime.observe_assistant_unknown(time.time() * 1000, unknown)
+        except Exception:
+            pass
 
 
 def _api_error(error: dict[str, Any] | None = None, retryable: bool | None = None, **kwargs) -> None:
@@ -60,22 +68,31 @@ def _reorder_content(content: Any, now_ms: float) -> tuple[Any, bool]:
 def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     now_ms = time.time() * 1000
     record_request(now_ms)
+    state = digital_life.runtime.status_snapshot(now_ms)
+    temperature = request.get("temperature")
+    # B-class Hermes policy: an explicit caller temperature always wins.
+    result_temperature = (
+        digital_life.domain.pick_temperature(state["chemistry"], state["energy"])
+        if "temperature" not in request or temperature is None else None
+    )
     note = digital_life.runtime.affect_note(now_ms)
-    changed = False
+    changed = result_temperature is not None
     result = dict(request)
     system = result.get("system")
     if isinstance(system, str):
         rewritten, blocks = digital_life.runtime.reorder_prompt_memories(system, now_ms)
-        if blocks:
-            result["system"] = rewritten
+        appended = digital_life.runtime.append_open_loops(rewritten, state["gaps"], now_ms)
+        if blocks or appended != system:
+            result["system"] = appended
             changed = True
     elif isinstance(system, list):
         system_items = list(system)
         for index, item in enumerate(system_items):
             if isinstance(item, dict) and isinstance(item.get("text"), str):
                 rewritten, blocks = digital_life.runtime.reorder_prompt_memories(item["text"], now_ms)
-                if blocks:
-                    system_items[index] = {**item, "text": rewritten}
+                appended = digital_life.runtime.append_open_loops(rewritten, state["gaps"], now_ms)
+                if blocks or appended != item["text"]:
+                    system_items[index] = {**item, "text": appended}
                     changed = True
         if changed:
             result["system"] = system_items
@@ -86,6 +103,23 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
             if not isinstance(message, dict) or message.get("role") != "system":
                 continue
             content, reordered = _reorder_content(message.get("content"), now_ms)
+            if isinstance(content, str):
+                appended = digital_life.runtime.append_open_loops(
+                    content, state["gaps"], now_ms
+                )
+                reordered = reordered or appended != content
+                content = appended
+            elif isinstance(content, list):
+                content_items = list(content)
+                for block_index, block in enumerate(content_items):
+                    if isinstance(block, dict) and isinstance(block.get("text"), str):
+                        appended = digital_life.runtime.append_open_loops(
+                            block["text"], state["gaps"], now_ms
+                        )
+                        if appended != block["text"]:
+                            content_items[block_index] = {**block, "text": appended}
+                            reordered = True
+                content = content_items
             if reordered:
                 rewritten[index] = {**message, "content": content}
                 changed = True
@@ -106,6 +140,8 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
                 rewritten[user_index] = last
                 changed = True
         if changed:
+            if result_temperature is not None:
+                result["temperature"] = result_temperature
             result["messages"] = rewritten
         else:
             return None
@@ -117,6 +153,23 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
             if not isinstance(item, dict) or item.get("role") not in {"system", "developer"}:
                 continue
             content, reordered = _reorder_content(item.get("content"), now_ms)
+            if isinstance(content, str):
+                appended = digital_life.runtime.append_open_loops(
+                    content, state["gaps"], now_ms
+                )
+                reordered = reordered or appended != content
+                content = appended
+            elif isinstance(content, list):
+                content_items = list(content)
+                for block_index, block in enumerate(content_items):
+                    if isinstance(block, dict) and isinstance(block.get("text"), str):
+                        appended = digital_life.runtime.append_open_loops(
+                            block["text"], state["gaps"], now_ms
+                        )
+                        if appended != block["text"]:
+                            content_items[block_index] = {**block, "text": appended}
+                            reordered = True
+                content = content_items
             if reordered:
                 rewritten[index] = {**item, "content": content}
                 changed = True
@@ -135,8 +188,11 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
             if last is not None:
                 rewritten[user_index] = last
                 changed = True
+        if changed:
+            result["input"] = rewritten
     if changed:
-        result["input"] = rewritten
+        if result_temperature is not None:
+            result["temperature"] = result_temperature
         return {"request": result, "source": "digital-life", "reason": "per-request affect context"}
     return None
 

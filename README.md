@@ -18,6 +18,9 @@ For upgrades, back up the target profile's `plugin-data/hermes-lover/` directory
 - DLC sleep-energy recovery and bounded temperament.
 - Profile-scoped SQLite life state using Hermes `plugin_db()`.
 - Read-only `digital_life_status` tool and per-provider-request affect middleware.
+- Bounded open-loop system context (up to three gaps, at most 400 appended characters).
+- Chinese assistant uncertainty/inquiry detection with existing gap deduplication and reactivation.
+- Task-defined chemistry/energy temperature mapping, only when request temperature is omitted or null.
 - Lossless memory affinity ranking helpers.
 - Operator CLI: `hermes hermes-lover status|stop|resume|resolve-gap <id>`.
 - Bundled profile skills: `hermes-lover-guide` (onboarding, 女娲→SOUL.md translation, QQ binding, beat enablement).

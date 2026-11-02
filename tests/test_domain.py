@@ -10,6 +10,10 @@ from pathlib import Path
 from digital_life.domain import (
     DEFAULT_CHEMICALS,
     attention_weights,
+    find_gap_sentence,
+    is_gap_worthy,
+    is_unknown_claim,
+    pick_temperature,
     decay_chemistry,
     decay_toward,
     default_state,
@@ -164,6 +168,68 @@ class MemoryAffinityTests(unittest.TestCase):
         self.assertEqual(blocks, 0)
         self.assertEqual(rewritten, prompt)
 
+
+class SignalDomainTests(unittest.TestCase):
+    def test_longest_sentence_and_markdown_table_candidate(self):
+        short = "我不知道天气"
+        long = "我想弄明白火星上的沙尘暴为什么持续这么久"
+        self.assertEqual(find_gap_sentence(short + "。" + long), long)
+        table = "| 很长但是没有认知诉求的旁注文字应该忽略 | **我不知道营业时间** |"
+        self.assertEqual(find_gap_sentence(table), "我不知道营业时间")
+        self.assertEqual(len(find_gap_sentence("我不知道" + "未知的事" * 40)), 100)
+        self.assertFalse(is_gap_worthy("我去同步文件"))
+
+    def test_gap_ages_top_three_and_oversized_summary(self):
+        from digital_life.runtime import append_open_loops
+        now = 3 * 86_400_000
+        gaps = [
+            {"status": "open", "tension": tension, "summary": str(tension), "created_at": now - age}
+            for tension, age in ((20, 60_000), (90, 86_400_000), (80, 3_600_000), (70, 1_200_000))
+        ]
+        text = append_open_loops("base", gaps, now)
+        self.assertTrue(text.startswith("base\n\n[open loops] tension=90"))
+        self.assertIn("（1d）", text)
+        self.assertIn("（1h）", text)
+        self.assertIn("（20m）", text)
+        self.assertNotIn("tension=20", text)
+        gaps[1]["summary"] = "x" * 1000
+        suffix = append_open_loops("base", gaps, now)[4:]
+        self.assertEqual(len(suffix), 400)
+        self.assertIn("tension=90", suffix)
+
+    def test_temperature_policy_thresholds_continuous_energy_and_clamp(self):
+        self.assertEqual(pick_temperature({"cortisol": 80, "dopamine": 100, "serotonin": 0}, 0), 1.0)
+        self.assertEqual(pick_temperature({"cortisol": 79, "dopamine": 70, "serotonin": 0}, 0), 0.85)
+        self.assertAlmostEqual(pick_temperature({"cortisol": 20, "dopamine": 50, "serotonin": 50}, 100), 0.70 + 0.10 * 20 / 35)
+        self.assertAlmostEqual(pick_temperature({"cortisol": 20, "dopamine": 50, "serotonin": 50}, 19), 0.70 + 0.10 * 20 / 35 - 0.15)
+        self.assertEqual(pick_temperature({"cortisol": 1000, "dopamine": 50, "serotonin": 0}, 100), 1.0)
+        self.assertGreaterEqual(pick_temperature({"cortisol": -100, "dopamine": -100, "serotonin": 1000}, 0), 0.3)
+
+    def test_unknown_claim_and_gap_candidate_filters(self):
+        self.assertTrue(is_unknown_claim("我真的不知道火星的营业时间"))
+        self.assertTrue(is_gap_worthy("我想查一下火星的营业时间"))
+        self.assertFalse(is_gap_worthy("这个意味着我不知道火星营业时间"))
+        self.assertFalse(is_gap_worthy("我不知道执念张力如何增长"))
+        self.assertEqual(find_gap_sentence("😀。我不知道火星的营业时间。"), "我不知道火星的营业时间")
+        self.assertIsNone(find_gap_sentence("/我不知道火星营业时间"))
+        self.assertIsNone(find_gap_sentence("😀。嗯。"))
+        self.assertEqual(find_gap_sentence("| ○ | 80 | 我不知道火星营业时间 | 注释 |"), "我不知道火星营业时间")
+        result = find_gap_sentence("我不知道火星的营业时间。这个意味着我不知道缺口状态。")
+        self.assertEqual(result, "我不知道火星的营业时间")
+
+    def test_gap_append_is_byte_identical_without_open_gaps_and_bounded(self):
+        from digital_life.runtime import append_open_loops
+        self.assertEqual(append_open_loops("abc", [], 1_000_000), "abc")
+        gaps = [
+            {"status": "open", "tension": tension, "created_at": 0, "summary": f"gap-{tension}-" + "x" * 180}
+            for tension in (95, 85, 75, 65)
+        ]
+        result = append_open_loops("system", gaps, 2 * 86_400_000)
+        suffix = result[len("system\n\n"): ]
+        self.assertLessEqual(len(suffix), 400)
+        self.assertIn("tension=95", suffix)
+        self.assertNotIn("tension=65", suffix)
+        self.assertIn("2d", suffix)
 
 if __name__ == "__main__":
     unittest.main()
