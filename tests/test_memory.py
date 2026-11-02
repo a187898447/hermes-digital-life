@@ -109,6 +109,15 @@ class MemoryTests(unittest.TestCase):
     def recall(self, query="", **kwargs):
         return self.store.recall(query, now_ms=NOW, **kwargs)
 
+    def test_clear_archives_only_the_requested_chat(self):
+        mine = self.store.write("群里有人吵架", session_id="s1", chat_id="g1", chat_type="group")
+        other = self.store.write("另一个群的记录", session_id="s2", chat_id="g2", chat_type="group")
+        self.assertEqual(self.store.clear("g1"), 1)
+        entries = self.store.read_entries()
+        self.assertTrue(entries[mine["id"]]["archived"])
+        self.assertFalse(entries[other["id"]]["archived"])
+        self.assertEqual([row["id"] for row in self.store.recall(chat_id="g1").get("entries", [])], [])
+
     def test_journal_write_can_be_anchored_to_its_day(self):
         result = self.store.write("【日记 2026-10-31】那天很累。", kind="journal", day="2026-10-31")
         self.assertEqual(result["date"], "2026-10-31")

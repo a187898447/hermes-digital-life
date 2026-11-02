@@ -16,6 +16,7 @@ provides_tools:
   - digital_life_status
 provides_hooks:
   - pre_llm_call
+  - pre_gateway_dispatch
   - transform_llm_output
   - post_tool_call
   - post_llm_call

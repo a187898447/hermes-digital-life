@@ -357,6 +357,25 @@ class MemoryStore:
                 logger.warning("Memory event persisted but index update failed", exc_info=True)
             return {"ok": True, "id": event["id"], "date": date}
 
+    def clear(self, chat_id=None, *, now_ms=None):
+        """Archive every live entry (optionally only one chat). Returns how many were archived."""
+        stamp = time.time() * 1000 if now_ms is None else now_ms
+        with self._locked():
+            self._require_running()
+            entries = self.read_entries()
+            targets = [e for e in entries.values()
+                       if not e.get("archived") and (chat_id is None or e.get("chat_id", "") == chat_id)]
+            if not targets:
+                return 0
+            self._append([{"version": 1, "id": e["id"], "op": "forget", "archived_at": stamp}
+                          for e in targets], stamp)
+            try:
+                entries, digest = self._replay()
+                self._sync(entries, digest)
+            except (sqlite3.Error, RuntimeError, OSError):
+                logger.warning("Memory index unavailable after clear", exc_info=True)
+            return len(targets)
+
     @staticmethod
     def _query(db, query, include_cold):
         condition = "1" if include_cold else "e.archived=0"

@@ -22,6 +22,7 @@ _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
 _CAPTURE = None
 _JOURNAL_CHECK = None
 _JOURNAL_PROMPTED: set[str] = set()
+_MEMORY_STORE: dict[str, object] = {}
 
 
 def _session_scope(session_id: str) -> tuple[str, str]:
@@ -78,6 +79,62 @@ def _api_error(error: dict[str, Any] | None = None, retryable: bool | None = Non
 
 def _post_tool_call(tool_name: str = "", args: dict[str, Any] | None = None, result: str = "", **kwargs) -> None:
     digital_life.runtime.observe_tool_result(time.time() * 1000, tool_name=tool_name, args=args or {}, result=result)
+
+
+_RESET_COMMAND = re.compile(r"^/(?:new|reset)(?:\s|$)", re.IGNORECASE)
+_RESET_SCRUB = 0
+
+
+def _plugin_env(name: str) -> str:
+    value = os.environ.get(name, "")
+    if value:
+        return value
+    home = os.environ.get("HERMES_HOME", "")
+    path = os.path.join(home, ".env") if home else ""
+    if path and os.path.exists(path):
+        try:
+            for line in open(path, encoding="utf-8"):
+                key, _, raw = line.strip().partition("=")
+                if key == name:
+                    return raw.strip().strip('"').strip("'")
+        except OSError:
+            return ""
+    return ""
+
+
+def _reset_admins() -> set[str]:
+    raw = ",".join((_plugin_env("QQ_OWNER_ID"), _plugin_env("QQ_ALLOWED_USERS")))
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+def _on_gateway_dispatch(event=None, **kwargs):
+    """``/new`` (or ``/reset``) in QQ: owner/manager only, and it wipes palace + life state."""
+    try:
+        text = (getattr(event, "text", "") or "").strip()
+        source = getattr(event, "source", None)
+        platform = getattr(getattr(source, "platform", None), "value", "") or ""
+        if platform != "qqbot" or not _RESET_COMMAND.match(text):
+            return None
+        sender = (getattr(event, "sender_id", "") or getattr(source, "user_id", "") or "")
+        sender = str(sender)
+        if sender not in _reset_admins():
+            logger.info("hermes-lover /new ignored: sender %s is not an owner", sender[-6:])
+            return None
+        chat_id = str(getattr(source, "chat_id", "") or "")
+        factory = _MEMORY_STORE.get("factory")
+        store = factory() if factory is not None else None
+        if store is not None:
+            cleared = store.clear(chat_id or None)
+        else:
+            cleared = 0
+        now_ms = time.time() * 1000
+        from .digital_life import domain as _domain, storage as _storage  # noqa: PLC0415
+
+        _storage.update_state(now_ms, lambda state: _domain.default_state(now_ms))
+        logger.info("hermes-lover /new by owner: cleared %s palace entries, life state reset", cleared)
+    except Exception:
+        logger.warning("hermes-lover /new reset failed", exc_info=True)
+    return None
 
 
 def _on_user_message(
@@ -360,6 +417,7 @@ def register(ctx) -> None:
 
     global _CAPTURE, _JOURNAL_CHECK
     _CAPTURE = capture_turn
+    _MEMORY_STORE["factory"] = memory_store
 
     def journal_check(platform: str) -> str | None:
         """First QQ message of a day: if yesterday has no diary yet, ask the model to write it."""
@@ -465,6 +523,7 @@ def register(ctx) -> None:
         description="Read the current bounded digital-life state. This tool cannot change life state.",
     )
     ctx.register_hook("transform_llm_output", _transform_llm_output)
+    ctx.register_hook("pre_gateway_dispatch", _on_gateway_dispatch)
     ctx.register_hook("pre_llm_call", _on_user_message)
     ctx.register_hook("post_llm_call", _post_llm_call)
     ctx.register_hook("api_request_error", _api_error)

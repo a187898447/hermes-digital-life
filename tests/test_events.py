@@ -447,5 +447,31 @@ class QqBubbleTransformTests(unittest.TestCase):
             self.assertIn(yesterday, note["context"])
 
 
+    def test_new_from_a_non_owner_leaves_the_palace_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx = RecordingContext()
+            ctx.get_config = lambda key, default=None: default
+            with (
+                patch.object(plugin.digital_life.storage, "data_root", return_value=root),
+                patch.object(plugin.digital_life.storage, "plugin_db",
+                             side_effect=lambda name, filename: sqlite3.connect(root / filename)),
+                patch.object(plugin.digital_life.storage, "read_state",
+                             return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
+                patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+                patch.object(plugin, "_plugin_env", side_effect=lambda name: "owner-1" if name == "QQ_OWNER_ID" else ""),
+            ):
+                plugin.register(ctx)
+                hooks = dict(ctx.hooks)
+                hook = hooks["pre_gateway_dispatch"]
+                from types import SimpleNamespace
+                event = SimpleNamespace(text="/new", sender_id="intruder",
+                                        source=SimpleNamespace(
+                                            platform=SimpleNamespace(value="qqbot"),
+                                            chat_id="chat-1", user_id="intruder"))
+                self.assertIsNone(hook(event=event))
+                self.assertEqual(plugin._MEMORY_STORE["factory"]().read_entries(), {})
+
+
 if __name__ == "__main__":
     unittest.main()
