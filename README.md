@@ -104,6 +104,7 @@ Selected domain rules are derived from `digital-life-core` by mashangshui (温�
 - **QQ（qqbot）** 只用按天分片的记忆宫殿（`plugin-data/<profile>/memory/`）。QQ 工具集不含自带
   `memory`，插件也只对 `platform == "qqbot"` 的回合做自动捕获。每条捕获都带
   `chat_id`/`chat_type`/`speaker`，召回按当前会话隔离，私聊与群聊不会混记。
-- 每天 04:00 的 `hermes-lover-journal` 任务读昨天的宫殿记录和当时的 digital-life 状态，写一篇
-  `journal` 条目（权重 2.5）。问到某一天时先命中日记，日记没写到的细节再用
-  `memory_recall(day="YYYY-MM-DD")` 查当天的原始条目。
+- 日记不靠定时任务（笔记本合盖就会错过）：每天第一条 QQ 消息到达时，插件检查昨天有没有
+  `journal` 条目，没有就让模型读昨天的宫殿记录和当前 digital-life 状态，写一篇 120–400 字的
+  第一人称日记（`memory_write(kind="journal", day="YYYY-MM-DD")`，权重 2.5，锚定在被总结的那天）。
+  问到某一天时先命中日记，日记没写到的细节再用 `memory_recall(day="YYYY-MM-DD")` 查当天原始条目。

@@ -172,24 +172,14 @@ elif [[ -f "$BEAT_SCRIPT" ]]; then
   fi
 fi
 
-# Daily diary: the next morning the agent reads yesterday's palace entries and
-# writes one journal entry (kind "journal") that sits one level above the raw
-# events, so "那天发生了什么" opens the diary first and searches details second.
+# Daily diary: no scheduler — a sleeping laptop would miss a fixed 04:00 job.
+# The plugin checks on the first QQ message of each day whether yesterday's
+# diary exists and asks the model to write it from the palace + life state.
 JOURNAL_SCRIPT="$SOURCE/scripts/hermes-lover-journal.py"
-if ((WITH_BEAT == 0)); then
-  printf '已跳过日记任务（--no-beat）。需要时手动创建 hermes-lover-journal。\n'
-elif [[ -f "$JOURNAL_SCRIPT" ]]; then
+if [[ -f "$JOURNAL_SCRIPT" ]]; then
   mkdir -p "$PROFILE_HOME/scripts"
   cp "$JOURNAL_SCRIPT" "$PROFILE_HOME/scripts/hermes-lover-journal.py"
   chmod +x "$PROFILE_HOME/scripts/hermes-lover-journal.py"
-  JOURNAL_PROMPT="这是 hermes-lover 的日记任务。做三件事：1) 运行 \"$PROFILE_HOME/scripts/hermes-lover-journal.py\" --digest 读取昨天的记录和当时的状态；2) 读当前 profile 的 SOUL.md，用这个人物的口吻写一篇 120–400 字的第一人称日记，写清昨天开心和难过的地方、发生了什么、自己的一点想法，像私下记录而不是汇报；3) 把日记写到 /tmp/hermes-lover-journal.txt，再运行 \"$PROFILE_HOME/scripts/hermes-lover-journal.py\" --store /tmp/hermes-lover-journal.txt 存成昨天那天的日记。如果昨天没有任何记录，直接结束，不发消息。不要自己调用发送工具。"
-  if hermes -p "$PROFILE" cron create "0 4 * * *" "$JOURNAL_PROMPT" \
-      --name hermes-lover-journal \
-      --deliver local >/dev/null; then
-    printf '已创建每日日记任务: 每天 04:00 总结前一天\n'
-  else
-    printf '警告: 日记 cron 创建失败；稍后可手动创建。\n' >&2
-  fi
 fi
 
 # Studio starts each non-default profile's agent in a bridge worker pinned to

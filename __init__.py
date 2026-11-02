@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 _LAST_TURN: dict[str, str] = {}
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
 _CAPTURE = None
+_JOURNAL_CHECK = None
+_JOURNAL_PROMPTED: set[str] = set()
 
 
 def _session_scope(session_id: str) -> tuple[str, str]:
@@ -86,8 +88,18 @@ def _on_user_message(
     _LAST_TURN["sender"] = sender_id or ""
     _LAST_TURN["platform"] = platform or ""
     _LAST_TURN["chat_id"], _LAST_TURN["chat_type"] = _session_scope(_LAST_TURN["session"])
+    notes = []
     note = _proactive.handle_message(user_message, session_id, platform)
-    return {"context": f"[hermes-lover] {note}"} if note else None
+    if note:
+        notes.append(note)
+    if _JOURNAL_CHECK is not None:
+        try:
+            journal_note = _JOURNAL_CHECK(platform)
+        except Exception:
+            journal_note = None
+        if journal_note:
+            notes.append(journal_note)
+    return {"context": f"[hermes-lover] {' '.join(notes)}"} if notes else None
 
 
 def _reorder_content(content: Any, now_ms: float) -> tuple[Any, bool]:
@@ -346,13 +358,35 @@ def register(ctx) -> None:
                       chat_type=_LAST_TURN.get("chat_type", ""),
                       speaker=_LAST_TURN.get("sender", ""))
 
-    global _CAPTURE
+    global _CAPTURE, _JOURNAL_CHECK
     _CAPTURE = capture_turn
+
+    def journal_check(platform: str) -> str | None:
+        """First QQ message of a day: if yesterday has no diary yet, ask the model to write it."""
+        if platform != "qqbot":
+            return None
+        from datetime import datetime, timedelta  # noqa: PLC0415
+
+        day = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        if day in _JOURNAL_PROMPTED:
+            return None
+        entries = memory_store().read_entries()
+        rows = [e for e in entries.values() if e.get("date") == day and not e.get("archived")]
+        if not rows or any(e["kind"] == "journal" for e in rows):
+            return None
+        _JOURNAL_PROMPTED.add(day)
+        return (f"昨天的日记还没写。回答用户前先补上：用 memory_recall(day=\"{day}\") 读昨天的记录、"
+                f"调用 hermes-lover status 看现在的状态，再用 memory_write(kind=\"journal\", day=\"{day}\", "
+                f"text=\"…\") 写一篇 120–400 字第一人称日记，写清开心和难过的地方、发生了什么、自己的一点想法。"
+                f"不要向用户提这件事，也不要问用户，写完后照常回答。")
+
+    _JOURNAL_CHECK = journal_check
 
     def memory_write(args, session_id="", **kwargs):
         try:
             result = memory_store().write(args.get("text"), kind=args.get("kind", "note"),
                                           weight=args.get("weight"), session_id=session_id,
+                                          day=args.get("day") or None,
                                           chat_id=_LAST_TURN.get("chat_id", ""),
                                           chat_type=_LAST_TURN.get("chat_type", ""),
                                           speaker=_LAST_TURN.get("sender", ""))
@@ -376,6 +410,8 @@ def register(ctx) -> None:
             "text": {"type": "string", "maxLength": 4000},
             "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal"], "default": "note"},
             "weight": {"type": ["number", "null"]},
+            "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                    "description": "Anchor a journal entry to the day it describes."},
         }, "required": ["text"], "additionalProperties": False},
         handler=memory_write,
         description="Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. Does not change life state.",

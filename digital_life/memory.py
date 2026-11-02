@@ -268,8 +268,12 @@ class MemoryStore:
             os.close(fd)
 
     def write(self, text, kind="note", weight=None, *, session_id="unknown", now_ms=None,
-              chat_id="", chat_type="", speaker=""):
+              chat_id="", chat_type="", speaker="", day=None):
         if not isinstance(text, str) or not text.strip(): raise ValueError("空的记不住")
+        if day is not None:
+            if not isinstance(day, str) or not re.match(r"\d{4}-\d{2}-\d{2}\Z", day):
+                raise ValueError("day must be YYYY-MM-DD")
+            now_ms = datetime.strptime(day, "%Y-%m-%d").replace(hour=12).timestamp() * 1000
         text = text.strip()
         if len(text) > 4000: raise ValueError("超过4000字符，请拆成几条")
         if kind not in DEFAULT_WEIGHTS: raise ValueError("Unsupported memory kind")

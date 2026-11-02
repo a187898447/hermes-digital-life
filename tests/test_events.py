@@ -421,5 +421,31 @@ class QqBubbleTransformTests(unittest.TestCase):
             self.assertEqual(list((root / "memory").rglob("*.jsonl")), [])
 
 
+    def test_missing_yesterday_diary_is_requested_on_the_first_qq_message(self):
+        from datetime import datetime, timedelta
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        anchor = (datetime.now() - timedelta(days=1)).replace(hour=12).timestamp() * 1000
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx = RecordingContext()
+            ctx.get_config = lambda key, default=None: default
+            with (
+                patch.object(plugin.digital_life.storage, "data_root", return_value=root),
+                patch.object(plugin.digital_life.storage, "plugin_db",
+                             side_effect=lambda name, filename: sqlite3.connect(root / filename)),
+                patch.object(plugin.digital_life.storage, "read_state",
+                             return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
+                patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+            ):
+                plugin._JOURNAL_PROMPTED.clear()
+                plugin.register(ctx)
+                plugin.digital_life.memory.MemoryStore(root).write(
+                    "用户：今天被说胖\n助手：滚", session_id="s1", now_ms=anchor)
+                hooks = dict(ctx.hooks)
+                note = hooks["pre_llm_call"](user_message="在吗", session_id="s1", platform="qqbot")
+            self.assertIn("日记", note["context"])
+            self.assertIn(yesterday, note["context"])
+
+
 if __name__ == "__main__":
     unittest.main()

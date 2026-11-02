@@ -109,6 +109,13 @@ class MemoryTests(unittest.TestCase):
     def recall(self, query="", **kwargs):
         return self.store.recall(query, now_ms=NOW, **kwargs)
 
+    def test_journal_write_can_be_anchored_to_its_day(self):
+        result = self.store.write("【日记 2026-10-31】那天很累。", kind="journal", day="2026-10-31")
+        self.assertEqual(result["date"], "2026-10-31")
+        entry = self.store.read_entries()[result["id"]]
+        self.assertEqual(entry["kind"], "journal")
+        self.assertEqual(entry["date"], "2026-10-31")
+
     def test_day_recall_opens_journal_first_then_raw_entries(self):
         day = "2026-11-02"
         self.store.capture("用户：今天好累\n助手：早点睡", session_id="s1", now_ms=NOW)
