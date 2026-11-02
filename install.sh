@@ -100,12 +100,16 @@ hermes -p "$PROFILE" config set cron.wrap_response false >/dev/null 2>&1 || true
 
 qqbot_enabled="$(hermes -p "$PROFILE" config get platforms.qqbot.enabled 2>/dev/null || true)"
 if [[ "$qqbot_enabled" == "true" ]] && ! hermes -p "$PROFILE" config get platform_toolsets.qqbot >/dev/null 2>&1; then
-  hermes -p "$PROFILE" config set platform_toolsets.qqbot '["web","vision","todo","memory","digital_life","no_mcp"]'
-  printf '已设置 QQ 工具集: web/vision/todo/memory（不含终端与写文件，MCP 关闭）\n'
+  hermes -p "$PROFILE" config set platform_toolsets.qqbot '["web","vision","todo","digital_life","no_mcp"]'
+  printf '已设置 QQ 工具集: web/vision/todo/digital_life（不含自带 memory，终端与写文件关闭，MCP 关闭）\n'
 fi
 if [[ "$(hermes -p "$PROFILE" config get human_delay.mode 2>/dev/null)" == "off" ]]; then
   hermes -p "$PROFILE" config set human_delay.mode natural
 fi
+# The digital-life palace owns memory in this profile; the host's MEMORY.md/USER.md
+# store is single-user and would mix every chat partner together.
+hermes -p "$PROFILE" config set memory.memory_enabled false
+hermes -p "$PROFILE" config set memory.user_profile_enabled false
 
 # Ship the bundled onboarding guide as a profile-local
 # skills so the new agent can walk the user through setup, personas, QQ binding

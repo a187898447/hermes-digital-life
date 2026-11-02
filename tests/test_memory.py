@@ -166,6 +166,26 @@ class MemoryTests(unittest.TestCase):
         for kwargs in ({"k": True}, {"k": 1.5}, {"include_cold": "false"}):
             with self.assertRaises(ValueError): self.recall(**kwargs)
 
+    def test_recall_is_scoped_to_the_conversation(self):
+        self.write("我在私聊里说喜欢熬夜", kind="note", chat_id="dm-1", chat_type="dm")
+        self.write("群里有人说喜欢熬夜", kind="note", chat_id="group-9", chat_type="group")
+        self.write("全局记住的偏好", kind="note")
+        only_dm = self.recall("熬夜", chat_id="dm-1")
+        self.assertEqual(only_dm["matched"], 1)
+        self.assertEqual(only_dm["shown"][0]["chat_id"], "dm-1")
+        only_group = self.recall("熬夜", chat_id="group-9")
+        self.assertEqual(only_group["matched"], 1)
+        unscoped = self.recall("熬夜")
+        self.assertEqual(unscoped["matched"], 2)
+        self.assertEqual(self.recall("偏好", chat_id="dm-1")["matched"], 1)
+
+    def test_capture_records_speaker_and_chat(self):
+        self.store.capture("用户：hi\n助手：hi", session_id="s1", chat_id="g1",
+                            chat_type="group", speaker="member-7", now_ms=NOW)
+        entry = self.recall("hi", chat_id="g1")["shown"][0]
+        self.assertEqual((entry["chat_id"], entry["chat_type"], entry["speaker"]),
+                         ("g1", "group", "member-7"))
+
     def test_quota_survives_rebuild_and_duplicate_does_not_count(self):
         for i in range(20): self.write(str(i), session_id="s")
         self.write("0", session_id="s")

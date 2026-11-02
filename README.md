@@ -94,3 +94,9 @@ The tests do not require Hermes or an API key. The live plugin contract can be c
 ## Upstream attribution
 
 Selected domain rules are derived from `digital-life-core` by mashangshui (温水) and 鱼小水, upstream revision `d984665ff2e452cf9f57d845cfb93bfb9a64b6b1`. The upstream README welcomes MIT forks and its package metadata declares MIT. See `LICENSE` for attribution and the notice shipped with this project.
+
+## 记忆归属
+
+本插件自带按天分片的记忆宫殿（`plugin-data/<profile>/memory/`），安装时关闭 Hermes 自带的
+`MEMORY.md`/`USER.md`（`memory.memory_enabled=false`、`memory.user_profile_enabled=false`）。每条自动捕获
+的回合都带 `chat_id`/`chat_type`/`speaker`，召回按当前会话隔离，私聊与群聊不会混记。

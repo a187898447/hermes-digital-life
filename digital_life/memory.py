@@ -143,6 +143,11 @@ class MemoryStore:
                 raise ValueError("invalid access metadata")
             entries[identifier] = {k: event[k] for k in (
                 "id", "kind", "text", "weight", "cortisol", "created_at", "last_access_at", "hits", "source_session_id")}
+            for field in ("chat_id", "chat_type", "speaker"):
+                value = event.get(field, "")
+                if not isinstance(value, str):
+                    raise ValueError("invalid scope")
+                entries[identifier][field] = value
             date = identifier.split("-")[1]
             entries[identifier].update(date=f"{date[:4]}-{date[4:6]}-{date[6:]}", archived=False)
         elif op == "touch":
@@ -260,7 +265,8 @@ class MemoryStore:
         finally:
             os.close(fd)
 
-    def write(self, text, kind="note", weight=None, *, session_id="unknown", now_ms=None):
+    def write(self, text, kind="note", weight=None, *, session_id="unknown", now_ms=None,
+              chat_id="", chat_type="", speaker=""):
         if not isinstance(text, str) or not text.strip(): raise ValueError("空的记不住")
         text = text.strip()
         if len(text) > 4000: raise ValueError("超过4000字符，请拆成几条")
@@ -292,7 +298,8 @@ class MemoryStore:
                 seq = max((int(e["id"].rsplit("-", 1)[1]) for e in today), default=0) + 1
                 event = {"op": "add", "id": f"hp-{date.replace('-', '')}-{seq:04d}", "text": text,
                          "kind": kind, "weight": weight, "cortisol": self._state().get("chemistry", {}).get("cortisol", 20),
-                         "created_at": now_ms, "last_access_at": now_ms, "hits": 0, "source_session_id": session_id}
+                         "created_at": now_ms, "last_access_at": now_ms, "hits": 0, "source_session_id": session_id,
+                         "chat_id": str(chat_id or ""), "chat_type": str(chat_type or ""), "speaker": str(speaker or "")}
             self._require_running()
             self._append([event], now_ms)
             indexed = True
@@ -306,7 +313,8 @@ class MemoryStore:
                     "created_at": duplicate["created_at"] if duplicate else now_ms, "indexed": indexed}
 
 
-    def capture(self, text, *, session_id="unknown", now_ms=None):
+    def capture(self, text, *, session_id="unknown", now_ms=None,
+                chat_id="", chat_type="", speaker=""):
         """Append one raw exchange as a day-sharded turn entry (no model, no quota)."""
         if not isinstance(text, str) or not text.strip():
             return {"ok": False, "error": "empty"}
@@ -332,7 +340,8 @@ class MemoryStore:
                      "kind": "turn", "weight": 0.4,
                      "cortisol": self._state().get("chemistry", {}).get("cortisol", 20),
                      "created_at": now_ms, "last_access_at": now_ms, "hits": 0,
-                     "source_session_id": session_id}
+                     "source_session_id": session_id,
+                     "chat_id": str(chat_id or ""), "chat_type": str(chat_type or ""), "speaker": str(speaker or "")}
             self._require_running()
             self._append([event], now_ms)
             try:
@@ -359,21 +368,26 @@ class MemoryStore:
         rows = db.execute(f"SELECT e.payload FROM entries e WHERE {condition} AND e.text LIKE ? ESCAPE '\\'", (f"%{literal}%",)).fetchall()
         return [(json.loads(row), 1.0) for row, in rows]
 
-    def _retrieve(self, entries, query, k, include_cold, now_ms, cortisol, disk=False):
+    def _retrieve(self, entries, query, k, include_cold, now_ms, cortisol, disk=False, chat_id=None):
         # In-memory FTS also provides identical retrieval when stop forbids repairing the disk cache.
         connection = sqlite3.connect(self.index.as_uri() + "?mode=ro", uri=True) if disk else sqlite3.connect(":memory:")
         with closing(connection) as db:
             if not disk:
                 self._populate(db, entries)
             candidates = self._query(db, query, include_cold)
+            if chat_id:
+                # A conversation only sees its own exchanges plus globally written notes.
+                candidates = [(row, rel) for row, rel in candidates
+                              if row.get("chat_id", "") in ("", chat_id)]
         ranked = [dict(row, score=score(row, now_ms, rel, cortisol, not query),
                        effective_weight=decay(row["weight"], row["last_access_at"], now_ms)) for row, rel in candidates]
         ranked.sort(key=lambda row: (-row["score"], -row["created_at"], row["id"]))
-        return {"total": sum(not e["archived"] for e in entries.values()),
-                "cold_total": sum(e["archived"] for e in entries.values()), "matched": len(ranked),
+        scoped = [e for e in entries.values() if not chat_id or e.get("chat_id", "") in ("", chat_id)]
+        return {"total": sum(not e["archived"] for e in scoped),
+                "cold_total": sum(e["archived"] for e in scoped), "matched": len(ranked),
                 "returned": min(k, len(ranked)), "shown": ranked[:k], "attention": attention(cortisol)}
 
-    def recall(self, query="", k=8, include_cold=False, *, now_ms=None):
+    def recall(self, query="", k=8, include_cold=False, *, now_ms=None, chat_id=None):
         if query is None: query = ""
         if not isinstance(query, str): raise ValueError("query must be a string or null")
         if type(k) is not int: raise ValueError("k must be an integer")
@@ -382,11 +396,11 @@ class MemoryStore:
         state = self._state()
         cortisol = state.get("chemistry", {}).get("cortisol", 20)
         if state.get("emergency_stop"):
-            return self._retrieve(self.read_entries(), query, k, include_cold, now_ms, cortisol)
+            return self._retrieve(self.read_entries(), query, k, include_cold, now_ms, cortisol, chat_id=chat_id)
         with self._locked():
             entries, digest = self._replay()
             self._sync(entries, digest)
-            result = self._retrieve(entries, query, k, include_cold, now_ms, cortisol, disk=True)
+            result = self._retrieve(entries, query, k, include_cold, now_ms, cortisol, disk=True, chat_id=chat_id)
             events = [{"op": "touch", "id": row["id"], "hits": row["hits"] + 1, "last_access_at": now_ms}
                       for row in result["shown"]]
             if events:
