@@ -217,6 +217,35 @@ class RegistrationTests(unittest.TestCase):
                     self.assertEqual(extract(result), runtime.append_open_loops("reordered", state["gaps"], now_ms))
                     self.assertEqual(set(result), set(request) | {"temperature"})
 
+    def test_gap_suffix_is_appended_to_one_block_only(self):
+        runtime = plugin.digital_life.runtime
+        now_ms = 2_000_000
+        state = default_state(now_ms)
+        state["gaps"] = [{"summary": "question", "status": "open", "tension": 87, "created_at": 0}]
+        requests = [
+            ({"system": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}, lambda r: r["system"]),
+            (
+                {"messages": [{"role": "system", "content": [{"type": "text", "text": "a"}, {"type": "text", "text": "b"}]}]},
+                lambda r: r["messages"][0]["content"],
+            ),
+            (
+                {"input": [{"role": "developer", "content": [{"type": "input_text", "text": "a"}, {"type": "input_text", "text": "b"}]}]},
+                lambda r: r["input"][0]["content"],
+            ),
+        ]
+        with (
+            patch.object(runtime, "status_snapshot", return_value=state),
+            patch.object(runtime, "record_request"),
+            patch.object(plugin.time, "time", return_value=now_ms / 1000),
+        ):
+            for request, extract in requests:
+                with self.subTest(request=request):
+                    result = plugin._affect_request(request)["request"]
+                    rendered = [block["text"] if isinstance(block, dict) else block for block in extract(result)]
+                    self.assertEqual(sum(text.count("[open loops]") for text in rendered), 1)
+                    self.assertNotIn("[open loops]", rendered[0])
+                    self.assertIn("[open loops]", rendered[-1])
+
     def test_post_llm_unknown_claim_is_guarded(self):
         runtime = plugin.digital_life.runtime
         with patch.object(plugin, "record_turn"), patch.object(runtime, "observe_assistant_unknown") as observe:

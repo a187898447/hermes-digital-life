@@ -65,6 +65,25 @@ def _reorder_content(content: Any, now_ms: float) -> tuple[Any, bool]:
     return content, False
 
 
+def _append_open_loops_once(content: Any, gaps: list[dict[str, Any]], now_ms: float) -> tuple[Any, bool]:
+    """Append the open-loop suffix to exactly one text block (the last one)."""
+    append = digital_life.runtime.append_open_loops
+    if isinstance(content, str):
+        appended = append(content, gaps, now_ms)
+        return appended, appended != content
+    if isinstance(content, list):
+        items = list(content)
+        for index in range(len(items) - 1, -1, -1):
+            item = items[index]
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                appended = append(item["text"], gaps, now_ms)
+                if appended == item["text"]:
+                    return content, False
+                items[index] = {**item, "text": appended}
+                return items, True
+    return content, False
+
+
 def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     now_ms = time.time() * 1000
     record_request(now_ms)
@@ -90,10 +109,12 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
         for index, item in enumerate(system_items):
             if isinstance(item, dict) and isinstance(item.get("text"), str):
                 rewritten, blocks = digital_life.runtime.reorder_prompt_memories(item["text"], now_ms)
-                appended = digital_life.runtime.append_open_loops(rewritten, state["gaps"], now_ms)
-                if blocks or appended != item["text"]:
-                    system_items[index] = {**item, "text": appended}
+                if blocks:
+                    system_items[index] = {**item, "text": rewritten}
                     changed = True
+        system_items, appended = _append_open_loops_once(system_items, state["gaps"], now_ms)
+        if appended:
+            changed = True
         if changed:
             result["system"] = system_items
     messages = request.get("messages")
@@ -103,23 +124,8 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
             if not isinstance(message, dict) or message.get("role") != "system":
                 continue
             content, reordered = _reorder_content(message.get("content"), now_ms)
-            if isinstance(content, str):
-                appended = digital_life.runtime.append_open_loops(
-                    content, state["gaps"], now_ms
-                )
-                reordered = reordered or appended != content
-                content = appended
-            elif isinstance(content, list):
-                content_items = list(content)
-                for block_index, block in enumerate(content_items):
-                    if isinstance(block, dict) and isinstance(block.get("text"), str):
-                        appended = digital_life.runtime.append_open_loops(
-                            block["text"], state["gaps"], now_ms
-                        )
-                        if appended != block["text"]:
-                            content_items[block_index] = {**block, "text": appended}
-                            reordered = True
-                content = content_items
+            content, appended = _append_open_loops_once(content, state["gaps"], now_ms)
+            reordered = reordered or appended
             if reordered:
                 rewritten[index] = {**message, "content": content}
                 changed = True
@@ -153,23 +159,8 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
             if not isinstance(item, dict) or item.get("role") not in {"system", "developer"}:
                 continue
             content, reordered = _reorder_content(item.get("content"), now_ms)
-            if isinstance(content, str):
-                appended = digital_life.runtime.append_open_loops(
-                    content, state["gaps"], now_ms
-                )
-                reordered = reordered or appended != content
-                content = appended
-            elif isinstance(content, list):
-                content_items = list(content)
-                for block_index, block in enumerate(content_items):
-                    if isinstance(block, dict) and isinstance(block.get("text"), str):
-                        appended = digital_life.runtime.append_open_loops(
-                            block["text"], state["gaps"], now_ms
-                        )
-                        if appended != block["text"]:
-                            content_items[block_index] = {**block, "text": appended}
-                            reordered = True
-                content = content_items
+            content, appended = _append_open_loops_once(content, state["gaps"], now_ms)
+            reordered = reordered or appended
             if reordered:
                 rewritten[index] = {**item, "content": content}
                 changed = True
