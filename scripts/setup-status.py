@@ -144,7 +144,7 @@ def main() -> int:
     elif enabled_platforms(pdir / "config.yaml"):
         detail = "平台已启用但缺凭证，重新跑它的绑定命令"
     else:
-        detail = "还没有启用的消息平台；QQ: `hermes -p <角色名> gateway setup` 平台选 QQ Bot 扫码"
+        detail = "还没有启用的消息平台；QQ: agent 跑 scripts/qq-bind.py start 出码，用户扫码后跑 wait"
     rows.append(("消息平台绑定", platform_ok, detail))
 
     # Steps 4-5: the paused beat job exists, and whether the operator enabled it.
