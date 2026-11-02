@@ -6,6 +6,8 @@ Install the repository into the target Hermes home as `plugins/hermes-lover/`, t
 
 End-to-end walkthrough (persona → life system → QQ bot), in Chinese: [使用引导.md](使用引导.md). The installer also bundles it as the `hermes-lover-guide` skill into the new profile, so the agent can guide the setup and the persona translation itself, and creates the `hermes-lover-beat` cron job (paused) for four jittered daily check-ins.
 
+Default messaging permissions are deliberately narrow: the installer sets `platform_toolsets.qqbot` to `["web","vision","todo","memory","no_mcp"]` and `human_delay.mode: natural`, so a QQ-bound bot can converse but not run terminal commands, write files, or call MCP tools. Widen `platform_toolsets.qqbot` per profile when the operator needs more.
+
 Event-memory writes default on. Set `plugins.entries.hermes-lover.settings.memory.writes_enabled: false` to reject `memory_write` calls; recall still works and normally refreshes access history. Emergency stop freezes all event-memory writes, including recall touches. Reflection remains an explicitly chosen automation blueprint; no job is started by this setting.
 
 Uninstall with `hermes plugins disable hermes-lover` followed by `hermes plugins remove hermes-lover`. Plugin removal leaves profile data under `plugin-data/hermes-lover/`; handle that directory separately if deleting the saved state is desired.

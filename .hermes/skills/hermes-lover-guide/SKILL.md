@@ -158,6 +158,7 @@ hermes gateway list       # default 与 <角色名> 都应显示 ✓
 5. 验证连接：`grep qqbot ~/.hermes/logs/gateway.log | tail -5` 看到 `✓ qqbot connected (profile: <角色名>)` 即成功；让用户私聊机器人发一句。
 
 - **不要写脚本给交互式向导喂按键**：向导只生成二维码/写配置；启动用 `hermes gateway start`。
+- 安装器已默认把 QQ 工具集收窄为 `web/vision/todo/memory`（`no_mcp` 关闭 MCP）：机器人在 QQ 里没有终端和写文件权限。用户说"它在群里不能执行命令"时，这是默认行为，不是坏了；确认需要后让他自己放开：`hermes -p <角色名> config set platform_toolsets.qqbot '["web","vision","todo","memory","terminal"]'`。
 - 遇到 5 分钟审批超时（`BLOCKED: Command timed out`）就停，把命令交给用户。
 - 常见失败：同一 App 在两个 profile 都 enabled（双绑/抢答）；`launchd` 加载失败时 `gateway start` 会退化成 detached 进程，开机不会自启。
 

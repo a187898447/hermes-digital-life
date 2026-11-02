@@ -86,6 +86,19 @@ fi
 hermes -p "$PROFILE" plugins enable "$PLUGIN_NAME"
 hermes -p "$PROFILE" plugins doctor "$PLUGIN_NAME" --ci
 
+# Safe messaging defaults, for every install rather than per machine: a companion
+# plugin only talks, so a QQ-bound bot must not inherit the host's full
+# `hermes-qqbot` toolset (terminal, file writes, MCP). `no_mcp` is a sentinel that
+# keeps globally enabled MCP servers out of the resolved set. Operators who want
+# more can widen this afterwards; existing choices are never overwritten.
+if ! hermes -p "$PROFILE" config get platform_toolsets.qqbot >/dev/null 2>&1; then
+  hermes -p "$PROFILE" config set platform_toolsets.qqbot '["web","vision","todo","memory","no_mcp"]'
+  printf '已设置 QQ 工具集: web/vision/todo/memory（不含终端与写文件，MCP 关闭）\n'
+fi
+if [[ "$(hermes -p "$PROFILE" config get human_delay.mode 2>/dev/null)" == "off" ]]; then
+  hermes -p "$PROFILE" config set human_delay.mode natural
+fi
+
 # Ship the bundled onboarding guide as a profile-local
 # skills so the new agent can walk the user through setup, personas, QQ binding
 # and message delivery itself, and can translate 女娲 output into SOUL.md.
@@ -182,6 +195,7 @@ if grep -q '^QQ_APP_ID=' "${HERMES_HOME:-$HOME/.hermes}/.env" 2>/dev/null; then
 fi
 
 printf '第三步扫码绑定 QQ：\n  hermes -p %q gateway setup   # 平台选 QQ Bot，手机 QQ 扫码\n  hermes -p %q config set platforms.qqbot.enabled true\n  hermes config set platforms.qqbot.enabled false   # default 关掉，避免同一 App 双绑\n  hermes gateway start          # 宿主级网关，不要加 -p\n' "$PROFILE" "$PROFILE"
+printf 'QQ 工具集已默认收窄；需要终端或写文件时自行改 platform_toolsets.qqbot。\n'
 
 printf '首次使用让 agent 引导你：\n  hermes -p %q chat  然后说「用 hermes-lover-guide 引导我配置」\n' "$PROFILE"
 printf '\n注意：这是独立 Hermes profile，不是 delegate_task 子 agent。插件状态/记忆与主 profile 分开；宿主用户级 HOME 凭证仍按 Hermes 默认策略共享。\n'
