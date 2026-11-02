@@ -109,6 +109,17 @@ class MemoryTests(unittest.TestCase):
     def recall(self, query="", **kwargs):
         return self.store.recall(query, now_ms=NOW, **kwargs)
 
+    def test_day_recall_opens_journal_first_then_raw_entries(self):
+        day = "2026-11-02"
+        self.store.capture("用户：今天好累\n助手：早点睡", session_id="s1", now_ms=NOW)
+        self.store.write("【日记 2026-11-02】今天被夸了，嘴上说不在乎。", kind="journal",
+                         session_id="journal", now_ms=NOW + 1)
+        result = self.recall(day=day)
+        self.assertEqual(result["shown"][0]["kind"], "journal")
+        self.assertTrue(all(row["date"] == day for row in result["shown"]))
+        with self.assertRaises(ValueError):
+            self.recall(day="11-02")
+
     def test_capture_appends_turn_entries_without_quota(self):
         for i in range(25):
             result = self.store.capture(f"用户：第{i}句\n助手：第{i}句回话", session_id="s1", now_ms=NOW + i)

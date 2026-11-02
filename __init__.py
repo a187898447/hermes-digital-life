@@ -84,6 +84,7 @@ def _on_user_message(
     _LAST_TURN["user"] = user_message[:1500]
     _LAST_TURN["session"] = session_id or "unknown"
     _LAST_TURN["sender"] = sender_id or ""
+    _LAST_TURN["platform"] = platform or ""
     _LAST_TURN["chat_id"], _LAST_TURN["chat_type"] = _session_scope(_LAST_TURN["session"])
     note = _proactive.handle_message(user_message, session_id, platform)
     return {"context": f"[hermes-lover] {note}"} if note else None
@@ -332,6 +333,9 @@ def register(ctx) -> None:
     def capture_turn(assistant_response: str) -> None:
         if not ctx.get_config("memory.capture", True):
             return
+        if _LAST_TURN.get("platform") != "qqbot":
+            # CLI and Studio keep the host's native memory; only QQ turns enter the palace.
+            return
         user = _LAST_TURN.get("user", "")
         if not user:
             return
@@ -360,7 +364,8 @@ def register(ctx) -> None:
         try:
             result = memory_store().recall(args.get("query", ""), k=args.get("k", 8),
                                            include_cold=args.get("include_cold", False),
-                                           chat_id=_LAST_TURN.get("chat_id", "") or None)
+                                           chat_id=_LAST_TURN.get("chat_id", "") or None,
+                                           day=args.get("day") or None)
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
             result = {"ok": False, "error": str(exc)}
         return json.dumps(result, ensure_ascii=False)
@@ -369,7 +374,7 @@ def register(ctx) -> None:
         name="memory_write", toolset="digital_life",
         schema={"type": "object", "properties": {
             "text": {"type": "string", "maxLength": 4000},
-            "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note"], "default": "note"},
+            "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal"], "default": "note"},
             "weight": {"type": ["number", "null"]},
         }, "required": ["text"], "additionalProperties": False},
         handler=memory_write,
@@ -381,9 +386,11 @@ def register(ctx) -> None:
             "query": {"type": ["string", "null"], "default": ""},
             "k": {"type": "integer", "default": 8},
             "include_cold": {"type": "boolean", "default": False},
+            "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                    "description": "Return that day's journal first, then its raw entries."},
         }, "additionalProperties": False},
         handler=memory_recall,
-        description="Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Displayed memories refresh their access history except during emergency stop. Does not change life state.",
+        description="Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries. Displayed memories refresh their access history except during emergency stop. Does not change life state.",
     )
 
     ctx.register_automation_blueprint(

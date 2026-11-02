@@ -6,7 +6,7 @@ Install the repository into the target Hermes home as `plugins/hermes-lover/`, t
 
 End-to-end walkthrough (persona → life system → QQ bot), in Chinese: [使用引导.md](使用引导.md). The installer also bundles it as the `hermes-lover-guide` skill into the new profile, so the agent can guide the setup and the persona translation itself, and creates the `hermes-lover-beat` cron job (paused) for four jittered daily check-ins.
 
-Default messaging permissions are deliberately narrow: the installer sets `platform_toolsets.qqbot` to `["web","vision","todo","memory","no_mcp"]` and `human_delay.mode: natural`, so a QQ-bound bot can converse but not run terminal commands, write files, or call MCP tools. Widen `platform_toolsets.qqbot` per profile when the operator needs more.
+Default messaging permissions are deliberately narrow: the installer sets `platform_toolsets.qqbot` to `["web","vision","todo","digital_life","no_mcp"]` and `human_delay.mode: natural`, so a QQ-bound bot can converse but not run terminal commands, write files, or call MCP tools. Widen `platform_toolsets.qqbot` per profile when the operator needs more.
 
 Event-memory writes default on. Set `plugins.entries.hermes-lover.settings.memory.writes_enabled: false` to reject `memory_write` calls; recall still works and normally refreshes access history. Emergency stop freezes all event-memory writes, including recall touches. Reflection remains an explicitly chosen automation blueprint; no job is started by this setting.
 
@@ -97,6 +97,13 @@ Selected domain rules are derived from `digital-life-core` by mashangshui (温�
 
 ## 记忆归属
 
-本插件自带按天分片的记忆宫殿（`plugin-data/<profile>/memory/`），安装时关闭 Hermes 自带的
-`MEMORY.md`/`USER.md`（`memory.memory_enabled=false`、`memory.user_profile_enabled=false`）。每条自动捕获
-的回合都带 `chat_id`/`chat_type`/`speaker`，召回按当前会话隔离，私聊与群聊不会混记。
+两层，按平台分开：
+
+- **CLI / Studio** 继续用 Hermes 自带的 `MEMORY.md` / `USER.md`（`memory.memory_enabled=true`），
+  这些会话的回合不写宫殿。
+- **QQ（qqbot）** 只用按天分片的记忆宫殿（`plugin-data/<profile>/memory/`）。QQ 工具集不含自带
+  `memory`，插件也只对 `platform == "qqbot"` 的回合做自动捕获。每条捕获都带
+  `chat_id`/`chat_type`/`speaker`，召回按当前会话隔离，私聊与群聊不会混记。
+- 每天 04:00 的 `hermes-lover-journal` 任务读昨天的宫殿记录和当时的 digital-life 状态，写一篇
+  `journal` 条目（权重 2.5）。问到某一天时先命中日记，日记没写到的细节再用
+  `memory_recall(day="YYYY-MM-DD")` 查当天的原始条目。

@@ -19,7 +19,8 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 DAY_MS = 86_400_000
-DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8, "turn": 0.4}
+DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8, "turn": 0.4,
+                   "journal": 2.5}
 _WRITE_LOCK = threading.RLock()
 _WORDS = re.compile(r"[\u3400-\u9fff\U00020000-\U0002fa1f]+|[a-zA-Z0-9]+")
 _ID = re.compile(r"hp-(\d{8})-(\d{4,})\Z")
@@ -43,7 +44,8 @@ def decay(weight: float, last_access_at: float, now_ms: float) -> float:
 
 def attention(cortisol: float) -> dict[str, float]:
     crisis, daily = (3.0, 0.1) if cortisol >= 80 else (1.8, 0.4) if cortisol >= 55 else (1.0, 1.0)
-    return {"crisis": crisis, "daily": daily, "fact": 1.0, "decision": 1.0, "note": 1.0, "turn": 0.5}
+    return {"crisis": crisis, "daily": daily, "fact": 1.0, "decision": 1.0, "note": 1.0, "turn": 0.5,
+            "journal": 1.2}
 
 
 def relevance(bm25: float) -> float:
@@ -368,7 +370,8 @@ class MemoryStore:
         rows = db.execute(f"SELECT e.payload FROM entries e WHERE {condition} AND e.text LIKE ? ESCAPE '\\'", (f"%{literal}%",)).fetchall()
         return [(json.loads(row), 1.0) for row, in rows]
 
-    def _retrieve(self, entries, query, k, include_cold, now_ms, cortisol, disk=False, chat_id=None):
+    def _retrieve(self, entries, query, k, include_cold, now_ms, cortisol, disk=False, chat_id=None,
+                  day=None):
         # In-memory FTS also provides identical retrieval when stop forbids repairing the disk cache.
         connection = sqlite3.connect(self.index.as_uri() + "?mode=ro", uri=True) if disk else sqlite3.connect(":memory:")
         with closing(connection) as db:
@@ -379,28 +382,37 @@ class MemoryStore:
                 # A conversation only sees its own exchanges plus globally written notes.
                 candidates = [(row, rel) for row, rel in candidates
                               if row.get("chat_id", "") in ("", chat_id)]
+            if day:
+                # Day lookups open the journal first, then that day's raw entries.
+                candidates = [(row, rel) for row, rel in candidates if row.get("date") == day]
         ranked = [dict(row, score=score(row, now_ms, rel, cortisol, not query),
                        effective_weight=decay(row["weight"], row["last_access_at"], now_ms)) for row, rel in candidates]
-        ranked.sort(key=lambda row: (-row["score"], -row["created_at"], row["id"]))
+        ranked.sort(key=lambda row: (day is not None and row["kind"] != "journal",
+                                     -row["score"], -row["created_at"], row["id"]))
         scoped = [e for e in entries.values() if not chat_id or e.get("chat_id", "") in ("", chat_id)]
         return {"total": sum(not e["archived"] for e in scoped),
                 "cold_total": sum(e["archived"] for e in scoped), "matched": len(ranked),
                 "returned": min(k, len(ranked)), "shown": ranked[:k], "attention": attention(cortisol)}
 
-    def recall(self, query="", k=8, include_cold=False, *, now_ms=None, chat_id=None):
+    def recall(self, query="", k=8, include_cold=False, *, now_ms=None, chat_id=None, day=None):
         if query is None: query = ""
         if not isinstance(query, str): raise ValueError("query must be a string or null")
+        if day is not None:
+            if not isinstance(day, str) or not re.match(r"\d{4}-\d{2}-\d{2}\Z", day):
+                raise ValueError("day must be YYYY-MM-DD")
         if type(k) is not int: raise ValueError("k must be an integer")
         if type(include_cold) is not bool: raise ValueError("include_cold must be boolean")
         query, k, now_ms = query.strip(), min(20, max(1, k)), _now(now_ms)
         state = self._state()
         cortisol = state.get("chemistry", {}).get("cortisol", 20)
         if state.get("emergency_stop"):
-            return self._retrieve(self.read_entries(), query, k, include_cold, now_ms, cortisol, chat_id=chat_id)
+            return self._retrieve(self.read_entries(), query, k, include_cold, now_ms, cortisol,
+                                  chat_id=chat_id, day=day)
         with self._locked():
             entries, digest = self._replay()
             self._sync(entries, digest)
-            result = self._retrieve(entries, query, k, include_cold, now_ms, cortisol, disk=True, chat_id=chat_id)
+            result = self._retrieve(entries, query, k, include_cold, now_ms, cortisol, disk=True,
+                                    chat_id=chat_id, day=day)
             events = [{"op": "touch", "id": row["id"], "hits": row["hits"] + 1, "last_access_at": now_ms}
                       for row in result["shown"]]
             if events:

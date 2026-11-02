@@ -401,5 +401,25 @@ class QqBubbleTransformTests(unittest.TestCase):
 
 
 
+    def test_capture_only_happens_for_qqbot_turns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx = RecordingContext()
+            ctx.get_config = lambda key, default=None: default
+            with (
+                patch.object(plugin.digital_life.storage, "data_root", return_value=root),
+                patch.object(plugin.digital_life.storage, "plugin_db",
+                             side_effect=lambda name, filename: sqlite3.connect(root / filename)),
+                patch.object(plugin.digital_life.storage, "read_state",
+                             return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
+                patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+            ):
+                plugin.register(ctx)
+                hooks = dict(ctx.hooks)
+                hooks["pre_llm_call"](user_message="工作台里的话", session_id="s2", platform="cli")
+                hooks["post_llm_call"](assistant_response="不该进宫殿", session_id="s2")
+            self.assertEqual(list((root / "memory").rglob("*.jsonl")), [])
+
+
 if __name__ == "__main__":
     unittest.main()
