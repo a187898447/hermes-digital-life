@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from . import digital_life
 from .digital_life import proactive as _proactive
@@ -229,6 +230,92 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     return None
 
 
+QQ_LINE_MAX = 48
+QQ_LINE_MIN = 2
+QQ_LINE_LIMIT = 6
+_QQ_SENTENCE_RE = re.compile(r"[^。！？!?~～…\n]+[。！？!?~～…]*")
+_QQ_MARKUP_RE = re.compile(r"\*\*|__|`|^#{1,6}\s*|^>\s*|^[-*•]\s*|^\d+[.、)]\s*")
+
+
+def _qq_clean_line(raw: str) -> str:
+    line = _QQ_MARKUP_RE.sub("", raw).strip()
+    line = re.sub(r"[ \t]+", " ", line)
+    return line
+
+
+def _qq_short_lines(text: str) -> list[str]:
+    """Split a reply into chat-bubble-sized lines, preserving every character."""
+    lines: list[str] = []
+    current = ""
+    for paragraph in text.split("\n"):
+        for sentence in _QQ_SENTENCE_RE.findall(paragraph):
+            sentence = _qq_clean_line(sentence)
+            if not sentence:
+                continue
+            if len(sentence) > QQ_LINE_MAX:
+                if current:
+                    lines.append(current)
+                    current = ""
+                pieces = re.split(r"(?<=[，,、；;：: ])", sentence)
+                for piece in pieces:
+                    if not piece:
+                        continue
+                    while len(piece) > QQ_LINE_MAX:
+                        lines.append(piece[:QQ_LINE_MAX])
+                        piece = piece[QQ_LINE_MAX:]
+                    if piece:
+                        if current and len(current) + len(piece) <= QQ_LINE_MAX:
+                            current += piece
+                        else:
+                            if current:
+                                lines.append(current)
+                            current = piece
+                continue
+            if current and len(current) + len(sentence) <= QQ_LINE_MAX:
+                current += sentence
+            else:
+                if current:
+                    lines.append(current)
+                current = sentence
+    if current:
+        lines.append(current)
+    return [line for line in lines if line]
+
+
+def _qq_bubble_rewrite(text: str) -> Optional[str]:
+    """Rewrite one long reply into 2-6 short lines so the QQ adapter splits bubbles."""
+    if not text or text.lstrip().startswith("/") or "```" in text or "|---" in text:
+        return None
+    lines = _qq_short_lines(text)
+    while len(lines) > QQ_LINE_LIMIT:
+        merged: list[str] = []
+        for i in range(0, len(lines), 2):
+            pair = "".join(lines[i:i + 2])
+            if len(pair) <= QQ_LINE_MAX:
+                merged.append(pair)
+            else:
+                merged.extend(lines[i:i + 2])
+        if len(merged) == len(lines):
+            return None
+        lines = merged
+    if not QQ_LINE_MIN <= len(lines) <= QQ_LINE_LIMIT:
+        return None
+    if not all(0 < len(line) <= QQ_LINE_MAX for line in lines):
+        return None
+    first = lines[0]
+    if first.endswith((":", "：")) and len(first) <= 24:
+        return None
+    rewritten = "\n".join(lines)
+    return rewritten if rewritten != text else None
+
+
+def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs) -> Optional[str]:
+    """Give QQ replies the short-burst shape the persona uses; other surfaces untouched."""
+    if platform != "qqbot":
+        return None
+    return _qq_bubble_rewrite(response_text)
+
+
 def register(ctx) -> None:
     from .digital_life.cli import run_command, setup_parser
     from .digital_life.memory import MemoryStore
@@ -334,6 +421,7 @@ def register(ctx) -> None:
         handler=_status,
         description="Read the current bounded digital-life state. This tool cannot change life state.",
     )
+    ctx.register_hook("transform_llm_output", _transform_llm_output)
     ctx.register_hook("pre_llm_call", _on_user_message)
     ctx.register_hook("post_llm_call", _post_llm_call)
     ctx.register_hook("api_request_error", _api_error)

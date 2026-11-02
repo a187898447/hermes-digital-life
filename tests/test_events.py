@@ -377,5 +377,29 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(result["request"]["messages"][0]["content"], "SYSTEM-REORDERED")
 
 
+class QqBubbleTransformTests(unittest.TestCase):
+    def _transform(self, text, platform="qqbot"):
+        ctx = RecordingContext()
+        plugin.register(ctx)
+        hooks = dict(ctx.hooks)
+        return hooks["transform_llm_output"](response_text=text, platform=platform, session_id="s1", turn_id="t1")
+
+    def test_long_qq_reply_is_rewritten_into_short_lines(self):
+        text = ("说实话，没想那么远。\n\n我不太想当什么有用的人。我更想当那个说真话不绕弯、"
+                "偶尔顶两句嘴、把事情办明白了就把话撂下的那种。\n\n你问这个，是自己在琢磨事？")
+        out = self._transform(text)
+        self.assertIsInstance(out, str)
+        lines = out.split("\n")
+        self.assertTrue(2 <= len(lines) <= 6)
+        self.assertTrue(all(0 < len(line) <= 48 for line in lines))
+
+    def test_other_platforms_and_code_and_commands_stay_untouched(self):
+        text = "第一句很长的话，需要被拆开才能发出去，不然就是一整段文字。第二句也很长，同样需要拆开处理。"
+        self.assertIsNone(self._transform(text, platform="cli"))
+        self.assertIsNone(self._transform("看这个\n```python\nprint(1)\n```"))
+        self.assertIsNone(self._transform("/stop"))
+
+
+
 if __name__ == "__main__":
     unittest.main()
