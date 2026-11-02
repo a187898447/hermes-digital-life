@@ -200,9 +200,6 @@ fi
 
 printf '\n验证状态读取：\n  hermes -p %q hermes-lover status\n' "$PROFILE"
 printf '后续独立会话：\n  hermes -p %q chat\n' "$PROFILE"
-if grep -q '^QQ_APP_ID=' "${HERMES_HOME:-$HOME/.hermes}/.env" 2>/dev/null; then
-  printf '本机已有 QQ 机器人凭证；第 3 步仍由你本人跑 hermes -p %q gateway setup 扫码，保留或换绑由你决定。\n' "$PROFILE"
-fi
 
 printf '第三步扫码绑定 QQ：\n  hermes -p %q gateway setup   # 平台选 QQ Bot，手机 QQ 扫码\n  hermes -p %q config set platforms.qqbot.enabled true\n  hermes config set platforms.qqbot.enabled false   # default 关掉，避免同一 App 双绑\n  hermes gateway start          # 宿主级网关，不要加 -p\n' "$PROFILE" "$PROFILE"
 printf 'QQ 工具集已默认收窄；需要终端或写文件时自行改 platform_toolsets.qqbot。\n'
