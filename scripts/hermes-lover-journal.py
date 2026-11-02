@@ -14,6 +14,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import sqlite3
 import sys
 import time
@@ -52,6 +53,15 @@ def store():
 
             return storage.read_state(time.time() * 1000)
         except Exception:
+            pass
+        try:
+            db = sqlite3.connect(f"file:{root / 'data.db'}?mode=ro", uri=True)
+            try:
+                row = db.execute("SELECT payload FROM life_state WHERE id = 'life-state'").fetchone()
+            finally:
+                db.close()
+            return json.loads(row[0]) if row else {}
+        except Exception:
             return {"emergency_stop": False, "chemistry": {"cortisol": 20}}
 
     return MemoryStore(root, connect=lambda: sqlite3.connect(index), life_state=life_state)
@@ -89,7 +99,9 @@ def store_journal(day: str, text: str) -> int:
     prefix = f"【日记 {day}】"
     if not text.startswith(prefix):
         text = prefix + text
-    result = store().write(text, kind="journal", weight=2.5, session_id="journal")
+    # Anchor the entry to the day it describes, so a later "那天呢" lookup finds it.
+    anchor = datetime.strptime(day, "%Y-%m-%d").replace(hour=12).timestamp() * 1000
+    result = store().write(text, kind="journal", weight=2.5, session_id="journal", now_ms=anchor)
     print(result)
     return 0
 
