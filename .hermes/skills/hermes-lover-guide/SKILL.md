@@ -137,7 +137,7 @@ cp "$P/personas/001-deepseek-xiaojingyu/SOUL.md" "$P/SOUL.md"
 
 网关是**一个宿主服务所有 profile**，不要给单个 profile 起网关。
 
-1. 先探测是否已经绑过：`grep -c '^QQ_APP_ID=' ~/.hermes/profiles/<角色名>/.env`；0 才做第 2 步。
+1. 探测只用于汇报状态：`grep -c '^QQ_APP_ID=' ~/.hermes/profiles/<角色名>/.env`。**这不构成跳过的理由**：扫码/换绑一律由用户本人在终端执行。若探测到已有凭证，只问一句「保留现在的绑定，还是换绑？」，不要自己决定沿用，也不要把其它 profile 的 `.env` 凭证复制过来。
 2. 扫码：`hermes -p <角色名> gateway setup`，平台选 QQ Bot，按向导生成二维码，用户手机 QQ 扫码。凭证由 Hermes 写进该 profile 的 `.env`。
 3. 打开该 profile 的平台并设策略：
 
@@ -158,6 +158,7 @@ hermes gateway list       # default 与 <角色名> 都应显示 ✓
 5. 验证连接：`grep qqbot ~/.hermes/logs/gateway.log | tail -5` 看到 `✓ qqbot connected (profile: <角色名>)` 即成功；让用户私聊机器人发一句。
 
 - **不要写脚本给交互式向导喂按键**：向导只生成二维码/写配置；启动用 `hermes gateway start`。
+- **第三步没有「复用/新建」选项**：任何已有 QQ 凭证的发现都只是状态，不是授权；不要替用户选，不要跨 profile 复制凭据。
 - 安装器已默认把 QQ 工具集收窄为 `web/vision/todo/memory`（`no_mcp` 关闭 MCP）：机器人在 QQ 里没有终端和写文件权限。用户说"它在群里不能执行命令"时，这是默认行为，不是坏了；确认需要后让他自己放开：`hermes -p <角色名> config set platform_toolsets.qqbot '["web","vision","todo","memory","terminal"]'`。
 - 遇到 5 分钟审批超时（`BLOCKED: Command timed out`）就停，把命令交给用户。
 - 常见失败：同一 App 在两个 profile 都 enabled（双绑/抢答）；`launchd` 加载失败时 `gateway start` 会退化成 detached 进程，开机不会自启。
