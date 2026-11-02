@@ -5,10 +5,14 @@ author: pengyu
 license: MIT
 requires_hermes: ">=0.22"
 kind: standalone
-# v0.1.0 reads no plugin configuration. Scheduled reflection is an explicit
-# automation blueprint rather than a setting, and delivery is not implemented.
-config_schema: {}
+config_schema:
+  memory:
+    type: dict
+    default: {writes_enabled: true}
+    description: "Event-memory settings: writes_enabled must be a boolean (default true)."
 provides_tools:
+  - memory_write
+  - memory_recall
   - digital_life_status
 provides_hooks:
   - pre_llm_call

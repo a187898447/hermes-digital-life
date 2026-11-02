@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sqlite3
 import time
 from typing import Any
 
@@ -190,6 +191,53 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
 
 def register(ctx) -> None:
     from .digital_life.cli import run_command, setup_parser
+    from .digital_life.memory import MemoryStore
+    from .digital_life import storage
+
+    def memory_store():
+        return MemoryStore(
+            storage.data_root(),
+            connect=lambda: storage.plugin_db(storage.PLUGIN_NAME, filename="memory-index.db"),
+            life_state=lambda: storage.read_state(time.time() * 1000),
+            writes_enabled=lambda: ctx.get_config("memory.writes_enabled", True),
+        )
+
+    def memory_write(args, session_id="", **kwargs):
+        try:
+            result = memory_store().write(args.get("text"), kind=args.get("kind", "note"),
+                                          weight=args.get("weight"), session_id=session_id)
+        except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
+            result = {"ok": False, "error": str(exc)}
+        return json.dumps(result, ensure_ascii=False)
+
+    def memory_recall(args, **kwargs):
+        try:
+            result = memory_store().recall(args.get("query", ""), k=args.get("k", 8),
+                                           include_cold=args.get("include_cold", False))
+        except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
+            result = {"ok": False, "error": str(exc)}
+        return json.dumps(result, ensure_ascii=False)
+
+    ctx.register_tool(
+        name="memory_write", toolset="digital_life",
+        schema={"type": "object", "properties": {
+            "text": {"type": "string", "maxLength": 4000},
+            "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note"], "default": "note"},
+            "weight": {"type": ["number", "null"]},
+        }, "required": ["text"], "additionalProperties": False},
+        handler=memory_write,
+        description="Remember a meaningful event, experience or decision in this profile's dated event library. Use built-in memory for stable profile facts. At most 4000 characters per entry; 20 new entries per session/day. Does not change life state.",
+    )
+    ctx.register_tool(
+        name="memory_recall", toolset="digital_life",
+        schema={"type": "object", "properties": {
+            "query": {"type": ["string", "null"], "default": ""},
+            "k": {"type": "integer", "default": 8},
+            "include_cold": {"type": "boolean", "default": False},
+        }, "additionalProperties": False},
+        handler=memory_recall,
+        description="Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Displayed memories refresh their access history except during emergency stop. Does not change life state.",
+    )
 
     ctx.register_automation_blueprint(
         "dream-reflection",

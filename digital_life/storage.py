@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import sqlite3
+from pathlib import Path
 from typing import Any
 
 from plugins.plugin_storage import plugin_db
@@ -10,6 +12,28 @@ from plugins.plugin_storage import plugin_db
 PLUGIN_NAME = "hermes-lover"
 STATE_ID = "life-state"
 MAX_STATE_BYTES = 512 * 1024
+
+
+def data_root() -> Path:
+    """Resolve the active profile without creating its plugin data directory."""
+    from hermes_constants import get_hermes_home
+    return get_hermes_home() / "plugin-data" / PLUGIN_NAME
+
+
+def read_state(now_ms: float) -> dict[str, Any]:
+    """Read life state without schema creation, settlement or initialization writes."""
+    from .domain import default_state, normalize_state
+    path = data_root() / "data.db"
+    if not path.exists():
+        return default_state(now_ms)
+    conn = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)
+    try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='life_state'").fetchone():
+            return default_state(now_ms)
+        row = conn.execute("SELECT payload FROM life_state WHERE id=?", (STATE_ID,)).fetchone()
+        return normalize_state(json.loads(row[0]), now_ms) if row else default_state(now_ms)
+    finally:
+        conn.close()
 
 
 def _connect():
