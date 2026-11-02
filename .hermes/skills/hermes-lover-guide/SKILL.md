@@ -133,29 +133,33 @@ cp "$P/personas/001-deepseek-xiaojingyu/SOUL.md" "$P/SOUL.md"
 - 一个 QQ 应用只能挂一个 profile，否则会抢答。
 - 同一 QQ 应用想切角色，用 `/personality`，不要开第二个 profile。
 
-## 子流程 C：绑定 QQ（扫码，按 qqbot 自己的步骤）
+## 子流程 C：绑定 QQ（扫码）
 
-第 3 步就是扫码绑定，不要自创流程，也不要让用户去 q.qq.com 新建应用：
+网关是**一个宿主服务所有 profile**，不要给单个 profile 起网关。
 
-1. 先探测是否已经绑过：`grep -c '^QQ_APP_ID=' ~/.hermes/profiles/<角色名>/.env`；>0 就直接跳到第 4 条验证。
-2. 在终端跑 `hermes -p <角色名> gateway setup`，平台选 **QQ Bot**，按向导提示生成二维码；把二维码/链接给用户，让他用手机 QQ 扫码授权（这一步必须用户本人做）。
-3. 扫码完成后凭证由 Hermes 自己写进该 profile 的 `.env`；不要打印、不要回显、不要替用户手填。
-4. 平台策略写进该 profile 的 `config.yaml`（一个 QQ 应用只能挂一个 profile，default profile 的 qqbot 要停用，避免抢答）：
+1. 先探测是否已经绑过：`grep -c '^QQ_APP_ID=' ~/.hermes/profiles/<角色名>/.env`；0 才做第 2 步。
+2. 扫码：`hermes -p <角色名> gateway setup`，平台选 QQ Bot，按向导生成二维码，用户手机 QQ 扫码。凭证由 Hermes 写进该 profile 的 `.env`。
+3. 打开该 profile 的平台并设策略：
 
-```yaml
-platforms:
-  qqbot:
-    enabled: true
-    extra:
-      dm_policy: allowlist
-      group_policy: allowlist
+```bash
+hermes -p <角色名> config set platforms.qqbot.enabled true
+hermes -p <角色名> config set platforms.qqbot.extra.dm_policy allowlist
+hermes -p <角色名> config set platforms.qqbot.extra.group_policy allowlist
+hermes config set platforms.qqbot.enabled false   # default profile 关掉，避免同一 App 双绑
 ```
 
-5. `hermes gateway restart`（首次可用 `hermes gateway install`），再 `hermes gateway list` 确认该 profile 被 served；让用户私聊机器人验证一次。
+4. 启动宿主网关（不要加 `-p`）：
 
-- **不要自己写 onboard 脚本**：向导内部就是 qqbot 的扫码流程，直接用它。
-- 遇到 `.env` 写锁也不要翻源码找替代写法；扫码路径本来就不经过你的手。
-- 常见失败：沙箱只回白名单成员；两个 profile 同时启用同一 AppID；intents 没开。
+```bash
+hermes gateway start      # 或 hermes gateway restart
+hermes gateway list       # default 与 <角色名> 都应显示 ✓
+```
+
+5. 验证连接：`grep qqbot ~/.hermes/logs/gateway.log | tail -5` 看到 `✓ qqbot connected (profile: <角色名>)` 即成功；让用户私聊机器人发一句。
+
+- **不要写脚本给交互式向导喂按键**：向导只生成二维码/写配置；启动用 `hermes gateway start`。
+- 遇到 5 分钟审批超时（`BLOCKED: Command timed out`）就停，把命令交给用户。
+- 常见失败：同一 App 在两个 profile 都 enabled（双绑/抢答）；`launchd` 加载失败时 `gateway start` 会退化成 detached 进程，开机不会自启。
 
 ## 子流程 D：主动消息
 

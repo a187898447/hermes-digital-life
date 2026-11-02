@@ -181,7 +181,7 @@ if grep -q '^QQ_APP_ID=' "${HERMES_HOME:-$HOME/.hermes}/.env" 2>/dev/null; then
   printf '本机已有 QQ 机器人凭证；第 3 步扫码绑定时按 hermes-lover-guide 走（换绑/沿用由你决定）。\n'
 fi
 
-printf '第三步扫码绑定 QQ：\n  hermes -p %q gateway setup   # 平台选 QQ Bot，手机 QQ 扫码\n' "$PROFILE"
+printf '第三步扫码绑定 QQ：\n  hermes -p %q gateway setup   # 平台选 QQ Bot，手机 QQ 扫码\n  hermes -p %q config set platforms.qqbot.enabled true\n  hermes config set platforms.qqbot.enabled false   # default 关掉，避免同一 App 双绑\n  hermes gateway start          # 宿主级网关，不要加 -p\n' "$PROFILE" "$PROFILE"
 
 printf '首次使用让 agent 引导你：\n  hermes -p %q chat  然后说「用 hermes-lover-guide 引导我配置」\n' "$PROFILE"
 printf '\n注意：这是独立 Hermes profile，不是 delegate_task 子 agent。插件状态/记忆与主 profile 分开；宿主用户级 HOME 凭证仍按 Hermes 默认策略共享。\n'

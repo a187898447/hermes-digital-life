@@ -92,10 +92,17 @@ def main() -> int:
         except OSError:
             return False
 
-    qq_ok = qq_key_present(pdir / ".env")
-    rows.append(("QQ 绑定（扫码）", qq_ok,
-                 ".env 有 QQ_APP_ID" if qq_ok
-                 else "跑 `hermes -p <角色名> gateway setup`，平台选 QQ Bot 扫码"))
+    keys_ok = qq_key_present(pdir / ".env")
+    enabled_cfg = run(["hermes", "-p", profile, "config", "get", "platforms.qqbot.enabled"])
+    platform_on = bool(enabled_cfg and (enabled_cfg.stdout or "").strip().lower().startswith("true"))
+    qq_ok = keys_ok and platform_on
+    if qq_ok:
+        detail = ".env 有 QQ_APP_ID，platforms.qqbot 已启用"
+    elif not keys_ok:
+        detail = "跑 `hermes -p <角色名> gateway setup`，平台选 QQ Bot 扫码"
+    else:
+        detail = "凭证已写入，但 platforms.qqbot 未启用：hermes -p <角色名> config set platforms.qqbot.enabled true"
+    rows.append(("QQ 绑定（扫码）", qq_ok, detail))
 
     # Steps 4-5: the paused beat job exists, and whether the operator enabled it.
     beat, beat_active = None, False
