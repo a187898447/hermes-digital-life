@@ -165,6 +165,16 @@ if [[ -f "$BRIDGE_FIX" ]] && command -v python3 >/dev/null 2>&1; then
     printf '提示: Studio 桥接补丁未应用；若在 Studio 里遇到工具缺失，见 README 已知问题。\n' >&2
 fi
 
+# Studio 0.8.x checks a clarify/approval answer against the profile its chat
+# connection was opened with.  A conversation that lives in another profile
+# (the usual case after this installer creates one) gets its answer rejected and
+# the agent waits out the timeout.  Same idempotent host fix pattern as above.
+CROSS_FIX="$SOURCE/scripts/fix-studio-cross-profile.py"
+if [[ -f "$CROSS_FIX" ]] && command -v python3 >/dev/null 2>&1; then
+  python3 "$CROSS_FIX" ||
+    printf '提示: Studio 跨 profile 答复补丁未应用；选项按钮点了没反应时见 README 已知问题。\n' >&2
+fi
+
 # `hermes profile create` drops a generic alias wrapper that forwards straight
 # to the host CLI, which makes `hermes-lover status` print Hermes' own status.
 # Route the plugin's operator verbs back to the plugin command; keep chat etc.

@@ -213,6 +213,19 @@ python3 <插件仓库>/scripts/fix-studio-bridge-python.py --check  # 确认
 
 补完必须**新开一个 Studio 对话**，已打开的 worker 不会重载。CLI/TUI 不受影响。
 
+## 疑难：点了选项没反应
+
+卡片能出来，点完却像没回答：Studio 0.8.x 把答复校验到"打开连接时的 profile"上，会话在 `hermes-lover` 时就报 `Profile "hermes-lover" is not available on this connection`，agent 等到超时，切回页面卡片还会再出现。
+
+安装脚本已带修复（`scripts/fix-studio-cross-profile.py`）；旧安装或 Studio 升级后手动补一次，再重启 Studio：
+
+```sh
+python3 <插件仓库>/scripts/fix-studio-cross-profile.py
+hermes-web-ui restart
+```
+
+补丁只改 Studio 自己的 JS，不动 Hermes；--check 确认、--remove 撤销。
+
 ### 选项不出按钮，只显示一段 JSON
 
 `clarify` 在 Studio 里显示成一段 `[{'qid': ...}]` 文本、没有按钮：这是 **Studio ≤ 0.8.10** 的桥接 bug（旧“单问题 + choices”协议），升级到 **0.8.11+** 即恢复选项卡（`npm i -g hermes-web-ui@latest` 后重启 Studio）。确认版本：`node -p "require('/usr/local/lib/node_modules/hermes-web-ui/package.json').version"`。未升级前用正文编号提问，不要重试 `clarify`。

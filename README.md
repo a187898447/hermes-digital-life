@@ -58,6 +58,21 @@ python3 scripts/fix-studio-bridge-python.py --remove # undo
 
 CLI and TUI sessions, and the default profile, are unaffected.
 
+## Known issue: Studio drops option-card answers for a non-default profile
+
+Hermes Studio 0.8.x binds each chat connection to one profile and then checks every clarify/approval answer against that connection profile. When the conversation belongs to another profile (`hermes-lover`, the usual case after install), the click is rejected with `Profile "<name>" is not available on this connection`; the card closes, the agent waits out the timeout, and the card reappears when you come back to the tab.
+
+`install.sh` applies an idempotent host fix that lets Studio serve a conversation from any profile that exists on the machine. Only Studio's own JS bundle is touched; Hermes and the CLI are not modified. For an existing install run it manually and then restart Studio:
+
+```sh
+python3 scripts/fix-studio-cross-profile.py          # apply, safe to repeat
+python3 scripts/fix-studio-cross-profile.py --check  # verify
+python3 scripts/fix-studio-cross-profile.py --remove # undo
+hermes-web-ui restart
+```
+
+If a Studio upgrade overwrites the bundle, re-run the installer or the script above.
+
 ## Validate
 
 From this repository root:
