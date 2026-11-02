@@ -6,7 +6,7 @@ usage() {
 用法:
   ./install.sh --mode local [--profile NAME] [--source PATH] [--configure]
   ./install.sh --mode remote --repo URL [--ref REF] [--profile NAME] [--configure]
-  可选: --no-beat 不创建主动消息任务；--studio-fixes 同时修复 Studio 宿主问题
+  可选: --no-beat 不创建主动消息任务
 
 模式:
   local   将当前仓库或 --source 指定的工作树链接到新 profile。
@@ -26,7 +26,6 @@ REPO=""
 REF=""
 CONFIGURE=0
 WITH_BEAT=1
-STUDIO_FIXES=0
 
 while (($#)); do
   case "$1" in
@@ -37,7 +36,6 @@ while (($#)); do
     --ref) REF="${2:?--ref 需要 Git ref 或 commit}"; shift 2 ;;
     --configure) CONFIGURE=1; shift ;;
     --no-beat) WITH_BEAT=0; shift ;;
-    --studio-fixes) STUDIO_FIXES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail "未知参数: $1" ;;
   esac
@@ -167,24 +165,38 @@ fi
 # module that imports ruamel.yaml then fails to load and the agent silently
 # loses terminal/files/memory/skills.  A normal install always creates a new
 # profile, so apply the idempotent host fix here too (README has the details).
-if ((STUDIO_FIXES == 0)); then
-  printf '提示: 可选宿主修复（Hermes Studio 的工具丢失/选项答复）未应用；需要时加 --studio-fixes 重跑。\n'
-else
-BRIDGE_FIX="$SOURCE/scripts/fix-studio-bridge-python.py"
-if [[ -f "$BRIDGE_FIX" ]] && command -v python3 >/dev/null 2>&1; then
-  python3 "$BRIDGE_FIX" ||
-    printf '提示: Studio 桥接补丁未应用；若在 Studio 里遇到工具缺失，见 README 已知问题。\n' >&2
-fi
+# Hermes Studio runs each non-default profile's agent in a bridge worker pinned to
+# Hermes' managed tools python, which ships no third-party packages; and Studio
+# 0.8.x validates clarify/approval answers against the connection's profile. Both
+# only matter when Studio is installed AND the affected code is still present, so
+# detect first and fix by default only then. Plain CLI users get no host changes.
+STUDIO_MAIN=""
+for candidate in "${HERMES_WEBUI_DIR:-}" /usr/local/lib/node_modules/hermes-web-ui "$HOME/.npm-global/lib/node_modules/hermes-web-ui"; do
+  [[ -n "$candidate" && -f "$candidate/dist/server/index.js" ]] || continue
+  STUDIO_MAIN="$candidate/dist/server/index.js"
+  break
+done
 
-# Studio 0.8.x checks a clarify/approval answer against the profile its chat
-# connection was opened with.  A conversation that lives in another profile
-# (the usual case after this installer creates one) gets its answer rejected and
-# the agent waits out the timeout.  Same idempotent host fix pattern as above.
-CROSS_FIX="$SOURCE/scripts/fix-studio-cross-profile.py"
-if [[ -f "$CROSS_FIX" ]] && command -v python3 >/dev/null 2>&1; then
-  python3 "$CROSS_FIX" ||
-    printf '提示: Studio 跨 profile 答复补丁未应用；选项按钮点了没反应时见 README 已知问题。\n' >&2
-fi
+if [[ -z "$STUDIO_MAIN" ]]; then
+  printf '未检测到 Hermes Studio，跳过宿主修复（CLI/TUI 不需要这些补丁）。\n'
+elif ! command -v python3 >/dev/null 2>&1; then
+  printf '检测到 Hermes Studio，但没有 python3，无法应用宿主修复。\n' >&2
+else
+  BRIDGE_FIX="$SOURCE/scripts/fix-studio-bridge-python.py"
+  if [[ -f "$BRIDGE_FIX" ]]; then
+    if python3 "$BRIDGE_FIX" --check >/dev/null 2>&1; then
+      printf 'Studio 桥接环境已正常，无需修复。\n'
+    else
+      python3 "$BRIDGE_FIX" ||
+        printf '提示: Studio 桥接补丁未应用；若在 Studio 里遇到工具缺失，见 README 已知问题。\n' >&2
+    fi
+  fi
+
+  CROSS_FIX="$SOURCE/scripts/fix-studio-cross-profile.py"
+  if [[ -f "$CROSS_FIX" ]] && grep -q 'is not available on this connection' "$STUDIO_MAIN"; then
+    python3 "$CROSS_FIX" ||
+      printf '提示: Studio 跨 profile 答复补丁未应用；选项按钮点了没反应时见 README 已知问题。\n' >&2
+  fi
 fi
 
 # `hermes profile create` drops a generic alias wrapper that forwards straight
