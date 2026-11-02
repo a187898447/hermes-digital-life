@@ -32,6 +32,13 @@ def _post_tool_call(tool_name: str = "", args: dict[str, Any] | None = None, res
     digital_life.runtime.observe_tool_result(time.time() * 1000, tool_name=tool_name, args=args or {}, result=result)
 
 
+def _on_user_message(
+    user_message: str = "", session_id: str = "", platform: str = "", **kwargs
+) -> dict[str, Any] | None:
+    note = digital_life.proactive.handle_message(user_message, session_id, platform)
+    return {"context": f"[hermes-lover] {note}"} if note else None
+
+
 def _reorder_content(content: Any, now_ms: float) -> tuple[Any, bool]:
     if isinstance(content, str):
         rewritten, count = digital_life.runtime.reorder_prompt_memories(content, now_ms)
@@ -172,6 +179,7 @@ def register(ctx) -> None:
         handler=_status,
         description="Read the current bounded digital-life state. This tool cannot change life state.",
     )
+    ctx.register_hook("pre_llm_call", _on_user_message)
     ctx.register_hook("post_llm_call", _post_llm_call)
     ctx.register_hook("api_request_error", _api_error)
     ctx.register_hook("post_tool_call", _post_tool_call)

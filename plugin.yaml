@@ -11,6 +11,7 @@ config_schema: {}
 provides_tools:
   - digital_life_status
 provides_hooks:
+  - pre_llm_call
   - post_tool_call
   - post_llm_call
   - api_request_error

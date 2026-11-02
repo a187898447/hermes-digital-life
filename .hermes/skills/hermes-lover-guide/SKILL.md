@@ -163,7 +163,7 @@ hermes gateway list       # default 与 <角色名> 都应显示 ✓
 
 ## 子流程 D：主动消息
 
-安装时创建 `hermes-lover-beat` 任务，但**默认暂停**，不会自己发消息。启用后每天 10/14/16/20 前后 ±60 分钟内随机触发一次；模型按人格 + 最近记忆 + 当前状态写一句，用 `send_message` 发到 `QQBOT_HOME_CHANNEL`。没接通 QQ 就什么都不发。
+安装时创建 `hermes-lover-beat` 任务，但**默认暂停**，不会自己发消息。启用后每天 10/14/16/20 前后 ±60 分钟内随机触发一次；模型按人格 + 最近记忆 + 当前状态写一句，**只投递到这一条任务的 Deliver 目标**（安装时是 `local`，即只存本地；改成 `qqbot:<chat_id>` 才会发出去，且只发那一个会话，不会群发）。没接通 QQ 就什么都不发。
 
 - **不是技能触发**：定时靠 cron，会话关掉也会运行；monitor 门控保证只有到点那次才唤醒模型。
 - **查看 / 暂停 / 删除**：
@@ -175,6 +175,7 @@ hermes -p <p> cron remove <id>
 ```
 
 - **改时间**：编辑 `<profile>/scripts/hermes-lover-beat.py` 顶部的 `SLOTS`，或改 cron 表达式（默认 `*/5 9-21 * * *`）。
+- **会话订阅 / 退订**：用户在私聊或群里说「以后主动一点」「多来找我」时，插件会自动把该会话的 `chat_id` 加进这条任务的 Deliver；说「安静一点」「别主动」会自动移除。只改 Deliver 列表，不会自己 resume 任务；每次增删都会回一句确认。
 - **`proactive-agent` 只是方法论技能**，不发消息；要用先复制进该 profile：`cp -R ~/.hermes/skills/openclaw-imports/proactive-agent ~/.hermes/profiles/<p>/skills/`。
 - 动开关前和用户确认：谁能收到、每天几条、静默时段；默认四个点就是上限，不要自动加。
 
