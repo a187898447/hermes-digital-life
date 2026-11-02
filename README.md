@@ -48,7 +48,7 @@ Hermes 0.22.5 does not pass reliable primary/subagent/cron context to ordinary p
 
 Hermes Studio runs each non-default profile's agent in a bridge worker pinned to Hermes' managed `tools` python. That runtime ships no third-party packages, and the worker never imports `hermes_bootstrap`, so `ruamel.yaml` and friends are missing; every tool module that needs them (terminal, files, memory, skills, web) fails to import and the agent silently sees only a handful of tools.
 
-`install.sh` applies an idempotent host fix that adds the install venv to that runtime through a `sitecustomize.py`. For an existing install run it manually and then open a new Studio conversation:
+`install.sh --studio-fixes` applies an idempotent host fix that adds the install venv to that runtime through a `sitecustomize.py` (a plain install skips host changes). For an existing install run it manually and then open a new Studio conversation:
 
 ```sh
 python3 scripts/fix-studio-bridge-python.py          # apply, safe to repeat
@@ -62,7 +62,7 @@ CLI and TUI sessions, and the default profile, are unaffected.
 
 Hermes Studio 0.8.x binds each chat connection to one profile and then checks every clarify/approval answer against that connection profile. When the conversation belongs to another profile (`hermes-lover`, the usual case after install), the click is rejected with `Profile "<name>" is not available on this connection`; the card closes, the agent waits out the timeout, and the card reappears when you come back to the tab.
 
-`install.sh` applies an idempotent host fix that lets Studio serve a conversation from any profile that exists on the machine. Only Studio's own JS bundle is touched; Hermes and the CLI are not modified. For an existing install run it manually and then restart Studio:
+`install.sh --studio-fixes` applies an idempotent host fix that lets Studio serve a conversation from any profile that exists on the machine. Only Studio's own JS bundle is touched; Hermes and the CLI are not modified. For an existing install run it manually and then restart Studio:
 
 ```sh
 python3 scripts/fix-studio-cross-profile.py          # apply, safe to repeat

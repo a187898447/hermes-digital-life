@@ -6,6 +6,7 @@ usage() {
 用法:
   ./install.sh --mode local [--profile NAME] [--source PATH] [--configure]
   ./install.sh --mode remote --repo URL [--ref REF] [--profile NAME] [--configure]
+  可选: --no-beat 不创建主动消息任务；--studio-fixes 同时修复 Studio 宿主问题
 
 模式:
   local   将当前仓库或 --source 指定的工作树链接到新 profile。
@@ -24,6 +25,8 @@ SOURCE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO=""
 REF=""
 CONFIGURE=0
+WITH_BEAT=1
+STUDIO_FIXES=0
 
 while (($#)); do
   case "$1" in
@@ -33,6 +36,8 @@ while (($#)); do
     --repo) REPO="${2:?--repo 需要 Git URL}"; shift 2 ;;
     --ref) REF="${2:?--ref 需要 Git ref 或 commit}"; shift 2 ;;
     --configure) CONFIGURE=1; shift ;;
+    --no-beat) WITH_BEAT=0; shift ;;
+    --studio-fixes) STUDIO_FIXES=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) fail "未知参数: $1" ;;
   esac
@@ -91,7 +96,8 @@ hermes -p "$PROFILE" plugins doctor "$PLUGIN_NAME" --ci
 # `hermes-qqbot` toolset (terminal, file writes, MCP). `no_mcp` is a sentinel that
 # keeps globally enabled MCP servers out of the resolved set. Operators who want
 # more can widen this afterwards; existing choices are never overwritten.
-if ! hermes -p "$PROFILE" config get platform_toolsets.qqbot >/dev/null 2>&1; then
+if [[ "$(hermes -p "$PROFILE" config get platforms.qqbot.enabled 2>/dev/null)" == "true" ]] \
+   && ! hermes -p "$PROFILE" config get platform_toolsets.qqbot >/dev/null 2>&1; then
   hermes -p "$PROFILE" config set platform_toolsets.qqbot '["web","vision","todo","memory","no_mcp"]'
   printf '已设置 QQ 工具集: web/vision/todo/memory（不含终端与写文件，MCP 关闭）\n'
 fi
@@ -137,7 +143,9 @@ if [[ -f "$GATE_SCRIPT" ]]; then
 fi
 
 BEAT_SCRIPT="$SOURCE/scripts/hermes-lover-beat.py"
-if [[ -f "$BEAT_SCRIPT" ]]; then
+if ((WITH_BEAT == 0)); then
+  printf '已跳过主动消息任务（--no-beat）。需要时按 hermes-lover-guide 第 4 步手动创建。\n'
+elif [[ -f "$BEAT_SCRIPT" ]]; then
   mkdir -p "$PROFILE_HOME/scripts"
   cp "$BEAT_SCRIPT" "$PROFILE_HOME/scripts/hermes-lover-beat.py"
   chmod +x "$PROFILE_HOME/scripts/hermes-lover-beat.py"
@@ -159,6 +167,9 @@ fi
 # module that imports ruamel.yaml then fails to load and the agent silently
 # loses terminal/files/memory/skills.  A normal install always creates a new
 # profile, so apply the idempotent host fix here too (README has the details).
+if ((STUDIO_FIXES == 0)); then
+  printf '提示: 可选宿主修复（Hermes Studio 的工具丢失/选项答复）未应用；需要时加 --studio-fixes 重跑。\n'
+else
 BRIDGE_FIX="$SOURCE/scripts/fix-studio-bridge-python.py"
 if [[ -f "$BRIDGE_FIX" ]] && command -v python3 >/dev/null 2>&1; then
   python3 "$BRIDGE_FIX" ||
@@ -173,6 +184,7 @@ CROSS_FIX="$SOURCE/scripts/fix-studio-cross-profile.py"
 if [[ -f "$CROSS_FIX" ]] && command -v python3 >/dev/null 2>&1; then
   python3 "$CROSS_FIX" ||
     printf '提示: Studio 跨 profile 答复补丁未应用；选项按钮点了没反应时见 README 已知问题。\n' >&2
+fi
 fi
 
 # `hermes profile create` drops a generic alias wrapper that forwards straight
@@ -201,7 +213,10 @@ fi
 printf '\n验证状态读取：\n  hermes -p %q hermes-lover status\n' "$PROFILE"
 printf '后续独立会话：\n  hermes -p %q chat\n' "$PROFILE"
 
-printf '第三步扫码绑定 QQ：\n  hermes -p %q gateway setup   # 平台选 QQ Bot，手机 QQ 扫码\n  hermes -p %q config set platforms.qqbot.enabled true\n  hermes config set platforms.qqbot.enabled false   # default 关掉，避免同一 App 双绑\n  hermes gateway start          # 宿主级网关，不要加 -p\n' "$PROFILE" "$PROFILE"
+printf '绑定消息平台（以 QQ 为例）：\n  hermes -p %q gateway setup   # 平台选 QQ Bot，手机 QQ 扫码\n  hermes -p %q config set platforms.qqbot.enabled true\n  hermes gateway start          # 宿主级网关，不要加 -p\n' "$PROFILE" "$PROFILE"
+if hermes config get platforms.qqbot.enabled 2>/dev/null | grep -qx true; then
+  printf '提示: default profile 也启用了 qqbot；同一个 QQ 应用只能挂一个 profile，二选一关掉。\n'
+fi
 printf 'QQ 工具集已默认收窄；需要终端或写文件时自行改 platform_toolsets.qqbot。\n'
 
 printf '首次使用让 agent 引导你：\n  hermes -p %q chat  然后说「用 hermes-lover-guide 引导我配置」\n' "$PROFILE"

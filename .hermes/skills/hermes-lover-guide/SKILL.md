@@ -142,6 +142,7 @@ cp "$P/personas/001-deepseek-xiaojingyu/SOUL.md" "$P/SOUL.md"
 
 ```bash
 hermes -p <角色名> config set platforms.qqbot.enabled true
+hermes -p <角色名> config set platform_toolsets.qqbot '["web","vision","todo","memory","no_mcp"]'
 hermes -p <角色名> config set platforms.qqbot.extra.dm_policy allowlist
 hermes -p <角色名> config set platforms.qqbot.extra.group_policy allowlist
 hermes config set platforms.qqbot.enabled false   # default profile 关掉，避免同一 App 双绑

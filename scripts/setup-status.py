@@ -60,15 +60,32 @@ def main() -> int:
     try:
         auth = pdir / "auth.json"
         creds_ok = auth.is_file() and auth.stat().st_size > 10
-        if not creds_ok:
-            creds_ok = "api_key" in (pdir / "config.yaml").read_text()
     except OSError:
         pass
+    if not creds_ok:
+        try:
+            if "api_key" in (pdir / "config.yaml").read_text():
+                creds_ok = True
+        except OSError:
+            pass
+    if not creds_ok:
+        # Providers configured through the environment (ANTHROPIC_API_KEY,
+        # OPENAI_API_KEY, ...) never write auth.json; the profile .env is the
+        # only trace of them.
+        try:
+            for line in (pdir / ".env").read_text().splitlines():
+                key, _, value = line.partition("=")
+                key = key.strip()
+                if value.strip() and (key.endswith("_API_KEY") or key.endswith("_AUTH_TOKEN")):
+                    creds_ok = True
+                    break
+        except OSError:
+            pass
 
     # Step 1: a real persona, not the stock Hermes template.
     soul = pdir / "SOUL.md"
     soul_text = soul.read_text(errors="replace") if soul.is_file() else ""
-    soul_custom = bool(soul_text.strip()) and "built by Nous Research" not in soul_text and len(soul_text.strip()) >= 200
+    soul_custom = bool(soul_text.strip()) and "built by Nous Research" not in soul_text
     if soul_custom:
         rows.append(("人格 SOUL.md", True, soul_text.strip().splitlines()[0][:40]))
     elif soul.is_file():
@@ -79,12 +96,38 @@ def main() -> int:
     # Step 2: status is readable and the state db has a backup.
     res = run(["hermes", "-p", profile, PLUGIN, "status"])
     status_ok = bool(res and res.returncode == 0 and "chemistry" in (res.stdout or ""))
-    backups = sorted((pdir / "plugin-data" / PLUGIN).glob("data.db.bak-*"))
+    backups = sorted(
+        p for p in (pdir / "plugin-data" / PLUGIN).rglob("*bak*") if p.is_file()
+    )
     rows.append(("状态可读 + 备份", status_ok and bool(backups),
                  "status 返回 JSON" + ("，已有备份" if backups else "；还没有 data.db 备份")))
 
-    # Step 3: QQ credentials live in the profile .env. An already-bound QQ app in
-    # the default profile can be reused instead of creating a new q.qq.com app.
+    # Step 3: any messaging platform the operator enabled. QQ is the only one
+    # with a scan-based wizard, but the plugin itself is platform-agnostic.
+    def enabled_platforms(cfg_path: Path) -> list[str]:
+        try:
+            lines = cfg_path.read_text().splitlines()
+        except OSError:
+            return []
+        found, in_block = [], False
+        current = None
+        for line in lines:
+            stripped = line.strip()
+            indent = len(line) - len(line.lstrip())
+            if indent == 0 and stripped == "platforms:":
+                in_block = True
+                continue
+            if not in_block:
+                continue
+            if indent == 0 and stripped:
+                break
+            if indent == 2 and stripped.endswith(":"):
+                current = stripped[:-1]
+                continue
+            if indent >= 4 and stripped in ("enabled: true", "enabled: True") and current:
+                found.append(current)
+        return found
+
     def qq_key_present(env: Path) -> bool:
         try:
             return any(line.startswith("QQ_APP_ID=") and line.split("=", 1)[1].strip()
@@ -92,17 +135,17 @@ def main() -> int:
         except OSError:
             return False
 
-    keys_ok = qq_key_present(pdir / ".env")
-    enabled_cfg = run(["hermes", "-p", profile, "config", "get", "platforms.qqbot.enabled"])
-    platform_on = bool(enabled_cfg and (enabled_cfg.stdout or "").strip().lower().startswith("true"))
-    qq_ok = keys_ok and platform_on
-    if qq_ok:
-        detail = ".env 有 QQ_APP_ID，platforms.qqbot 已启用"
-    elif not keys_ok:
-        detail = "跑 `hermes -p <角色名> gateway setup`，平台选 QQ Bot 扫码"
+    platforms = enabled_platforms(pdir / "config.yaml")
+    if "qqbot" in platforms and not qq_key_present(pdir / ".env"):
+        platforms.remove("qqbot")
+    platform_ok = bool(platforms)
+    if platform_ok:
+        detail = "已启用: " + ", ".join(platforms)
+    elif enabled_platforms(pdir / "config.yaml"):
+        detail = "平台已启用但缺凭证，重新跑它的绑定命令"
     else:
-        detail = "凭证已写入，但 platforms.qqbot 未启用：hermes -p <角色名> config set platforms.qqbot.enabled true"
-    rows.append(("QQ 绑定（扫码）", qq_ok, detail))
+        detail = "还没有启用的消息平台；QQ: `hermes -p <角色名> gateway setup` 平台选 QQ Bot 扫码"
+    rows.append(("消息平台绑定", platform_ok, detail))
 
     # Steps 4-5: the paused beat job exists, and whether the operator enabled it.
     beat, beat_active = None, False
