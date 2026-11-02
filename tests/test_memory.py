@@ -227,12 +227,26 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(result["id"], duplicate["id"])
         self.assertEqual(self.recall()["total"], 2)
 
+
     def test_rebuild_failure_rolls_back_old_index(self):
         self.write("first")
         with patch.object(memory, "tokens", side_effect=RuntimeError("failure")):
             with self.assertRaises(RuntimeError): self.store.rebuild_index()
         with closing(sqlite3.connect(self.root / "memory-index.db")) as db:
             self.assertEqual(db.execute("select count(*) from entries").fetchone()[0], 1)
+
+    def test_rebuild_repairs_corrupt_index(self):
+        self.write("recover me")
+        (self.root / "memory-index.db").write_bytes(b"not a sqlite database")
+        self.assertEqual(self.store.rebuild_index()["total"], 1)
+        self.assertEqual(self.recall("recover me")["matched"], 1)
+
+    def test_fts_error_after_append_reports_persisted_id(self):
+        with patch.object(self.store, "_save_index", side_effect=RuntimeError("FTS5 unavailable")):
+            result = self.write("persisted despite unavailable index")
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["indexed"])
+        self.assertIn(result["id"], self.store.read_entries())
 
     def test_threads_and_processes_have_unique_ids(self):
         with ThreadPoolExecutor(max_workers=4) as pool:

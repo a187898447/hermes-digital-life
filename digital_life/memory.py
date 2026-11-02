@@ -277,7 +277,10 @@ class MemoryStore:
             # shortcut: replay validates all files per operation; add incremental checkpoints for large archives.
             self._append([], now_ms)
             entries, digest = self._replay()
-            self._sync(entries, digest)
+            try:
+                self._sync(entries, digest)
+            except (sqlite3.Error, RuntimeError, OSError):
+                logger.warning("Memory index unavailable before write; event log remains authoritative", exc_info=True)
             duplicate = next((e for e in entries.values() if e["date"] == date and e["text"] == text), None)
             if duplicate:
                 event = {"op": "touch", "id": duplicate["id"], "last_access_at": now_ms,
@@ -296,7 +299,7 @@ class MemoryStore:
             try:
                 entries, digest = self._replay()
                 self._save_index(entries, digest)
-            except sqlite3.Error:
+            except (sqlite3.Error, RuntimeError, OSError):
                 logger.warning("Memory event persisted but index update failed", exc_info=True)
                 indexed = False
             return {"ok": True, "id": event["id"], "date": date, "duplicate": bool(duplicate),
