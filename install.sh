@@ -193,7 +193,7 @@ else
   fi
 
   CROSS_FIX="$SOURCE/scripts/fix-studio-cross-profile.py"
-  if [[ -f "$CROSS_FIX" ]] && grep -q 'is not available on this connection' "$STUDIO_MAIN"; then
+  if [[ -f "$CROSS_FIX" ]] && ! python3 "$CROSS_FIX" --check >/dev/null 2>&1; then
     python3 "$CROSS_FIX" ||
       printf '提示: Studio 跨 profile 答复补丁未应用；选项按钮点了没反应时见 README 已知问题。\n' >&2
   fi
