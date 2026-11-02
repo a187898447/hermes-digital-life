@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import sqlite3
 import time
+from pathlib import Path
 from typing import Any
 
 from . import digital_life
@@ -15,7 +17,32 @@ from .digital_life.runtime import record_api_error, record_request, record_turn
 logger = logging.getLogger(__name__)
 
 _LAST_TURN: dict[str, str] = {}
+_SCOPE_CACHE: dict[str, tuple[str, str]] = {}
 _CAPTURE = None
+
+
+def _session_scope(session_id: str) -> tuple[str, str]:
+    """Best-effort read-only lookup of the chat a host session belongs to."""
+    if not session_id:
+        return "", ""
+    cached = _SCOPE_CACHE.get(session_id)
+    if cached is not None:
+        return cached
+    chat_id, chat_type = "", ""
+    try:
+        home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+        connection = sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True, timeout=1)
+        try:
+            row = connection.execute(
+                "SELECT chat_id, chat_type FROM sessions WHERE id=?", (session_id,)).fetchone()
+        finally:
+            connection.close()
+        if row:
+            chat_id, chat_type = str(row[0] or ""), str(row[1] or "")
+    except (sqlite3.Error, OSError, TypeError, ValueError):
+        pass
+    _SCOPE_CACHE[session_id] = (chat_id, chat_type)
+    return chat_id, chat_type
 
 
 def _status(args: dict[str, Any], **kwargs) -> str:
@@ -51,10 +78,12 @@ def _post_tool_call(tool_name: str = "", args: dict[str, Any] | None = None, res
 
 
 def _on_user_message(
-    user_message: str = "", session_id: str = "", platform: str = "", **kwargs
+    user_message: str = "", session_id: str = "", platform: str = "", sender_id: str = "", **kwargs
 ) -> dict[str, Any] | None:
     _LAST_TURN["user"] = user_message[:1500]
     _LAST_TURN["session"] = session_id or "unknown"
+    _LAST_TURN["sender"] = sender_id or ""
+    _LAST_TURN["chat_id"], _LAST_TURN["chat_type"] = _session_scope(_LAST_TURN["session"])
     note = _proactive.handle_message(user_message, session_id, platform)
     return {"context": f"[hermes-lover] {note}"} if note else None
 
@@ -221,7 +250,10 @@ def register(ctx) -> None:
             return
         store = memory_store()
         store.capture(f"用户：{user}\n助手：{assistant_response[:1500]}",
-                      session_id=_LAST_TURN.get("session", "unknown"))
+                      session_id=_LAST_TURN.get("session", "unknown"),
+                      chat_id=_LAST_TURN.get("chat_id", ""),
+                      chat_type=_LAST_TURN.get("chat_type", ""),
+                      speaker=_LAST_TURN.get("sender", ""))
 
     global _CAPTURE
     _CAPTURE = capture_turn
@@ -229,7 +261,10 @@ def register(ctx) -> None:
     def memory_write(args, session_id="", **kwargs):
         try:
             result = memory_store().write(args.get("text"), kind=args.get("kind", "note"),
-                                          weight=args.get("weight"), session_id=session_id)
+                                          weight=args.get("weight"), session_id=session_id,
+                                          chat_id=_LAST_TURN.get("chat_id", ""),
+                                          chat_type=_LAST_TURN.get("chat_type", ""),
+                                          speaker=_LAST_TURN.get("sender", ""))
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
             result = {"ok": False, "error": str(exc)}
         return json.dumps(result, ensure_ascii=False)
@@ -237,7 +272,8 @@ def register(ctx) -> None:
     def memory_recall(args, **kwargs):
         try:
             result = memory_store().recall(args.get("query", ""), k=args.get("k", 8),
-                                           include_cold=args.get("include_cold", False))
+                                           include_cold=args.get("include_cold", False),
+                                           chat_id=_LAST_TURN.get("chat_id", "") or None)
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
             result = {"ok": False, "error": str(exc)}
         return json.dumps(result, ensure_ascii=False)
@@ -250,7 +286,7 @@ def register(ctx) -> None:
             "weight": {"type": ["number", "null"]},
         }, "required": ["text"], "additionalProperties": False},
         handler=memory_write,
-        description="Remember a meaningful event, experience or decision in this profile's dated event library. Use built-in memory for stable profile facts. At most 4000 characters per entry; 20 new entries per session/day. Does not change life state.",
+        description="Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. Does not change life state.",
     )
     ctx.register_tool(
         name="memory_recall", toolset="digital_life",
