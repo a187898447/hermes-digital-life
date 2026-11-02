@@ -44,6 +44,14 @@ A-class upstream rules: seven-day effective-weight half-life, reciprocal recency
 
 Hermes 0.22.5 does not pass reliable primary/subagent/cron context to ordinary plugin tools. Source session IDs and quotas are recorded, but do not isolate callers: subagents or scheduled agents may write. Missing session IDs share the `unknown` quota bucket. Disable writes or use emergency stop when necessary.
 
+## Conversation capture
+
+Every completed turn is appended to the profile's dated event log as a `kind=turn` entry
+(`plugin-data/<name>/memory/YYYY/MM/DD.jsonl`), with no model call and no quota. Set
+`memory.capture: false` in the plugin settings to turn it off. The dated library is
+searchable from any platform that includes the `digital_life` toolset
+(`memory_recall`), and QQ sessions get that toolset by default since install.
+
 ## Known issue: Studio loses most tools for non-default profiles
 
 Hermes Studio runs each non-default profile's agent in a bridge worker pinned to Hermes' managed `tools` python. That runtime ships no third-party packages, and the worker never imports `hermes_bootstrap`, so `ruamel.yaml` and friends are missing; every tool module that needs them (terminal, files, memory, skills, web) fails to import and the agent silently sees only a handful of tools.

@@ -19,7 +19,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 DAY_MS = 86_400_000
-DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8}
+DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8, "turn": 0.4}
 _WRITE_LOCK = threading.RLock()
 _WORDS = re.compile(r"[\u3400-\u9fff\U00020000-\U0002fa1f]+|[a-zA-Z0-9]+")
 _ID = re.compile(r"hp-(\d{8})-(\d{4,})\Z")
@@ -43,7 +43,7 @@ def decay(weight: float, last_access_at: float, now_ms: float) -> float:
 
 def attention(cortisol: float) -> dict[str, float]:
     crisis, daily = (3.0, 0.1) if cortisol >= 80 else (1.8, 0.4) if cortisol >= 55 else (1.0, 1.0)
-    return {"crisis": crisis, "daily": daily, "fact": 1.0, "decision": 1.0, "note": 1.0}
+    return {"crisis": crisis, "daily": daily, "fact": 1.0, "decision": 1.0, "note": 1.0, "turn": 0.5}
 
 
 def relevance(bm25: float) -> float:
@@ -304,6 +304,43 @@ class MemoryStore:
                 indexed = False
             return {"ok": True, "id": event["id"], "date": date, "duplicate": bool(duplicate),
                     "created_at": duplicate["created_at"] if duplicate else now_ms, "indexed": indexed}
+
+
+    def capture(self, text, *, session_id="unknown", now_ms=None):
+        """Append one raw exchange as a day-sharded turn entry (no model, no quota)."""
+        if not isinstance(text, str) or not text.strip():
+            return {"ok": False, "error": "empty"}
+        text = text.strip()[:4000]
+        enabled = self.writes_enabled()
+        if type(enabled) is not bool:
+            return {"ok": False, "error": "memory.writes_enabled must be boolean"}
+        if not enabled:
+            return {"ok": False, "error": "Memory writes are disabled"}
+        now_ms = _now(now_ms)
+        date = datetime.fromtimestamp(now_ms / 1000).strftime("%Y-%m-%d")
+        session_id = session_id or "unknown"
+        with self._locked():
+            self._append([], now_ms)
+            entries, digest = self._replay()
+            try:
+                self._sync(entries, digest)
+            except (sqlite3.Error, RuntimeError, OSError):
+                logger.warning("Memory index unavailable before capture", exc_info=True)
+            today = [e for e in entries.values() if e["date"] == date]
+            seq = max((int(e["id"].rsplit("-", 1)[1]) for e in today), default=0) + 1
+            event = {"op": "add", "id": f"hp-{date.replace('-', '')}-{seq:04d}", "text": text,
+                     "kind": "turn", "weight": 0.4,
+                     "cortisol": self._state().get("chemistry", {}).get("cortisol", 20),
+                     "created_at": now_ms, "last_access_at": now_ms, "hits": 0,
+                     "source_session_id": session_id}
+            self._require_running()
+            self._append([event], now_ms)
+            try:
+                entries, digest = self._replay()
+                self._save_index(entries, digest)
+            except (sqlite3.Error, RuntimeError, OSError):
+                logger.warning("Memory event persisted but index update failed", exc_info=True)
+            return {"ok": True, "id": event["id"], "date": date}
 
     @staticmethod
     def _query(db, query, include_cold):

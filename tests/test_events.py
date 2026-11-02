@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 import types
 import unittest
@@ -262,6 +263,30 @@ class RegistrationTests(unittest.TestCase):
         self.snapshot = patch.object(plugin.digital_life.runtime, "status_snapshot", return_value=default_state(1_000_000))
         self.snapshot.start()
         self.addCleanup(self.snapshot.stop)
+
+    def test_turn_capture_appends_to_the_palace(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx = RecordingContext()
+            ctx.get_config = lambda key, default=None: default
+            with (
+                patch.object(plugin.digital_life.storage, "data_root", return_value=root),
+                patch.object(plugin.digital_life.storage, "plugin_db",
+                             side_effect=lambda name, filename: sqlite3.connect(root / filename)),
+                patch.object(plugin.digital_life.storage, "read_state",
+                             return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
+                patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+            ):
+                plugin.register(ctx)
+                hooks = dict(ctx.hooks)
+                hooks["pre_llm_call"](user_message="我叫阿远，习惯凌晨写代码", session_id="s1", platform="qqbot")
+                hooks["post_llm_call"](assistant_response="行，记下了", session_id="s1")
+            files = list((root / "memory").rglob("*.jsonl"))
+            self.assertEqual(len(files), 1)
+            event = json.loads(files[0].read_text().strip())
+            self.assertEqual(event["kind"], "turn")
+            self.assertIn("我叫阿远", event["text"])
+            self.assertIn("行，记下了", event["text"])
 
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()

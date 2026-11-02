@@ -100,7 +100,7 @@ hermes -p "$PROFILE" config set cron.wrap_response false >/dev/null 2>&1 || true
 
 qqbot_enabled="$(hermes -p "$PROFILE" config get platforms.qqbot.enabled 2>/dev/null || true)"
 if [[ "$qqbot_enabled" == "true" ]] && ! hermes -p "$PROFILE" config get platform_toolsets.qqbot >/dev/null 2>&1; then
-  hermes -p "$PROFILE" config set platform_toolsets.qqbot '["web","vision","todo","memory","no_mcp"]'
+  hermes -p "$PROFILE" config set platform_toolsets.qqbot '["web","vision","todo","memory","digital_life","no_mcp"]'
   printf '已设置 QQ 工具集: web/vision/todo/memory（不含终端与写文件，MCP 关闭）\n'
 fi
 if [[ "$(hermes -p "$PROFILE" config get human_delay.mode 2>/dev/null)" == "off" ]]; then

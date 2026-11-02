@@ -9,9 +9,13 @@ import time
 from typing import Any
 
 from . import digital_life
+from .digital_life import proactive as _proactive
 from .digital_life.runtime import record_api_error, record_request, record_turn
 
 logger = logging.getLogger(__name__)
+
+_LAST_TURN: dict[str, str] = {}
+_CAPTURE = None
 
 
 def _status(args: dict[str, Any], **kwargs) -> str:
@@ -21,6 +25,11 @@ def _status(args: dict[str, Any], **kwargs) -> str:
 def _post_llm_call(assistant_response: str = "", **kwargs) -> None:
     if assistant_response:
         record_turn(time.time() * 1000, success=True)
+        try:
+            if _CAPTURE is not None:
+                _CAPTURE(assistant_response)
+        except Exception:
+            pass
         try:
             if assistant_response.lstrip().startswith("/"):
                 return
@@ -44,7 +53,9 @@ def _post_tool_call(tool_name: str = "", args: dict[str, Any] | None = None, res
 def _on_user_message(
     user_message: str = "", session_id: str = "", platform: str = "", **kwargs
 ) -> dict[str, Any] | None:
-    note = digital_life.proactive.handle_message(user_message, session_id, platform)
+    _LAST_TURN["user"] = user_message[:1500]
+    _LAST_TURN["session"] = session_id or "unknown"
+    note = _proactive.handle_message(user_message, session_id, platform)
     return {"context": f"[hermes-lover] {note}"} if note else None
 
 
@@ -201,6 +212,19 @@ def register(ctx) -> None:
             life_state=lambda: storage.read_state(time.time() * 1000),
             writes_enabled=lambda: ctx.get_config("memory.writes_enabled", True),
         )
+
+    def capture_turn(assistant_response: str) -> None:
+        if not ctx.get_config("memory.capture", True):
+            return
+        user = _LAST_TURN.get("user", "")
+        if not user:
+            return
+        store = memory_store()
+        store.capture(f"用户：{user}\n助手：{assistant_response[:1500]}",
+                      session_id=_LAST_TURN.get("session", "unknown"))
+
+    global _CAPTURE
+    _CAPTURE = capture_turn
 
     def memory_write(args, session_id="", **kwargs):
         try:

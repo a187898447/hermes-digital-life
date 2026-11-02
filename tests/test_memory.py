@@ -109,6 +109,14 @@ class MemoryTests(unittest.TestCase):
     def recall(self, query="", **kwargs):
         return self.store.recall(query, now_ms=NOW, **kwargs)
 
+    def test_capture_appends_turn_entries_without_quota(self):
+        for i in range(25):
+            result = self.store.capture(f"用户：第{i}句\n助手：第{i}句回话", session_id="s1", now_ms=NOW + i)
+            self.assertTrue(result["ok"])
+        entries = self.store.read_entries()
+        self.assertEqual(sum(1 for e in entries.values() if e["kind"] == "turn"), 25)
+        self.assertEqual(len(self.store.read_entries()), 25)
+
     def test_daily_path_id_and_duplicate_replay(self):
         # Removing duplicate reinforcement or replaying only add events must fail this test.
         first = self.write(kind="daily")
@@ -294,6 +302,7 @@ class ScoringTests(unittest.TestCase):
                 self.assertFalse(job.is_alive())
                 self.assertEqual(job.exitcode, 0)
             self.assertEqual(len(memory.MemoryStore(Path(root)).read_entries()), 20)
+
 
     def test_bounds_monotonicity_and_weight(self):
         self.assertEqual(memory.relevance(-1), 0.5)

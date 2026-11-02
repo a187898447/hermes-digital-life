@@ -8,8 +8,8 @@ kind: standalone
 config_schema:
   memory:
     type: dict
-    default: {writes_enabled: true}
-    description: "Event-memory settings: writes_enabled must be a boolean (default true)."
+    default: {writes_enabled: true, capture: true}
+    description: "Event-memory settings: writes_enabled and capture must be booleans (default true)."
 provides_tools:
   - memory_write
   - memory_recall
