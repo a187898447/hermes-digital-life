@@ -61,7 +61,7 @@ fi
 CREATED=0
 cleanup_on_error() {
   status=$?
-  if ((status != 0)) && ((CREATED == 1)); then
+  if ((status != 0)) && ((CREATED == 1)) && [[ ${BASH_SUBSHELL:-0} -eq 0 ]]; then
     printf "安装未完成。新 profile '$PROFILE' 已保留以便排查；未自动删除其中任何数据。\n" >&2
   fi
   exit "$status"
@@ -94,8 +94,8 @@ hermes -p "$PROFILE" plugins doctor "$PLUGIN_NAME" --ci
 # `hermes-qqbot` toolset (terminal, file writes, MCP). `no_mcp` is a sentinel that
 # keeps globally enabled MCP servers out of the resolved set. Operators who want
 # more can widen this afterwards; existing choices are never overwritten.
-if [[ "$(hermes -p "$PROFILE" config get platforms.qqbot.enabled 2>/dev/null)" == "true" ]] \
-   && ! hermes -p "$PROFILE" config get platform_toolsets.qqbot >/dev/null 2>&1; then
+qqbot_enabled="$(hermes -p "$PROFILE" config get platforms.qqbot.enabled 2>/dev/null || true)"
+if [[ "$qqbot_enabled" == "true" ]] && ! hermes -p "$PROFILE" config get platform_toolsets.qqbot >/dev/null 2>&1; then
   hermes -p "$PROFILE" config set platform_toolsets.qqbot '["web","vision","todo","memory","no_mcp"]'
   printf '已设置 QQ 工具集: web/vision/todo/memory（不含终端与写文件，MCP 关闭）\n'
 fi
