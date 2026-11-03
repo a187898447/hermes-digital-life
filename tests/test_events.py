@@ -291,7 +291,7 @@ class RegistrationTests(unittest.TestCase):
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)
-        self.assertEqual([entry["name"] for entry in ctx.tools], ["memory_write", "memory_recall", "digital_life_status"])
+        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "memory_write", "memory_recall", "digital_life_status"])
         self.assertEqual([entry["name"] for entry in ctx.cli], ["hermes-lover"])
         self.assertEqual({kind for kind, _ in ctx.middleware}, {"llm_request"})
         self.assertEqual(ctx.blueprints[0][0], ("dream-reflection",))

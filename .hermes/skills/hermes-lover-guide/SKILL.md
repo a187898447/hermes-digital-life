@@ -57,7 +57,7 @@ hermes gateway list | grep "$P"
 | 2 | `hermes -p <角色名> hermes-lover status`；备份 `plugin-data/hermes-lover/data.db` | 返回激素/精力 JSON，备份文件存在 |
 | 3 | QQ：q.qq.com 建应用 → profile `.env` → `platforms.qqbot` → `hermes gateway restart` | `gateway list` 中该 profile served，私聊有回复 |
 | 4 | 确认安装器已建好 `hermes-lover-beat`（默认 paused） | `cron list` 能看到，状态 paused |
-| 5 | 用户确认后启用：`hermes -p <角色名> hermes-lover beats enable`（每个聊过天的会话各有一条 beat，按各自记忆写） | 状态 active，用户知道 `beats disable` 能关 |
+| 5 | 用户确认后启用：`hermes -p <角色名> hermes-lover beats enable`（一条任务，到点遍历每个聊过天的会话，各自回忆、各自写、错开发送） | 状态 active，用户知道 `beats disable` 能关 |
 
 前置的硬约束：**`install.sh` 拒绝已存在的 profile**，不要试图复用它去"重装"。
 
@@ -179,7 +179,7 @@ hermes gateway list       # default 与 <角色名> 都应显示 ✓
 
 ## 子流程 D：主动消息
 
-安装时创建 `hermes-lover-beat` 任务，但**默认暂停**，不会自己发消息。启用后每天 10/14/16/20 前后 ±60 分钟内随机触发一次；模型先 `memory_recall` 看最近聊过什么，再按人格 + 当前状态写一句，**投递到这条任务的 Deliver 列表**（安装时是 `local`；`qqbot:<chat_id>` 才会发出去）。私聊和**每一个跟它说过话的群**都会自动加进这个列表，同一句发过去；所以一句要多会话通用，别点某个人。退订只从列表里去掉该会话。没接通 QQ 就什么都不发。
+安装时创建 `hermes-lover-beat` 任务，但**默认暂停**。启用后每天 10/14/16/20 前后 ±60 分钟内随机触发一次；一次触发里调 `beat_targets` 取所有订阅会话，对每个会话 `memory_recall(chat_id=…)` 看它自己的记忆、各写一句，再用 `beat_send(chat_id, text, delay_seconds=随机)` 错开发出去。任务本身的 Deliver 是 `local`（不再靠它投递）。私聊和每个说过话的群都会自动订阅；退订只去掉该会话。没接通 QQ 就什么都不发。
 
 - **不是技能触发**：定时靠 cron，会话关掉也会运行；monitor 门控保证只有到点那次才唤醒模型。
 - **查看 / 暂停 / 删除**：

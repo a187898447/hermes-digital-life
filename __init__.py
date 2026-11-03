@@ -180,7 +180,6 @@ def _on_user_message(
     if (_LAST_TURN["platform"] or "") == "qqbot" and _LAST_TURN["chat_id"]:
         try:
             _proactive.track_chat({"chat_id": _LAST_TURN["chat_id"], "chat_type": _LAST_TURN["chat_type"]})
-            _proactive.ensure_chat_job({"chat_id": _LAST_TURN["chat_id"], "chat_type": _LAST_TURN["chat_type"]})
         except Exception:
             logger.warning("hermes-lover could not add chat to the beat rotation", exc_info=True)
     notes = []
@@ -509,6 +508,56 @@ def register(ctx) -> None:
             result = {"ok": False, "error": str(exc)}
         return json.dumps(result, ensure_ascii=False)
 
+    def beat_targets(args, **kwargs):
+        from .digital_life import proactive
+        targets = proactive.load_targets()
+        return json.dumps({"targets": [
+            {"chat_id": str(t.get("chat_id")), "chat_type": str(t.get("chat_type") or "")}
+            for t in targets if str(t.get("chat_id") or "").startswith(("F", "9"))
+        ]}, ensure_ascii=False)
+
+    def beat_send(args, **kwargs):
+        chat_id = str(args.get("chat_id") or "").strip()
+        text = str(args.get("text") or "").strip()
+        if not chat_id or not text:
+            return json.dumps({"ok": False, "error": "chat_id and text are required"})
+        delay = args.get("delay_seconds") or 0
+        try:
+            delay = max(0, min(300, float(delay)))
+        except (TypeError, ValueError):
+            delay = 0
+        if delay:
+            time.sleep(delay)
+        from tools.send_message_tool import send_message_tool
+        raw = send_message_tool({"action": "send", "target": f"qqbot:{chat_id}", "message": text})
+        try:
+            result = json.loads(raw)
+        except (TypeError, ValueError):
+            result = {"ok": True, "raw": str(raw)[:200]}
+        return json.dumps({"ok": not result.get("error"), "chat_id": chat_id, "result": result},
+                          ensure_ascii=False)
+
+    ctx.register_tool(
+        name="beat_targets", toolset="digital_life",
+        schema={"name": "beat_targets",
+                "description": "List the QQ chats that subscribed to proactive beats. Use before a proactive run, then send one tailored line to each with beat_send.",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
+        handler=beat_targets,
+        description="List the QQ chats that subscribed to proactive beats.",
+    )
+    ctx.register_tool(
+        name="beat_send", toolset="digital_life",
+        schema={"name": "beat_send",
+                "description": "Send one proactive line to a QQ chat after an optional random delay, so separate chats do not get messages at the same second. Only for the beat job.",
+                "parameters": {"type": "object", "properties": {
+            "chat_id": {"type": "string"},
+            "text": {"type": "string", "maxLength": 200},
+            "delay_seconds": {"type": ["number", "null"],
+                              "description": "0-300 seconds to wait before sending; pick a different random value per chat."},
+        }, "required": ["chat_id", "text"], "additionalProperties": False}},
+        handler=beat_send,
+        description="Send one proactive line to a QQ chat after an optional delay.",
+    )
     ctx.register_tool(
         name="memory_write", toolset="digital_life",
         schema={"name": "memory_write",
