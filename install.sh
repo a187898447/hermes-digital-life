@@ -161,7 +161,7 @@ elif [[ -f "$BEAT_SCRIPT" ]]; then
   mkdir -p "$PROFILE_HOME/scripts"
   cp "$BEAT_SCRIPT" "$PROFILE_HOME/scripts/hermes-lover-beat.py"
   chmod +x "$PROFILE_HOME/scripts/hermes-lover-beat.py"
-  BEAT_PROMPT='这是 hermes-lover 的主动联系触发点，监控输出里的 FIRE 标记表示刚刚到点（MORNING 上午 / MIDDAY 午后 / AFTERNOON 傍晚前 / NIGHT 夜里）。按顺序做：1) 读当前 profile 的 SOUL.md 人格；2) 参考最近记忆与 hermes-lover 当前状态（激素、精力、gap）；3) 结合此刻时间段，用这个人物的口吻写一句话（不超过 40 字，像他/她真的会主动发的那一句；不报状态数字，不客套，不重复最近发过的内容）；4) 只输出这句话，不要再加解释，也不要自己调用发送工具——投递目标由这个 cron 任务的 Deliver 决定。'
+  BEAT_PROMPT='这是 hermes-lover 的主动联系触发点，监控输出里的 FIRE 标记表示刚刚到点（MORNING 上午 / MIDDAY 午后 / AFTERNOON 傍晚前 / NIGHT 夜里）。按顺序做：1) 读当前 profile 的 SOUL.md 人格；2) 调 memory_recall（不带日期，取最近几条）看看当前投递会话最近聊过什么、用户是谁，让这句话接得上，不要凭空开新话题；3) 参考 hermes-lover 当前状态（激素、精力、gap）；4) 结合此刻时间段，用这个人物的口吻写一句话（不超过 40 字，像他/她真的会主动发的那一句；不报状态数字，不客套，不重复最近发过的内容）；5) 只输出这句话，不要再加解释，也不要自己调用发送工具——投递目标由这个 cron 任务的 Deliver 决定（私聊和群聊会各自按自己的上下文收到这句）。'
   if hermes -p "$PROFILE" cron create "*/5 9-21 * * *" "$BEAT_PROMPT" \
       --name hermes-lover-beat \
       --monitor-script "hermes-lover-beat.py" \

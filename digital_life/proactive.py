@@ -135,6 +135,30 @@ def sync_beat_delivery(targets: list[dict[str, Any]], dropped: set[str] | None =
     return changed
 
 
+def track_chat(chat: dict[str, str]) -> bool:
+    """Auto-subscribe every QQ chat the bot talks in (DM and group) to the beat job.
+
+    Operator-authored deliver entries are preserved; this only appends chats that
+    actually spoke to the bot, so a new group joins the proactive rotation without
+    the operator editing config.
+    """
+    chat_id = str(chat.get("chat_id") or "")
+    if not chat_id:
+        return False
+    targets = load_targets()
+    if any(str(item.get("chat_id")) == chat_id for item in targets):
+        return False
+    targets.append({
+        "chat_id": chat_id,
+        "chat_type": str(chat.get("chat_type") or ""),
+        "label": str(chat.get("label") or ""),
+        "added_at": int(time.time() * 1000),
+    })
+    _save_targets(targets)
+    sync_beat_delivery(targets)
+    return True
+
+
 def subscribe(chat: dict[str, str], label: str = "") -> tuple[str, int]:
     """Add ``chat`` (idempotent). Returns ``(state, target_count)``."""
     chat_id = str(chat.get("chat_id") or "")
