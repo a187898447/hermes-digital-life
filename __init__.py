@@ -466,25 +466,29 @@ def register(ctx) -> None:
 
     ctx.register_tool(
         name="memory_write", toolset="digital_life",
-        schema={"type": "object", "properties": {
+        schema={"name": "memory_write",
+                "description": "Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. Does not change life state.",
+                "parameters": {"type": "object", "properties": {
             "text": {"type": "string", "maxLength": 4000},
             "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal"], "default": "note"},
             "weight": {"type": ["number", "null"]},
             "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
                     "description": "Anchor a journal entry to the day it describes."},
-        }, "required": ["text"], "additionalProperties": False},
+        }, "required": ["text"], "additionalProperties": False}},
         handler=memory_write,
         description="Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. Does not change life state.",
     )
     ctx.register_tool(
         name="memory_recall", toolset="digital_life",
-        schema={"type": "object", "properties": {
+        schema={"name": "memory_recall",
+                "description": "Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries. Displayed memories refresh their access history except during emergency stop. Does not change life state.",
+                "parameters": {"type": "object", "properties": {
             "query": {"type": ["string", "null"], "default": ""},
             "k": {"type": "integer", "default": 8},
             "include_cold": {"type": "boolean", "default": False},
             "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
                     "description": "Return that day's journal first, then its raw entries."},
-        }, "additionalProperties": False},
+        }, "additionalProperties": False}},
         handler=memory_recall,
         description="Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries. Displayed memories refresh their access history except during emergency stop. Does not change life state.",
     )
@@ -520,7 +524,9 @@ def register(ctx) -> None:
     ctx.register_tool(
         name="digital_life_status",
         toolset="digital_life",
-        schema={"type": "object", "properties": {}, "additionalProperties": False},
+        schema={"name": "digital_life_status",
+                "description": "Read the current bounded digital-life state. This tool cannot change life state.",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
         handler=_status,
         description="Read the current bounded digital-life state. This tool cannot change life state.",
     )
