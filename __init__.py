@@ -142,6 +142,22 @@ def _on_gateway_dispatch(event=None, **kwargs):
 
         _storage.update_state(now_ms, lambda state: _domain.default_state(now_ms))
         logger.info("hermes-lover /new by owner: cleared %s palace entries, life state reset", cleared)
+        if all_chats:
+            # /new all means every QQ conversation starts over, not just this one.
+            session_store = kwargs.get("session_store")
+            reset = 0
+            if session_store is not None:
+                try:
+                    for entry in session_store.list_sessions():
+                        platform_name = entry.platform.value if entry.platform else ""
+                        if platform_name != "qqbot":
+                            continue
+                        if session_store.reset_session(entry.session_key) is not None:
+                            reset += 1
+                except Exception:
+                    logger.warning("hermes-lover /new all could not reset host sessions", exc_info=True)
+            logger.info("hermes-lover /new all: %s host sessions rotated", reset)
+            return {"action": "skip"}
         if text.lower().strip() != "/new":
             # A group message arrives as "<@bot> /new"; hand the gateway a bare command so it
             # also rotates the conversation instead of only clearing plugin state.
