@@ -129,11 +129,12 @@ def _on_gateway_dispatch(event=None, **kwargs):
             logger.info("hermes-lover /new ignored: sender %s is not an owner", sender[-6:])
             return None
         chat_id = str(getattr(source, "chat_id", "") or "")
+        all_chats = (match.group("scope") or "").lower() in {"all", "全部"}
         factory = _MEMORY_STORE.get("factory")
         store = factory() if factory is not None else None
         if store is not None:
-            cleared = store.clear(None if (match.group("scope") or "").lower() in {"all", "全部"}
-                                  else (chat_id or None))
+            # Never fall back to "every chat" when the source carries no chat id.
+            cleared = store.clear(None if all_chats else (chat_id or "unknown"))
         else:
             cleared = 0
         now_ms = time.time() * 1000
@@ -141,6 +142,10 @@ def _on_gateway_dispatch(event=None, **kwargs):
 
         _storage.update_state(now_ms, lambda state: _domain.default_state(now_ms))
         logger.info("hermes-lover /new by owner: cleared %s palace entries, life state reset", cleared)
+        if text.lower().strip() != "/new":
+            # A group message arrives as "<@bot> /new"; hand the gateway a bare command so it
+            # also rotates the conversation instead of only clearing plugin state.
+            return {"action": "rewrite", "text": "/new"}
     except Exception:
         logger.warning("hermes-lover /new reset failed", exc_info=True)
     return None
