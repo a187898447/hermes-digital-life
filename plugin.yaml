@@ -14,6 +14,8 @@ provides_tools:
   - memory_write
   - memory_recall
   - digital_life_status
+  - beat_targets
+  - beat_send
 provides_hooks:
   - pre_llm_call
   - pre_gateway_dispatch
