@@ -498,6 +498,9 @@ def register(ctx) -> None:
     def memory_recall(args, session_id="", **kwargs):
         try:
             chat_id, _chat_type = _session_scope(session_id)
+            explicit = str(args.get("chat_id") or "").strip()
+            if explicit:
+                chat_id = explicit
             result = memory_store().recall(args.get("query", ""), k=args.get("k", 8),
                                            include_cold=args.get("include_cold", False),
                                            chat_id=chat_id or None,
@@ -530,6 +533,8 @@ def register(ctx) -> None:
             "include_cold": {"type": "boolean", "default": False},
             "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
                     "description": "Return that day's journal first, then its raw entries."},
+            "chat_id": {"type": "string",
+                       "description": "Recall only this QQ chat's entries (used by per-chat proactive jobs)."},
         }, "additionalProperties": False}},
         handler=memory_recall,
         description="Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries. Displayed memories refresh their access history except during emergency stop. Does not change life state.",
