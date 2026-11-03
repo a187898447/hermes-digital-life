@@ -21,6 +21,7 @@ import json
 import os
 import random
 import sys
+import zlib
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -59,7 +60,10 @@ def save_state(state: dict) -> None:
 
 
 def plan_for(day: date) -> list[tuple[datetime, str]]:
-    rng = random.Random(day.toordinal())
+    # Mix the chat key into the seed so parallel per-chat jobs do not all fire together.
+    key = (os.environ.get("HERMES_LOVER_BEAT_KEY") or "").strip()
+    seed = day.toordinal() ^ (zlib.crc32(key.encode("utf-8")) if key else 0)
+    rng = random.Random(seed)
     plan = []
     for hour in SLOTS:
         shifted = datetime(day.year, day.month, day.day, hour) + timedelta(
