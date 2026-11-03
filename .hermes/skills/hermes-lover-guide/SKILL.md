@@ -53,7 +53,7 @@ hermes gateway list | grep "$P"
 
 | 步 | 动作 | 完成判据 |
 |---|---|---|
-| 1 | 人格落地：001 参考人格，或按「转译流程」写 `~/.hermes/profiles/<角色名>/SOUL.md` | SOUL.md 存在且非默认模板，40–80 行 |
+| 1 | 人格落地：001 参考人格，或按「转译流程」写 `~/.hermes/profiles/<角色名>/SOUL.md`，同时生成 3–8 个唤醒词 `wake-words.json` | SOUL.md 存在且非默认模板，40–80 行；wake-words.json 有词 |
 | 2 | `hermes -p <角色名> hermes-lover status`；备份 `plugin-data/hermes-lover/data.db` | 返回激素/精力 JSON，备份文件存在 |
 | 3 | QQ：q.qq.com 建应用 → profile `.env` → `platforms.qqbot` → `hermes gateway restart` | `gateway list` 中该 profile served，私聊有回复 |
 | 4 | 确认安装器已建好 `hermes-lover-beat`（默认 paused） | `cron list` 能看到，状态 paused |
@@ -91,6 +91,7 @@ hermes gateway list | grep "$P"
 P=~/.hermes/profiles/<角色名>
 [ -f "$P/SOUL.md" ] && cp "$P/SOUL.md" "$P/SOUL.md.bak"
 cp "$P/personas/001-deepseek-xiaojingyu/SOUL.md" "$P/SOUL.md"
+cp "$P/personas/001-deepseek-xiaojingyu/wake-words.json" "$P/wake-words.json"
 ```
 
 - 告诉用户：这是 QQ 群友型人格（1~10 字短句、会怼人、会潜水），适合群聊；想要温柔陪伴或理性参谋，走女娲草稿转译，不要硬改它。
@@ -115,7 +116,8 @@ cp "$P/personas/001-deepseek-xiaojingyu/SOUL.md" "$P/SOUL.md"
 6. 安全边界原样保留模板里的四条，不删不改。
 7. 全篇 40–80 行；超了删修饰，保留行为倾向。
 8. 写入目标 profile 的 `SOUL.md`；profile 不存在时提示先跑 `install.sh`，不要自己建目录。
-9. 报告：写入了哪些段落、删掉了哪些、哪一段还需要用户补（通常只有关系设定）。
+9. 顺带生成唤醒词：从人格的名字、外号、口头梗里挑 3–8 个**群里会自然说出来**的词（例如小鲸鱼、大肥鱼、鲸鱼娘），写进 profile 根目录的 `wake-words.json`（JSON 字符串数组）。不要用“你好”“在吗”这类常用词，也不要写人格自己不会回应的词。QQ 绑定会自动读这个文件；用户想改就改它，或绑定时用 `--wake-words "a,b,c"` 覆盖。
+10. 报告：写入了哪些段落、删掉了哪些、哪一段还需要用户补（通常只有关系设定），以及生成的唤醒词。
 
 **硬规则**：不虚构源文件里没有的事实、经历、关系；不保留第三人称；不写"会主动联系用户"（主动消息由宿主 cron 的 Deliver 决定，人格不承诺）；不覆盖或弱化安全边界。
 

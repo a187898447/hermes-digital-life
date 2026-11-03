@@ -22,7 +22,7 @@ from pathlib import Path
 
 STATE_NAME = "qq-bind.json"
 ENV_KEYS = ("QQ_APP_ID", "QQ_CLIENT_SECRET", "QQ_ALLOWED_USERS", "QQ_ALLOW_ALL_USERS")
-WAKES = '["小鲸鱼","DeepSeek","deepseek","鲸鱼","鲸鲸","大肥鱼","ds"]'
+WAKE_FILE = "wake-words.json"
 
 
 def hermes_home(profile: str) -> Path:
@@ -71,7 +71,28 @@ def write_env(profile: str, app_id: str, secret: str, openid: str, allow_all: bo
     return env
 
 
-def configure(profile: str, allow_all: bool = False) -> None:
+def load_wake_words(profile: str, explicit: str = "") -> list[str]:
+    """Wake words belong to the persona, not to the binder: file first, flag second."""
+    if explicit:
+        raw = [word.strip() for word in explicit.split(",")]
+    else:
+        path = hermes_home(profile) / WAKE_FILE
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text())
+        except (ValueError, OSError):
+            return []
+        raw = data if isinstance(data, list) else []
+    seen: list[str] = []
+    for word in raw:
+        word = str(word).strip()
+        if word and word not in seen and len(word) <= 32:
+            seen.append(word)
+    return seen[:12]
+
+
+def configure(profile: str, allow_all: bool = False, wake_words: list[str] | None = None) -> None:
     pairs = [
         ("platforms.qqbot.enabled", "true"),
         ("platforms.qqbot.extra.group_policy", "open" if allow_all else "allowlist"),
@@ -80,14 +101,17 @@ def configure(profile: str, allow_all: bool = False) -> None:
         ("platforms.qqbot.extra.group_ambient", "false"),
         ("platforms.qqbot.extra.group_followup_window", "180"),
         ("platforms.qqbot.extra.group_followup_max_messages", "5"),
-        ("platforms.qqbot.extra.group_wake_words", WAKES),
     ]
+    if wake_words:
+        pairs.append(("platforms.qqbot.extra.group_wake_words",
+                      json.dumps(wake_words, ensure_ascii=False)))
     for key, value in pairs:
         subprocess.run(["hermes", "-p", profile, "config", "set", key, value],
                        capture_output=True, text=True)
 
 
-def cmd_start(profile: str, allow_all: bool = False, show_qr: bool = False) -> int:
+def cmd_start(profile: str, allow_all: bool = False, show_qr: bool = False,
+              wake_words: str = "") -> int:
     ensure_deps()
     BindStatus, create, _poll, build_url, _decrypt = onboard()
     import qrcode
@@ -103,7 +127,8 @@ def cmd_start(profile: str, allow_all: bool = False, show_qr: bool = False) -> i
     print(f"\n{url}\n")
     print("扫码确认后运行：qq-bind.py wait --profile " + profile)
     state_path(profile).write_text(json.dumps({"task_id": task_id, "key": key, "url": url,
-                                               "allow_all": allow_all}))
+                                               "allow_all": allow_all,
+                                               "wake_words": wake_words}))
     os.chmod(state_path(profile), 0o600)
     return 0
 
@@ -130,7 +155,8 @@ def cmd_wait(profile: str, timeout: int, allow_all: bool = False) -> int:
         if status == BindStatus.COMPLETED:
             secret = decrypt(enc, state["key"])
             env = write_env(profile, app_id, secret, openid, allow_all=allow_all)
-            configure(profile, allow_all=allow_all)
+            words = load_wake_words(profile, str(state.get("wake_words", "")))
+            configure(profile, allow_all=allow_all, wake_words=words)
             subprocess.run(["hermes", "gateway", "restart"], capture_output=True, text=True)
             path.unlink(missing_ok=True)
             print(f"\n绑定完成：App ID {app_id}")
@@ -162,9 +188,12 @@ def main() -> int:
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--allow-all", action="store_true", help="open DMs/groups to any QQ user")
     parser.add_argument("--qr", action="store_true", help="also render the QR in this terminal")
+    parser.add_argument("--wake-words", default="",
+                        help="comma-separated wake words; defaults to the profile's wake-words.json")
     args = parser.parse_args()
     if args.action == "start":
-        return cmd_start(args.profile, allow_all=args.allow_all, show_qr=args.qr)
+        return cmd_start(args.profile, allow_all=args.allow_all, show_qr=args.qr,
+                         wake_words=args.wake_words)
     if args.action == "wait":
         return cmd_wait(args.profile, args.timeout, allow_all=args.allow_all)
     return cmd_cancel(args.profile)
