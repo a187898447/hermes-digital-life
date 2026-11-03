@@ -140,10 +140,10 @@ cp "$P/personas/001-deepseek-xiaojingyu/SOUL.md" "$P/SOUL.md"
 1. 出二维码（**你自己跑，不要让用户去敲命令**）：
 
 ```bash
-python3 ~/.hermes/profiles/<角色名>/scripts/qq-bind.py start --profile <角色名>
+python3 ~/.hermes/profiles/<角色名>/scripts/qq-bind.py start --profile <角色名> --qr
 ```
 
-把输出里的二维码和链接原样贴给用户，请他用手机 QQ 扫码并确认。不要跑 `gateway setup`（那是需要按键的 TUI）。用户说扫完后执行：
+`--qr` 才会把二维码画到终端；把二维码/链接**只发给绑定人（私聊）**，说明只发给他、别贴到群里，请他手机 QQ 扫码并确认。不加 `--allow-all` 时绑定后只允许白名单账号联系；用户明确要求群里任何人都能用再重跑 `start --allow-all`。不要跑 `gateway setup`（那是需要按键的 TUI）。用户说扫完后执行：
 
 ```bash
 python3 ~/.hermes/profiles/<角色名>/scripts/qq-bind.py wait --profile <角色名>
@@ -154,7 +154,7 @@ python3 ~/.hermes/profiles/<角色名>/scripts/qq-bind.py wait --profile <角色
 
 ```bash
 hermes -p <角色名> config set platforms.qqbot.enabled true
-hermes -p <角色名> config set platform_toolsets.qqbot '["web","vision","todo","memory","no_mcp"]'
+hermes -p <角色名> config set platform_toolsets.qqbot '["web","vision","todo","digital_life","no_mcp"]'
 hermes -p <角色名> config set platforms.qqbot.extra.dm_policy allowlist
 hermes -p <角色名> config set platforms.qqbot.extra.group_policy allowlist
 hermes config set platforms.qqbot.enabled false   # default profile 关掉，避免同一 App 双绑

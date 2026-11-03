@@ -36,17 +36,23 @@ def settle_state(now_ms: float) -> dict[str, Any]:
     return update_state(now_ms, mutate)
 
 
-def status_snapshot(now_ms: float) -> dict[str, Any]:
+def _gap_visible(gap: dict[str, Any], scope: str | None) -> bool:
+    """A gap may only be shown to the conversation that raised it (or to every one)."""
+    return str(gap.get("chat", "") or "") in ("", scope or "")
+
+
+def status_snapshot(now_ms: float, scope: str | None = None) -> dict[str, Any]:
     state = settle_state(now_ms)
+    visible = [gap for gap in state["gaps"] if _gap_visible(gap, scope)]
     return {
         "chemistry": dict(state["chemistry"]),
         "energy": state["energy"],
         "temperament": dict(state["temperament"]),
-        "open_gaps": sum(g.get("status") == "open" for g in state["gaps"]),
+        "open_gaps": sum(g.get("status") == "open" for g in visible),
         "emergency_stop": state["emergency_stop"],
         "updated_at": state["last_settled_at"],
         "gaps": sorted(
-            (dict(gap, tension=_gap_tension(gap, now_ms)) for gap in state["gaps"]),
+            (dict(gap, tension=_gap_tension(gap, now_ms)) for gap in visible),
             key=lambda gap: gap["tension"], reverse=True,
         ),
     }
@@ -102,7 +108,8 @@ def record_api_error(now_ms: float, *, error_type: str, retryable: bool | None) 
     update_state(now_ms, mutate)
 
 
-def observe_tool_result(now_ms: float, *, tool_name: str, args: dict[str, Any], result: str) -> None:
+def observe_tool_result(now_ms: float, *, tool_name: str, args: dict[str, Any], result: str,
+                        chat: str = "") -> None:
     """Open/reopen a gap on observed search failure and close it on observed success."""
     if tool_name not in {"web_search", "web_fetch", "search", "grep", "glob"}:
         return
@@ -161,7 +168,7 @@ def observe_tool_result(now_ms: float, *, tool_name: str, args: dict[str, Any], 
         if state["emergency_stop"]:
             return None
         state = settle_before_transition(state, now_ms)
-        _open_or_reactivate_gap(state, summary, f"tool:{tool_name}", now_ms, query=query)
+        _open_or_reactivate_gap(state, summary, f"tool:{tool_name}", now_ms, query=query, chat=chat)
         state["last_interaction_at"] = now_ms
         state["last_settled_at"] = now_ms
         return state
@@ -170,7 +177,7 @@ def observe_tool_result(now_ms: float, *, tool_name: str, args: dict[str, Any], 
     update_state(now_ms, mutate)
 
 
-def observe_assistant_unknown(now_ms: float, summary: str) -> None:
+def observe_assistant_unknown(now_ms: float, summary: str, chat: str = "") -> None:
     """Record an assistant uncertainty through the guarded internal gap transition."""
     from .storage import update_state
 
@@ -178,7 +185,7 @@ def observe_assistant_unknown(now_ms: float, summary: str) -> None:
         if state["emergency_stop"]:
             return None
         state = settle_before_transition(state, now_ms)
-        _open_or_reactivate_gap(state, summary, "assistant_unknown_claim", now_ms)
+        _open_or_reactivate_gap(state, summary, "assistant_unknown_claim", now_ms, chat=chat)
         state["last_interaction_at"] = now_ms
         state["last_settled_at"] = now_ms
         return state
@@ -187,7 +194,7 @@ def observe_assistant_unknown(now_ms: float, summary: str) -> None:
 
 
 def _open_or_reactivate_gap(state: dict[str, Any], summary: str, source: str, now_ms: float,
-                            *, query: str | None = None) -> None:
+                            *, query: str | None = None, chat: str = "") -> None:
     norm = _normalize_gap_text(summary)
     for gap in state["gaps"]:
         existing = _normalize_gap_text(str(gap.get("summary", "")))
@@ -200,6 +207,7 @@ def _open_or_reactivate_gap(state: dict[str, Any], summary: str, source: str, no
             gap.pop("closed_by", None)
             gap["relief"] = max(0.0, float_or(gap.get("relief"), 0.0) - 10.0)
         gap["source"] = source
+        gap["chat"] = chat
         if query:
             gap["query"] = query
         gap["tension"] = _gap_tension(gap, now_ms)
@@ -210,6 +218,7 @@ def _open_or_reactivate_gap(state: dict[str, Any], summary: str, source: str, no
         "status": "open",
         "created_at": now_ms,
         "source": source,
+        "chat": chat,
         **({"query": query} if query else {}),
         "relief": 0.0,
         "tension": 80.0,
@@ -295,11 +304,13 @@ def reorder_prompt_memories(prompt: str, now_ms: float) -> tuple[str, int]:
     )
 
 
-def append_open_loops(system_text: str, gaps: list[dict[str, Any]], now_ms: float) -> str:
+def append_open_loops(system_text: str, gaps: list[dict[str, Any]], now_ms: float,
+                      scope: str | None = None) -> str:
     """Append a bounded summary of the highest-tension unresolved gaps."""
     # A-class PRD M8.6: expose unresolved loops; formatting/budget are the task's host adaptation.
     open_gaps = sorted(
-        (gap for gap in gaps if isinstance(gap, dict) and gap.get("status") == "open"),
+        (gap for gap in gaps if isinstance(gap, dict) and gap.get("status") == "open"
+         and _gap_visible(gap, scope)),
         key=lambda gap: float_or(gap.get("tension"), 0.0), reverse=True,
     )[:3]
     if not open_gaps:
@@ -315,7 +326,9 @@ def append_open_loops(system_text: str, gaps: list[dict[str, Any]], now_ms: floa
         return f"{minutes}m"
 
     entries = [
-        f"tension={float_or(gap.get('tension'), 0.0):.0f}: {str(gap.get('summary', ''))}（{age_label(gap)}）"
+        f"tension={float_or(gap.get('tension'), 0.0):.0f}: "
+        f"{str(gap.get('summary', '')).replace(chr(10), ' ').replace(chr(13), ' ')}"
+        f"（{age_label(gap)}）"
         for gap in open_gaps
     ]
     while entries:

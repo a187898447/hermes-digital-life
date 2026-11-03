@@ -197,6 +197,25 @@ class SignalDomainTests(unittest.TestCase):
         self.assertEqual(len(suffix), 400)
         self.assertIn("tension=90", suffix)
 
+    def test_gap_loops_respect_the_conversation_scope(self):
+        from digital_life.runtime import append_open_loops
+        now = 3 * 86_400_000
+        gaps = [
+            {"status": "open", "tension": 90, "summary": "group-secret", "created_at": now,
+             "chat": "group-1"},
+            {"status": "open", "tension": 80, "summary": "other-chat", "created_at": now,
+             "chat": "group-2"},
+            {"status": "open", "tension": 70, "summary": "profile-wide", "created_at": now},
+        ]
+        mine = append_open_loops("base", gaps, now, scope="group-1")
+        self.assertIn("group-secret", mine)
+        self.assertNotIn("other-chat", mine)
+        self.assertIn("profile-wide", mine)
+        cli = append_open_loops("base", gaps, now, scope="")
+        self.assertNotIn("group-secret", cli)
+        self.assertNotIn("other-chat", cli)
+        self.assertIn("profile-wide", cli)
+
     def test_temperature_policy_thresholds_continuous_energy_and_clamp(self):
         self.assertEqual(pick_temperature({"cortisol": 80, "dopamine": 100, "serotonin": 0}, 0), 1.0)
         self.assertEqual(pick_temperature({"cortisol": 79, "dopamine": 70, "serotonin": 0}, 0), 0.85)

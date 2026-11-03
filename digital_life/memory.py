@@ -293,7 +293,9 @@ class MemoryStore:
                 self._sync(entries, digest)
             except (sqlite3.Error, RuntimeError, OSError):
                 logger.warning("Memory index unavailable before write; event log remains authoritative", exc_info=True)
-            duplicate = next((e for e in entries.values() if e["date"] == date and e["text"] == text), None)
+            duplicate = next((e for e in entries.values()
+                              if e["date"] == date and e["text"] == text
+                              and e.get("chat_id", "") == (chat_id or "")), None)
             if duplicate:
                 event = {"op": "touch", "id": duplicate["id"], "last_access_at": now_ms,
                          "hits": duplicate["hits"], "weight": min(3.0, duplicate["weight"] + 0.2)}

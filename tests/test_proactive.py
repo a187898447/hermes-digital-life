@@ -35,6 +35,15 @@ class DeliveryTargetTests(unittest.TestCase):
         targets = [{"chat_id": "A"}, {"chat_id": "A"}, {"chat_id": "B"}]
         self.assertEqual(proactive._deliver_targets(targets), ["qqbot:A", "qqbot:B"])
 
+    def test_subscribing_keeps_operator_deliver_entries(self):
+        targets = [{"chat_id": "C1"}]
+        self.assertEqual(proactive._desired_deliver(["local", "qqbot:C1"], targets),
+                         ["local", "qqbot:C1"])
+        self.assertEqual(proactive._desired_deliver(["local"], targets), ["local", "qqbot:C1"])
+        self.assertEqual(proactive._desired_deliver(["local", "qqbot:C1"], [], dropped={"C1"}), ["local"])
+        self.assertEqual(proactive._desired_deliver(["local", "qqbot:C1"], []), ["local", "qqbot:C1"])
+        self.assertEqual(proactive._desired_deliver(["qqbot:OPS"], []), ["qqbot:OPS"])
+
 
 if __name__ == "__main__":
     unittest.main()

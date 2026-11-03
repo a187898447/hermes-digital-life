@@ -98,8 +98,10 @@ hermes -p "$PROFILE" plugins doctor "$PLUGIN_NAME" --ci
 # "Cronjob Response: ... / To stop or manage this job" wrapper.
 hermes -p "$PROFILE" config set cron.wrap_response false >/dev/null 2>&1 || true
 
-qqbot_enabled="$(hermes -p "$PROFILE" config get platforms.qqbot.enabled 2>/dev/null || true)"
-if [[ "$qqbot_enabled" == "true" ]] && ! hermes -p "$PROFILE" config get platform_toolsets.qqbot >/dev/null 2>&1; then
+# Narrowing is written at install time, before QQ is bound, so a later
+# `qq-bind.py` / `gateway setup` never opens the full hermes-qqbot bundle.
+# An operator-set value is preserved.
+if ! hermes -p "$PROFILE" config get platform_toolsets.qqbot >/dev/null 2>&1; then
   hermes -p "$PROFILE" config set platform_toolsets.qqbot '["web","vision","todo","digital_life","no_mcp"]'
   printf '已设置 QQ 工具集: web/vision/todo/digital_life（不含自带 memory，终端与写文件关闭，MCP 关闭）\n'
 fi
@@ -251,7 +253,7 @@ printf '绑定消息平台（以 QQ 为例）：\n  hermes -p %q gateway setup  
 if hermes config get platforms.qqbot.enabled 2>/dev/null | grep -qx true; then
   printf '提示: default profile 也启用了 qqbot；同一个 QQ 应用只能挂一个 profile，二选一关掉。\n'
 fi
-printf 'QQ 工具集已默认收窄；需要终端或写文件时自行改 platform_toolsets.qqbot。\n'
+printf '新建 profile 已把 QQ 工具集收窄到 web/vision/todo/digital_life；你手动改过的值会保留。\n'
 
 printf '首次使用让 agent 引导你：\n  hermes -p %q chat  然后说「用 hermes-lover-guide 引导我配置」\n' "$PROFILE"
 printf '\n注意：这是独立 Hermes profile，不是 delegate_task 子 agent。插件状态/记忆与主 profile 分开；宿主用户级 HOME 凭证仍按 Hermes 默认策略共享。\n'

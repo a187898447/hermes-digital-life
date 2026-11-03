@@ -107,16 +107,28 @@ def _deliver_targets(targets: list[dict[str, Any]]) -> list[str]:
     return seen or ["local"]
 
 
-def sync_beat_delivery(targets: list[dict[str, Any]]) -> bool:
-    """Point the installed beat job at the current target list."""
+def _desired_deliver(current: list[str], targets: list[dict[str, Any]],
+                     dropped: set[str] | None = None) -> list[str]:
+    """Keep the operator's own deliver entries; add or drop only chat subscriptions."""
+    subscribed = {f"qqbot:{target['chat_id']}" for target in targets}
+    removed = {f"qqbot:{chat_id}" for chat_id in (dropped or set())}
+    baseline = [entry for entry in current if entry not in subscribed and entry not in removed]
+    return baseline + [entry for entry in sorted(subscribed) if entry not in baseline]
+
+
+def sync_beat_delivery(targets: list[dict[str, Any]], dropped: set[str] | None = None) -> bool:
+    """Point the installed beat job at operator targets plus chat subscriptions."""
     from cron.jobs import load_jobs, update_job, use_cron_store
 
-    deliver = _deliver_targets(targets)
     changed = False
     with use_cron_store(_home()):
         for job in load_jobs():
             if job.get("name") != BEAT_JOB_NAME:
                 continue
+            current = job.get("deliver")
+            if not isinstance(current, list):
+                current = [current] if isinstance(current, str) else []
+            deliver = _desired_deliver(current, targets, dropped)
             if job.get("deliver") != deliver:
                 update_job(job["id"], {"deliver": deliver})
                 changed = True
@@ -151,7 +163,7 @@ def unsubscribe(chat_id: str) -> tuple[str, int]:
     if len(kept) == len(targets):
         return "absent", len(targets)
     _save_targets(kept)
-    sync_beat_delivery(kept)
+    sync_beat_delivery(kept, dropped={chat_id})
     return "removed", len(kept)
 
 

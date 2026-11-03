@@ -43,22 +43,26 @@ def _session_scope(session_id: str) -> tuple[str, str]:
             connection.close()
         if row:
             chat_id, chat_type = str(row[0] or ""), str(row[1] or "")
+            _SCOPE_CACHE[session_id] = (chat_id, chat_type)
     except (sqlite3.Error, OSError, TypeError, ValueError):
         pass
-    _SCOPE_CACHE[session_id] = (chat_id, chat_type)
     return chat_id, chat_type
 
 
-def _status(args: dict[str, Any], **kwargs) -> str:
-    return json.dumps(digital_life.runtime.status_snapshot(time.time() * 1000), ensure_ascii=False)
+def _status(args: dict[str, Any], session_id: str = "", **kwargs) -> str:
+    scope, _chat_type = _session_scope(session_id)
+    return json.dumps(digital_life.runtime.status_snapshot(time.time() * 1000, scope=scope or None),
+                      ensure_ascii=False)
 
 
-def _post_llm_call(assistant_response: str = "", **kwargs) -> None:
+def _post_llm_call(assistant_response: str = "", session_id: str = "", platform: str = "",
+                   user_message: str = "", **kwargs) -> None:
     if assistant_response:
         record_turn(time.time() * 1000, success=True)
         try:
             if _CAPTURE is not None:
-                _CAPTURE(assistant_response)
+                _CAPTURE(assistant_response, session_id=session_id or "", platform=platform or "",
+                         user_message=user_message or "")
         except Exception:
             pass
         try:
@@ -66,7 +70,8 @@ def _post_llm_call(assistant_response: str = "", **kwargs) -> None:
                 return
             unknown = digital_life.domain.find_gap_sentence(assistant_response)
             if unknown:
-                digital_life.runtime.observe_assistant_unknown(time.time() * 1000, unknown)
+                chat_id, _chat_type = _session_scope(session_id)
+                digital_life.runtime.observe_assistant_unknown(time.time() * 1000, unknown, chat=chat_id)
         except Exception:
             pass
 
@@ -78,7 +83,9 @@ def _api_error(error: dict[str, Any] | None = None, retryable: bool | None = Non
 
 
 def _post_tool_call(tool_name: str = "", args: dict[str, Any] | None = None, result: str = "", **kwargs) -> None:
-    digital_life.runtime.observe_tool_result(time.time() * 1000, tool_name=tool_name, args=args or {}, result=result)
+    chat_id, _chat_type = _session_scope(str(_LAST_TURN.get("session", "")))
+    digital_life.runtime.observe_tool_result(time.time() * 1000, tool_name=tool_name, args=args or {},
+                                             result=result, chat=chat_id)
 
 
 _RESET_COMMAND = re.compile(r"^/(?:new|reset)(?:\s+(?P<scope>all|全部))?(?:\s|$)", re.IGNORECASE)
@@ -179,18 +186,19 @@ def _reorder_content(content: Any, now_ms: float) -> tuple[Any, bool]:
     return content, False
 
 
-def _append_open_loops_once(content: Any, gaps: list[dict[str, Any]], now_ms: float) -> tuple[Any, bool]:
+def _append_open_loops_once(content: Any, gaps: list[dict[str, Any]], now_ms: float,
+                            scope: str | None = None) -> tuple[Any, bool]:
     """Append the open-loop suffix to exactly one text block (the last one)."""
     append = digital_life.runtime.append_open_loops
     if isinstance(content, str):
-        appended = append(content, gaps, now_ms)
+        appended = append(content, gaps, now_ms, scope=scope)
         return appended, appended != content
     if isinstance(content, list):
         items = list(content)
         for index in range(len(items) - 1, -1, -1):
             item = items[index]
             if isinstance(item, dict) and isinstance(item.get("text"), str):
-                appended = append(item["text"], gaps, now_ms)
+                appended = append(item["text"], gaps, now_ms, scope=scope)
                 if appended == item["text"]:
                     return content, False
                 items[index] = {**item, "text": appended}
@@ -201,7 +209,8 @@ def _append_open_loops_once(content: Any, gaps: list[dict[str, Any]], now_ms: fl
 def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     now_ms = time.time() * 1000
     record_request(now_ms)
-    state = digital_life.runtime.status_snapshot(now_ms)
+    scope, _chat_type = _session_scope(str(_LAST_TURN.get("session", "")))
+    state = digital_life.runtime.status_snapshot(now_ms, scope=scope or None)
     temperature = request.get("temperature")
     # B-class Hermes policy: an explicit caller temperature always wins.
     result_temperature = (
@@ -214,7 +223,7 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     system = result.get("system")
     if isinstance(system, str):
         rewritten, blocks = digital_life.runtime.reorder_prompt_memories(system, now_ms)
-        appended = digital_life.runtime.append_open_loops(rewritten, state["gaps"], now_ms)
+        appended = digital_life.runtime.append_open_loops(rewritten, state["gaps"], now_ms, scope=scope or None)
         if blocks or appended != system:
             result["system"] = appended
             changed = True
@@ -226,7 +235,7 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
                 if blocks:
                     system_items[index] = {**item, "text": rewritten}
                     changed = True
-        system_items, appended = _append_open_loops_once(system_items, state["gaps"], now_ms)
+        system_items, appended = _append_open_loops_once(system_items, state["gaps"], now_ms, scope=scope or None)
         if appended:
             changed = True
         if changed:
@@ -238,7 +247,7 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
             if not isinstance(message, dict) or message.get("role") != "system":
                 continue
             content, reordered = _reorder_content(message.get("content"), now_ms)
-            content, appended = _append_open_loops_once(content, state["gaps"], now_ms)
+            content, appended = _append_open_loops_once(content, state["gaps"], now_ms, scope=scope or None)
             reordered = reordered or appended
             if reordered:
                 rewritten[index] = {**message, "content": content}
@@ -273,7 +282,7 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
             if not isinstance(item, dict) or item.get("role") not in {"system", "developer"}:
                 continue
             content, reordered = _reorder_content(item.get("content"), now_ms)
-            content, appended = _append_open_loops_once(content, state["gaps"], now_ms)
+            content, appended = _append_open_loops_once(content, state["gaps"], now_ms, scope=scope or None)
             reordered = reordered or appended
             if reordered:
                 rewritten[index] = {**item, "content": content}
@@ -401,21 +410,23 @@ def register(ctx) -> None:
             writes_enabled=lambda: ctx.get_config("memory.writes_enabled", True),
         )
 
-    def capture_turn(assistant_response: str) -> None:
+    def capture_turn(assistant_response: str, session_id: str = "", platform: str = "",
+                     user_message: str = "") -> None:
         if not ctx.get_config("memory.capture", True):
             return
-        if _LAST_TURN.get("platform") != "qqbot":
+        if (platform or _LAST_TURN.get("platform", "")) != "qqbot":
             # CLI and Studio keep the host's native memory; only QQ turns enter the palace.
             return
-        user = _LAST_TURN.get("user", "")
+        session = session_id or _LAST_TURN.get("session", "unknown")
+        same_turn = session == _LAST_TURN.get("session")
+        user = user_message or (_LAST_TURN.get("user", "") if same_turn else "")
         if not user:
             return
+        chat_id, chat_type = _session_scope(session)
         store = memory_store()
         store.capture(f"用户：{user}\n助手：{assistant_response[:1500]}",
-                      session_id=_LAST_TURN.get("session", "unknown"),
-                      chat_id=_LAST_TURN.get("chat_id", ""),
-                      chat_type=_LAST_TURN.get("chat_type", ""),
-                      speaker=_LAST_TURN.get("sender", ""))
+                      session_id=session, chat_id=chat_id, chat_type=chat_type,
+                      speaker=_LAST_TURN.get("sender", "") if same_turn else "")
 
     global _CAPTURE, _JOURNAL_CHECK
     _CAPTURE = capture_turn
@@ -444,21 +455,23 @@ def register(ctx) -> None:
 
     def memory_write(args, session_id="", **kwargs):
         try:
+            chat_id, chat_type = _session_scope(session_id)
             result = memory_store().write(args.get("text"), kind=args.get("kind", "note"),
                                           weight=args.get("weight"), session_id=session_id,
                                           day=args.get("day") or None,
-                                          chat_id=_LAST_TURN.get("chat_id", ""),
-                                          chat_type=_LAST_TURN.get("chat_type", ""),
-                                          speaker=_LAST_TURN.get("sender", ""))
+                                          chat_id=chat_id, chat_type=chat_type,
+                                          speaker=_LAST_TURN.get("sender", "")
+                                          if session_id and session_id == _LAST_TURN.get("session") else "")
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
             result = {"ok": False, "error": str(exc)}
         return json.dumps(result, ensure_ascii=False)
 
-    def memory_recall(args, **kwargs):
+    def memory_recall(args, session_id="", **kwargs):
         try:
+            chat_id, _chat_type = _session_scope(session_id)
             result = memory_store().recall(args.get("query", ""), k=args.get("k", 8),
                                            include_cold=args.get("include_cold", False),
-                                           chat_id=_LAST_TURN.get("chat_id", "") or None,
+                                           chat_id=chat_id or None,
                                            day=args.get("day") or None)
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
             result = {"ok": False, "error": str(exc)}
