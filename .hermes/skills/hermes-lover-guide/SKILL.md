@@ -57,7 +57,7 @@ hermes gateway list | grep "$P"
 | 2 | `hermes -p <角色名> hermes-lover status`；备份 `plugin-data/hermes-lover/data.db` | 返回激素/精力 JSON，备份文件存在 |
 | 3 | QQ：q.qq.com 建应用 → profile `.env` → `platforms.qqbot` → `hermes gateway restart` | `gateway list` 中该 profile served，私聊有回复 |
 | 4 | 确认安装器已建好 `hermes-lover-beat`（默认 paused） | `cron list` 能看到，状态 paused |
-| 5 | 用户确认后启用：先把 Deliver 改成目标，再 `cron resume <id>` | 状态 active，用户知道怎么再关掉 |
+| 5 | 用户确认后启用：`hermes -p <角色名> hermes-lover beats enable`（每个聊过天的会话各有一条 beat，按各自记忆写） | 状态 active，用户知道 `beats disable` 能关 |
 
 前置的硬约束：**`install.sh` 拒绝已存在的 profile**，不要试图复用它去"重装"。
 
@@ -211,7 +211,7 @@ hermes -p <p> cron resume <id>
 
 `--deliver` 填子流程 C 里确认的 QQ 会话（私聊 `chat_id` 或群）；不改 Deliver 就 resume，句子只会存在本地、不会发出去。
 
-启用后想停：`hermes -p <p> cron pause <id>`。**用户没明确同意前不要 resume，也不要改 Deliver。**
+启用后想停：`hermes -p <p> hermes-lover beats disable`。**用户没明确同意前不要启用。**
 
 要加时间点就 `cron edit <id> --schedule ...`，或另建任务时把 `--deliver` 一起设好。
 

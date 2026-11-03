@@ -180,6 +180,7 @@ def _on_user_message(
     if (_LAST_TURN["platform"] or "") == "qqbot" and _LAST_TURN["chat_id"]:
         try:
             _proactive.track_chat({"chat_id": _LAST_TURN["chat_id"], "chat_type": _LAST_TURN["chat_type"]})
+            _proactive.ensure_chat_job({"chat_id": _LAST_TURN["chat_id"], "chat_type": _LAST_TURN["chat_type"]})
         except Exception:
             logger.warning("hermes-lover could not add chat to the beat rotation", exc_info=True)
     notes = []

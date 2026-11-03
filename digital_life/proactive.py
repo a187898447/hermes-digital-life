@@ -8,6 +8,7 @@ its ``deliver`` targets change, so an operator still controls whether beats run.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import sqlite3
@@ -17,6 +18,14 @@ from typing import Any
 
 PLUGIN_NAME = "hermes-lover"
 BEAT_JOB_NAME = "hermes-lover-beat"
+BEAT_JOB_PREFIX = BEAT_JOB_NAME + "-"
+BEAT_SCHEDULE = "*/5 9-21 * * *"
+CHAT_BEAT_PROMPT = (
+    "这是 hermes-lover 发给 QQ 会话 {chat_type} {chat_id} 的主动消息，监控输出里的 FIRE 标记表示刚刚到点。按顺序做："
+    "1) 读当前 profile 的 SOUL.md 人格；2) 调 memory_recall(chat_id=\"{chat_id}\") 看这个会话最近聊过什么、对方是谁；"
+    "3) 参考 hermes-lover 当前状态（激素、精力、gap）；4) 结合时间段，用这个人物在这个会话里的口吻写一句话（不超过 40 字，接得上刚才的话题，不报状态数字，不客套，不复读）；"
+    "5) 只输出这句话，不要解释，也不要自己调用发送工具——投递目标由这个任务的 Deliver 决定。"
+)
 TARGETS_FILE = "proactive-targets.json"
 
 # Order matters: a request that contains a quiet phrase must win over the
@@ -159,6 +168,55 @@ def track_chat(chat: dict[str, str]) -> bool:
     return True
 
 
+def _beat_job_name(chat_id: str) -> str:
+    return BEAT_JOB_PREFIX + hashlib.sha1(chat_id.encode("utf-8")).hexdigest()[:8]
+
+
+def _write_chat_monitor(chat_id: str) -> str:
+    """Write a per-chat wrapper so each beat job keeps its own slot state."""
+    scripts_dir = _home() / "scripts"
+    scripts_dir.mkdir(parents=True, exist_ok=True)
+    name = _beat_job_name(chat_id) + ".py"
+    wrapper = (
+        "import os, runpy\n"
+        "from pathlib import Path\n"
+        f"os.environ[\"HERMES_LOVER_BEAT_KEY\"] = {chat_id!r}\n"
+        "runpy.run_path(str(Path(__file__).with_name(\"hermes-lover-beat.py\")), run_name=\"__main__\")\n"
+    )
+    (scripts_dir / name).write_text(wrapper, encoding="utf-8")
+    return name
+
+
+def ensure_chat_job(chat: dict[str, str]) -> bool:
+    """Give each talking chat its own beat job so every conversation gets its own line."""
+    chat_id = str(chat.get("chat_id") or "")
+    # Only real QQ chats get their own beat job; local CLI/Studio sessions have
+    # chat ids like "local-<hash>" and must never receive proactive messages.
+    if not chat_id or chat_id.startswith("local-"):
+        return False
+    from cron.jobs import create_job, load_jobs, use_cron_store
+
+    name = _beat_job_name(chat_id)
+    with use_cron_store(_home()):
+        jobs = load_jobs()
+        if any(job.get("name") == name for job in jobs):
+            return False
+        enabled = any(
+            bool(job.get("enabled")) and (job.get("name") or "").startswith(BEAT_JOB_NAME)
+            for job in jobs
+        )
+        create_job(
+            CHAT_BEAT_PROMPT.format(chat_type=str(chat.get("chat_type") or "chat"), chat_id=chat_id),
+            BEAT_SCHEDULE,
+            name=name,
+            deliver=f"qqbot:{chat_id}",
+            monitor_script=_write_chat_monitor(chat_id),
+            paused=not enabled,
+            paused_reason=None if enabled else "安装时默认停用，启用方法见 hermes-lover-guide 最后一步",
+        )
+    return True
+
+
 def subscribe(chat: dict[str, str], label: str = "") -> tuple[str, int]:
     """Add ``chat`` (idempotent). Returns ``(state, target_count)``."""
     chat_id = str(chat.get("chat_id") or "")
@@ -210,3 +268,23 @@ def handle_message(text: str, session_id: str, platform: str = "") -> str | None
     if state == "absent":
         return "这个会话本来就不在主动消息列表里（当前 %d 个）。" % count
     return "已把这个会话从主动消息投递里移除（还剩 %d 个）。" % count
+
+
+def set_beats_enabled(enabled: bool) -> int:
+    """Enable or pause every hermes-lover beat job; returns how many changed."""
+    from cron.jobs import load_jobs, pause_job, resume_job, use_cron_store
+
+    changed = 0
+    with use_cron_store(_home()):
+        for job in load_jobs():
+            name = job.get("name") or ""
+            if name != BEAT_JOB_NAME and not name.startswith(BEAT_JOB_PREFIX):
+                continue
+            if bool(job.get("enabled")) == enabled:
+                continue
+            if enabled:
+                resume_job(job["id"])
+            else:
+                pause_job(job["id"], "paused by the operator")
+            changed += 1
+    return changed

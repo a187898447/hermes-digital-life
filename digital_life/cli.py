@@ -16,6 +16,8 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
     actions.add_parser("stop", help="Freeze life-state transitions")
     actions.add_parser("resume", help="Resume life-state transitions")
     actions.add_parser("memory-rebuild", help="Rebuild the event-memory index from daily logs")
+    beats = actions.add_parser("beats", help="Enable or pause every proactive beat job")
+    beats.add_argument("beats_action", choices=["enable", "disable"])
     resolve = actions.add_parser("resolve-gap", help="Close one observed gap by identifier")
     resolve.add_argument("gap_id")
     subparser.set_defaults(func=run_command)
@@ -38,6 +40,11 @@ def run_command(args: argparse.Namespace) -> int:
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
             print(f"Memory rebuild failed: {exc}")
             return 1
+    if action == "beats":
+        from . import proactive
+        changed = proactive.set_beats_enabled(args.beats_action == "enable")
+        print(f"{'Enabled' if args.beats_action == 'enable' else 'Paused'} {changed} beat job(s).")
+        return 0
     if action == "status":
         print(json.dumps(status_snapshot(now_ms), ensure_ascii=False, indent=2))
         return 0

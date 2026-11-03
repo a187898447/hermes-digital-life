@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import random
 import sys
 from datetime import date, datetime, timedelta
@@ -35,7 +36,10 @@ def hermes_home() -> Path:
 
 
 def state_path() -> Path:
-    return hermes_home() / "cron" / "hermes-lover-beat.json"
+    """One state file per chat: the wrapper script exports HERMES_LOVER_BEAT_KEY."""
+    key = (os.environ.get("HERMES_LOVER_BEAT_KEY") or "").strip()
+    suffix = f"-{key}" if key else ""
+    return hermes_home() / "cron" / f"hermes-lover-beat{suffix}.json"
 
 
 def load_state() -> dict:
