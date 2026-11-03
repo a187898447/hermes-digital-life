@@ -157,7 +157,9 @@ def _on_gateway_dispatch(event=None, **kwargs):
                 except Exception:
                     logger.warning("hermes-lover /new all could not reset host sessions", exc_info=True)
             logger.info("hermes-lover /new all: %s host sessions rotated", reset)
-            return {"action": "skip"}
+            # Let the gateway run its own /new all so the operator still gets the
+            # "New session started" banner and every platform re-routes normally.
+            return {"action": "rewrite", "text": "/new all"}
         if text.lower().strip() != "/new":
             # A group message arrives as "<@bot> /new"; hand the gateway a bare command so it
             # also rotates the conversation instead of only clearing plugin state.
