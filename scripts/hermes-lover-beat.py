@@ -25,7 +25,7 @@ import zlib
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
-SLOTS = (10, 14, 16, 20)
+SLOTS = (10, 14, 16, 18, 20)
 SLOT_NAMES = {10: "MORNING", 14: "MIDDAY", 16: "AFTERNOON", 20: "NIGHT"}
 JITTER_MINUTES = 60
 SCAN_START, SCAN_END = 9, 21  # inclusive hours the cron schedule covers
