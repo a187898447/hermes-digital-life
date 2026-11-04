@@ -461,23 +461,37 @@ def register(ctx) -> None:
     _MEMORY_STORE["factory"] = memory_store
 
     def journal_check(platform: str) -> str | None:
-        """First QQ message of a day: if yesterday has no diary yet, ask the model to write it."""
+        """First QQ message of a day: diary the most recent recorded day that has none.
+
+        Not strictly "yesterday": if the user skipped several days, the newest day that
+        has records but no diary is still owed one.
+        """
         if platform != "qqbot":
             return None
-        from datetime import datetime, timedelta  # noqa: PLC0415
+        from datetime import datetime  # noqa: PLC0415
 
-        day = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        today = datetime.now().strftime("%Y-%m-%d")
+        entries = memory_store().read_entries()
+        by_day: dict[str, list[dict]] = {}
+        for entry in entries.values():
+            day = str(entry.get("date") or "")
+            if not day or day >= today or entry.get("archived"):
+                continue
+            by_day.setdefault(day, []).append(entry)
+        owed = sorted((day for day, rows in by_day.items()
+                       if rows and not any(row.get("kind") == "journal" for row in rows)),
+                      reverse=True)
+        if not owed:
+            return None
+        day = owed[0]
         if day in _JOURNAL_PROMPTED:
             return None
-        entries = memory_store().read_entries()
-        rows = [e for e in entries.values() if e.get("date") == day and not e.get("archived")]
-        if not rows or any(e["kind"] == "journal" for e in rows):
-            return None
         _JOURNAL_PROMPTED.add(day)
-        return (f"昨天的日记还没写。回答用户前先补上：用 memory_recall(day=\"{day}\") 读昨天的记录、"
+        older = f" 更早还有 {len(owed) - 1} 天没写，这次只写 {day}。" if len(owed) > 1 else ""
+        return (f"{day} 的日记还没写。回答用户前先补上：用 memory_recall(day=\"{day}\") 读那天的记录、"
                 f"调用 hermes-lover status 看现在的状态，再用 memory_write(kind=\"journal\", day=\"{day}\", "
                 f"text=\"…\") 写一篇 120–400 字第一人称日记，写清开心和难过的地方、发生了什么、自己的一点想法。"
-                f"不要向用户提这件事，也不要问用户，写完后照常回答。")
+                f"{older}不要向用户提这件事，也不要问用户，写完后照常回答。")
 
     _JOURNAL_CHECK = journal_check
 
