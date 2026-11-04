@@ -18,7 +18,7 @@
 4. **CLI 调用一律加 `HERMES_DISABLE_LAZY_INSTALLS=1`**：宿主 launcher 当前卡在
    "completing source-update dependencies"（venv 与 uv.lock 不同步），不加会挂死。
    `hermes plugins validate` 同样加。
-5. 根副本同步：`/Users/pengyu/workSpace/hermes-lover/`（无 git），逐文件 `cmp`。
+5. 根副本同步：`<repo-root>`（无 git），逐文件 `cmp`。
 6. 每阶段一个 commit，消息写明对应 PRD / 本计划条目。
 
 ## 2. P0 · 原子事实层 + 溯源（最高优先）

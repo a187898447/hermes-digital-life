@@ -10,7 +10,7 @@ PRD.md §8.2 写的是"一次性做全，不分期"，当前实现只覆盖了�
 2. **不新增"模型/用户可任意指定激素、能量"的工具**（PRD 明确禁止）。所有状态变更只能来自真实事件：请求、回合完成、失败、工具结果、时间流逝。
 3. 现有 88 个测试必须继续通过。runner：`cd tests && PYTHONPATH=.. python3 -m unittest test_domain test_events test_proactive test_memory`；**pytest 不被支持**（tests/ 没有 `__init__.py`）。
 4. 状态 schema 变更必须在 `normalize_state` 内完成迁移且**永不抛错**；旧 state（含已删除的 `commitment`/`wake`）必须能读。
-5. 每次改动后：`hermes plugins validate .` 通过；脚本/文档同步到根副本 `/Users/pengyu/workSpace/hermes-lover`（根副本无 git）；在 `hermes-digital-life` 内提交。
+5. 每次改动后：`hermes plugins validate .` 通过；脚本/文档同步到根副本 `<repo-root>`（根副本无 git）；在 `hermes-digital-life` 内提交。
 6. 每阶段一个 commit，消息说明"对应 PRD 哪一条"。
 
 ## 1. 缺口清单（PRD → 现状 → 目标）
@@ -86,9 +86,9 @@ P4 依赖 P1（需要 gap 匹配）与 P2（需要压力指令）；P3 可随时
 ## 4. 整体验收（每个阶段结束都要跑）
 
 1. `cd tests && PYTHONPATH=.. python3 -m unittest test_domain test_events test_proactive test_memory test_chemistry test_gaps` 全绿。
-2. `hermes plugins validate /Users/pengyu/workSpace/hermes-lover` → Validation passed。
+2. `hermes plugins validate <repo-root>` → Validation passed。
 3. `hermes -p hermes-lover plugins doctor hermes-lover --ci` 无 WARN。
-4. 根副本同步：`for f in $(git -C hermes-digital-life ls-files); do cmp -s "$f" "/Users/pengyu/workSpace/hermes-lover/$f"; done`（只容 docs/ 新文件缺根副本）。
+4. 根副本同步：`for f in $(git -C hermes-digital-life ls-files); do cmp -s "$f" "<repo-root>/$f"; done`（只容 docs/ 新文件缺根副本）。
 5. 重启网关后 `hermes-lover status` 返回 JSON，`/core` 正常。
 6. 文档：`使用引导.md`、`README.md` 增加新模块一句话说明；`openspec/specs/digital-life-runtime/spec.md` 增需求条目。
 
