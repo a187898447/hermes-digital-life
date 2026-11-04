@@ -31,24 +31,6 @@ class ClassifyTests(unittest.TestCase):
         self.assertIsNone(proactive.classify("主动一点" + "。" * 400))
 
 
-class DeliveryTargetTests(unittest.TestCase):
-    def test_empty_targets_fall_back_to_local(self):
-        self.assertEqual(proactive._deliver_targets([]), ["local"])
-
-    def test_targets_are_deduplicated(self):
-        targets = [{"chat_id": "A"}, {"chat_id": "A"}, {"chat_id": "B"}]
-        self.assertEqual(proactive._deliver_targets(targets), ["qqbot:A", "qqbot:B"])
-
-    def test_subscribing_keeps_operator_deliver_entries(self):
-        targets = [{"chat_id": "C1"}]
-        self.assertEqual(proactive._desired_deliver(["local", "qqbot:C1"], targets),
-                         ["local", "qqbot:C1"])
-        self.assertEqual(proactive._desired_deliver(["local"], targets), ["local", "qqbot:C1"])
-        self.assertEqual(proactive._desired_deliver(["local", "qqbot:C1"], [], dropped={"C1"}), ["local"])
-        self.assertEqual(proactive._desired_deliver(["local", "qqbot:C1"], []), ["local", "qqbot:C1"])
-        self.assertEqual(proactive._desired_deliver(["qqbot:OPS"], []), ["qqbot:OPS"])
-
-
 class SubscriptionFileTests(unittest.TestCase):
     def test_missing_file_means_nobody_subscribed_and_roundtrip_persists(self):
         @contextmanager
@@ -69,6 +51,25 @@ class SubscriptionFileTests(unittest.TestCase):
                 self.assertEqual(proactive.subscribe({"chat_id": "A"}), ("present", 1))
                 self.assertEqual(proactive.unsubscribe("A"), ("removed", 0))
                 self.assertEqual(proactive.subscribed_chats(), set())
+
+
+    def test_track_chat_subscribes_once_with_a_float_timestamp(self):
+        @contextmanager
+        def no_lock():
+            yield
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proactive-targets.json"
+            with (
+                patch.object(proactive, "_targets_path", lambda: path),
+                patch.object(proactive, "_targets_lock", no_lock),
+                patch.object(proactive, "sync_beat_delivery"),
+            ):
+                self.assertTrue(proactive.track_chat({"chat_id": "B", "chat_type": "dm"}))
+                self.assertFalse(proactive.track_chat({"chat_id": "B"}))
+                target = proactive.load_targets()[0]
+                self.assertEqual(target["chat_id"], "B")
+                self.assertIsInstance(target["added_at"], float)
 
 
 class LockTests(unittest.TestCase):

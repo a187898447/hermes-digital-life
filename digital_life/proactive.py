@@ -138,25 +138,7 @@ def resolve_chat(session_id: str) -> dict[str, str] | None:
     return None
 
 
-def _deliver_targets(targets: list[dict[str, Any]]) -> list[str]:
-    seen: list[str] = []
-    for item in targets:
-        value = f"qqbot:{item['chat_id']}"
-        if value not in seen:
-            seen.append(value)
-    return seen or ["local"]
-
-
-def _desired_deliver(current: list[str], targets: list[dict[str, Any]],
-                     dropped: set[str] | None = None) -> list[str]:
-    """Keep the operator's own deliver entries; add or drop only chat subscriptions."""
-    subscribed = {f"qqbot:{target['chat_id']}" for target in targets}
-    removed = {f"qqbot:{chat_id}" for chat_id in (dropped or set())}
-    baseline = [entry for entry in current if entry not in subscribed and entry not in removed]
-    return baseline + [entry for entry in sorted(subscribed) if entry not in baseline]
-
-
-def sync_beat_delivery(targets: list[dict[str, Any]], dropped: set[str] | None = None) -> bool:
+def sync_beat_delivery() -> bool:
     """Keep the beat job on local delivery: one agent run fans out to every chat."""
     from cron.jobs import load_jobs, update_job, use_cron_store
 
@@ -181,18 +163,19 @@ def track_chat(chat: dict[str, str]) -> bool:
     chat_id = str(chat.get("chat_id") or "")
     if not chat_id:
         return False
-    targets = load_targets()
-    if any(str(item.get("chat_id")) == chat_id for item in targets):
-        return False
-    targets.append({
-        "chat_id": chat_id,
-        "chat_type": str(chat.get("chat_type") or ""),
-        "label": str(chat.get("label") or ""),
-        "added_at": int(time.time() * 1000),
-    })
-    _save_targets(targets)
-    sync_beat_delivery(targets)
-    return True
+    with _targets_lock():
+        targets = load_targets()
+        if any(str(item.get("chat_id")) == chat_id for item in targets):
+            return False
+        targets.append({
+            "chat_id": chat_id,
+            "chat_type": str(chat.get("chat_type") or ""),
+            "label": str(chat.get("label") or ""),
+            "added_at": time.time(),
+        })
+        _save_targets(targets)
+        sync_beat_delivery()
+        return True
 
 
 def _beat_job_name(chat_id: str) -> str:
@@ -262,7 +245,7 @@ def subscribe(chat: dict[str, str], label: str = "") -> tuple[str, int]:
             }
         )
         _save_targets(targets)
-        sync_beat_delivery(targets)
+        sync_beat_delivery()
         return "added", len(targets)
 
 
@@ -274,7 +257,7 @@ def unsubscribe(chat_id: str) -> tuple[str, int]:
         if len(kept) == len(targets):
             return "absent", len(targets)
         _save_targets(kept)
-        sync_beat_delivery(kept, dropped={chat_id})
+        sync_beat_delivery()
         return "removed", len(kept)
 
 
