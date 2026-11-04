@@ -13,6 +13,7 @@ import json
 import re
 import sqlite3
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -70,11 +71,29 @@ def load_targets() -> list[dict[str, Any]]:
     return [item for item in data if isinstance(item, dict) and item.get("chat_id")]
 
 
-def subscribed_chats() -> set[str] | None:
-    """Chat ids that opted in, or None when the file does not exist yet (legacy: everyone)."""
-    if not _targets_path().exists():
-        return None
+def subscribed_chats() -> set[str]:
+    """Chat ids that opted in. A missing file means nobody opted in: fail closed."""
     return {str(item["chat_id"]) for item in load_targets()}
+
+
+@contextmanager
+def _targets_lock():
+    """Serialise read-modify-write of the subscription file across processes."""
+    try:
+        import fcntl  # noqa: PLC0415 - POSIX only; Windows falls back to no lock
+    except ImportError:  # pragma: no cover
+        yield
+        return
+    from plugins.plugin_storage import plugin_data_dir  # noqa: PLC0415
+
+    path = plugin_data_dir(PLUGIN_NAME) / "proactive.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+", encoding="utf-8") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
 
 
 def _save_targets(targets: list[dict[str, Any]]) -> None:
@@ -225,31 +244,33 @@ def subscribe(chat: dict[str, str], label: str = "") -> tuple[str, int]:
     chat_id = str(chat.get("chat_id") or "")
     if not chat_id:
         return "missing", len(load_targets())
-    targets = load_targets()
-    if any(item["chat_id"] == chat_id for item in targets):
-        return "present", len(targets)
-    targets.append(
-        {
-            "chat_id": chat_id,
-            "chat_type": str(chat.get("chat_type") or ""),
-            "label": label,
-            "added_at": time.time(),
-        }
-    )
-    _save_targets(targets)
-    sync_beat_delivery(targets)
-    return "added", len(targets)
+    with _targets_lock():
+        targets = load_targets()
+        if any(item["chat_id"] == chat_id for item in targets):
+            return "present", len(targets)
+        targets.append(
+            {
+                "chat_id": chat_id,
+                "chat_type": str(chat.get("chat_type") or ""),
+                "label": label,
+                "added_at": time.time(),
+            }
+        )
+        _save_targets(targets)
+        sync_beat_delivery(targets)
+        return "added", len(targets)
 
 
 def unsubscribe(chat_id: str) -> tuple[str, int]:
     """Remove ``chat_id`` (idempotent). Returns ``(state, target_count)``."""
-    targets = load_targets()
-    kept = [item for item in targets if item["chat_id"] != chat_id]
-    if len(kept) == len(targets):
-        return "absent", len(targets)
-    _save_targets(kept)
-    sync_beat_delivery(kept, dropped={chat_id})
-    return "removed", len(kept)
+    with _targets_lock():
+        targets = load_targets()
+        kept = [item for item in targets if item["chat_id"] != chat_id]
+        if len(kept) == len(targets):
+            return "absent", len(targets)
+        _save_targets(kept)
+        sync_beat_delivery(kept, dropped={chat_id})
+        return "removed", len(kept)
 
 
 def handle_message(text: str, session_id: str, platform: str = "") -> str | None:

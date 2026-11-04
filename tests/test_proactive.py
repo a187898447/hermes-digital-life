@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import tempfile
 import unittest
+from contextlib import contextmanager
+from pathlib import Path
+from unittest.mock import patch
 
 from digital_life import proactive
 
@@ -43,6 +47,28 @@ class DeliveryTargetTests(unittest.TestCase):
         self.assertEqual(proactive._desired_deliver(["local", "qqbot:C1"], [], dropped={"C1"}), ["local"])
         self.assertEqual(proactive._desired_deliver(["local", "qqbot:C1"], []), ["local", "qqbot:C1"])
         self.assertEqual(proactive._desired_deliver(["qqbot:OPS"], []), ["qqbot:OPS"])
+
+
+class SubscriptionFileTests(unittest.TestCase):
+    def test_missing_file_means_nobody_subscribed_and_roundtrip_persists(self):
+        @contextmanager
+        def no_lock():
+            yield
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "proactive-targets.json"
+            with (
+                patch.object(proactive, "_targets_path", lambda: path),
+                patch.object(proactive, "_targets_lock", no_lock),
+                patch.object(proactive, "sync_beat_delivery"),
+            ):
+                self.assertEqual(proactive.subscribed_chats(), set())
+                self.assertEqual(proactive.subscribe({"chat_id": "A", "chat_type": "group"}),
+                                 ("added", 1))
+                self.assertEqual(proactive.subscribed_chats(), {"A"})
+                self.assertEqual(proactive.subscribe({"chat_id": "A"}), ("present", 1))
+                self.assertEqual(proactive.unsubscribe("A"), ("removed", 0))
+                self.assertEqual(proactive.subscribed_chats(), set())
 
 
 if __name__ == "__main__":
