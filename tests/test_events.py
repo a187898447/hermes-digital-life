@@ -739,5 +739,42 @@ class WakeHookTests(unittest.TestCase):
         self.assertEqual(self.state["wake"]["queue"], [])
 
 
+class PersonaSyncTests(unittest.TestCase):
+    def _layout(self, tmp, card, live, marker_for=None):
+        import json
+
+        root = Path(tmp) / "repo"
+        home = Path(tmp) / "profile"
+        persona = root / "personas" / "demo"
+        persona.mkdir(parents=True)
+        home.mkdir()
+        (persona / "SOUL.md").write_text(card, encoding="utf-8")
+        (home / "SOUL.md").write_text(live, encoding="utf-8")
+        digest = __import__("hashlib").sha256((marker_for if marker_for is not None else live).encode()).hexdigest()
+        (home / ".persona-source.json").write_text(
+            json.dumps({"persona": "demo", "soul_sha256": digest}), encoding="utf-8")
+        return root, home
+
+    def test_refreshes_an_untouched_copy(self):
+        import os
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root, home = self._layout(tmp, "new card", "old card")
+            with patch.dict(os.environ, {"HERMES_HOME": str(home)}):
+                plugin._sync_persona_card(root)
+            self.assertEqual((home / "SOUL.md").read_text(), "new card")
+
+    def test_never_overwrites_a_hand_edited_copy(self):
+        import os
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root, home = self._layout(tmp, "new card", "mine, edited", marker_for="old card")
+            with patch.dict(os.environ, {"HERMES_HOME": str(home)}):
+                plugin._sync_persona_card(root)
+            self.assertEqual((home / "SOUL.md").read_text(), "mine, edited")
+
+
 if __name__ == "__main__":
     unittest.main()

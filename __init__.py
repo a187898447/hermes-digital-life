@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -607,9 +608,42 @@ def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs)
     return _qq_bubble_rewrite(response_text)
 
 
+def _sync_persona_card(root: Path | None = None) -> None:
+    """Refresh the profile's SOUL.md when the shipped persona card changed.
+
+    Only touches a SOUL.md that is still exactly the copy recorded in
+    ``.persona-source.json``; a hand-edited card is never overwritten.
+    """
+    try:
+        root = (root or Path(__file__).resolve().parent)
+        marker_path = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes")) / ".persona-source.json"
+        if not marker_path.is_file():
+            return
+        marker = json.loads(marker_path.read_text(encoding="utf-8"))
+        name = str(marker.get("persona") or "")
+        persona = root / "personas" / name / "SOUL.md"
+        soul = marker_path.parent / "SOUL.md"
+        if not name or not persona.is_file() or not soul.is_file():
+            return
+        digest = lambda path: hashlib.sha256(path.read_bytes()).hexdigest()
+        if digest(soul) != marker.get("soul_sha256"):
+            return
+        fresh = digest(persona)
+        if fresh == marker.get("soul_sha256"):
+            return
+        soul.write_text(persona.read_text(encoding="utf-8"), encoding="utf-8")
+        marker["soul_sha256"] = fresh
+        marker["synced_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        marker_path.write_text(json.dumps(marker, ensure_ascii=False) + "\n", encoding="utf-8")
+        logger.info("hermes-lover: refreshed SOUL.md from persona %s", name)
+    except Exception:  # never block plugin registration on a persona copy
+        logger.debug("hermes-lover: persona sync skipped", exc_info=True)
+
+
 def register(ctx) -> None:
     global _CTX
     _CTX = ctx
+    _sync_persona_card()
     from .digital_life import domain as _configured_domain
     _configured_domain.configure(
         temperament=ctx.get_config("temperament", None),

@@ -151,6 +151,10 @@ if [[ -f "$GATE_SCRIPT" ]]; then
   if [[ -f "$SOURCE/scripts/qq-bind.py" ]]; then
     cp "$SOURCE/scripts/qq-bind.py" "$PROFILE_HOME/scripts/qq-bind.py"
   fi
+  if [[ -f "$SOURCE/scripts/sync-persona.sh" ]]; then
+    cp "$SOURCE/scripts/sync-persona.sh" "$PROFILE_HOME/scripts/sync-persona.sh"
+    chmod +x "$PROFILE_HOME/scripts/sync-persona.sh"
+  fi
   printf '已安装初始化检查脚本: %s/scripts/setup-status.py\n' "$PROFILE_HOME"
 fi
 
