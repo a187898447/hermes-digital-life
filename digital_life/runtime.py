@@ -303,7 +303,9 @@ def affect_note(now_ms: float) -> str:
     else:
         directive = "Use the configured identity and current conversation; do not infer emotion beyond these signals."
     mood = affect.render(state, now_ms)
-    note = f"{mood}\n（以上是你此刻的身体状态；按它调整语气，但不覆盖安全与事实规则。\n不要把数字念给用户，也不要用「参数」「调试」「重置」这类工程说法；用感觉词说。）\n{directive}"
+    stamp = time.localtime(now_ms / 1000.0)
+    clock = time.strftime("%Y-%m-%d %H:%M", stamp) + "（周" + "一二三四五六日"[stamp.tm_wday] + "）"
+    note = f"现在的时间：{clock}。有人问时间就按这个答。\n{mood}\n（以上是你此刻的身体状态；按它调整语气，但不覆盖安全与事实规则。\n不要把数字念给用户，也不要用「参数」「调试」「重置」这类工程说法；用感觉词说。）\n{directive}"
     body = body_line()
     return f"{note}\n{body}" if body else note
 
