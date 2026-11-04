@@ -319,6 +319,9 @@ class RegistrationTests(unittest.TestCase):
         ctx = RecordingContext()
         plugin.register(ctx)
         self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "memory_write", "memory_recall", "digital_life_status"])
+        schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
+        self.assertEqual(set(schemas["memory_write"]) & {"sources", "refs"}, {"sources", "refs"})
+        self.assertIn("kind", schemas["memory_recall"])
         self.assertEqual([entry["name"] for entry in ctx.cli], ["hermes-lover"])
         self.assertEqual({kind for kind, _ in ctx.middleware}, {"llm_request"})
         self.assertEqual(ctx.blueprints[0][0], ("dream-reflection",))
@@ -498,6 +501,62 @@ class QqBubbleTransformTests(unittest.TestCase):
             self.assertIn("日记", note["context"])
             self.assertIn(older, note["context"])
             self.assertNotIn((datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"), note["context"])
+
+    def test_missing_atomic_facts_are_requested_from_that_days_turns(self):
+        from datetime import datetime, timedelta
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        anchor = (datetime.now() - timedelta(days=1)).replace(hour=12).timestamp() * 1000
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx = RecordingContext()
+            ctx.get_config = lambda key, default=None: default
+            with (
+                patch.object(plugin.digital_life.storage, "data_root", return_value=root),
+                patch.object(plugin.digital_life.storage, "plugin_db",
+                             side_effect=lambda name, filename: sqlite3.connect(root / filename)),
+                patch.object(plugin.digital_life.storage, "read_state",
+                             return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
+                patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+            ):
+                plugin._JOURNAL_PROMPTED.clear()
+                plugin._FACT_PROMPTED.clear()
+                plugin.register(ctx)
+                plugin.digital_life.memory.MemoryStore(root).write(
+                    "用户：今天被说胖\n助手：滚", kind="turn", session_id="s1", now_ms=anchor)
+                hooks = dict(ctx.hooks)
+                note = hooks["pre_llm_call"](user_message="在吗", session_id="s1", platform="qqbot")
+            self.assertIn("原子事实", note["context"])
+            self.assertIn(yesterday, note["context"])
+            self.assertIn("sources", note["context"])
+            self.assertIn("refs", note["context"])
+
+    def test_fact_entries_do_not_trigger_the_fact_prompt(self):
+        from datetime import datetime, timedelta
+        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+        anchor = (datetime.now() - timedelta(days=1)).replace(hour=12).timestamp() * 1000
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx = RecordingContext()
+            ctx.get_config = lambda key, default=None: default
+            with (
+                patch.object(plugin.digital_life.storage, "data_root", return_value=root),
+                patch.object(plugin.digital_life.storage, "plugin_db",
+                             side_effect=lambda name, filename: sqlite3.connect(root / filename)),
+                patch.object(plugin.digital_life.storage, "read_state",
+                             return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
+                patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+            ):
+                plugin._JOURNAL_PROMPTED.clear()
+                plugin._FACT_PROMPTED.clear()
+                plugin.register(ctx)
+                store = plugin.digital_life.memory.MemoryStore(root)
+                store.write("用户：今天被说胖", kind="turn", session_id="s1", now_ms=anchor)
+                store.write("用户被说胖", kind="fact", session_id="s1", now_ms=anchor,
+                            day=yesterday)
+                hooks = dict(ctx.hooks)
+                note = hooks["pre_llm_call"](user_message="在吗", session_id="s1", platform="qqbot")
+            self.assertNotIn("原子事实", note["context"])
+            self.assertIn("日记", note["context"])
 
 
     def test_new_from_a_non_owner_leaves_the_palace_alone(self):

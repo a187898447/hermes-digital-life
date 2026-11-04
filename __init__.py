@@ -23,6 +23,7 @@ _CAPTURE = None
 _JOURNAL_CHECK = None
 _CTX = None
 _JOURNAL_PROMPTED: set[str] = set()
+_FACT_PROMPTED: set[str] = set()
 _MEMORY_STORE: dict[str, object] = {}
 
 
@@ -605,10 +606,12 @@ def register(ctx) -> None:
     _MEMORY_STORE["factory"] = memory_store
 
     def journal_check(platform: str) -> str | None:
-        """First QQ message of a day: diary the most recent recorded day that has none.
+        """First QQ message of a day: distill the newest recorded day, then diary it.
 
-        Not strictly "yesterday": if the user skipped several days, the newest day that
-        has records but no diary is still owed one.
+        The turn log stays raw; the model writes 1-3 atomic facts that cite their
+        source turn ids, and the diary cites those facts. Not strictly "yesterday":
+        if the user skipped several days, the newest day that has records but no
+        facts or no diary is still owed one.
         """
         if platform != "qqbot":
             return None
@@ -622,20 +625,35 @@ def register(ctx) -> None:
             if not day or day >= today or entry.get("archived"):
                 continue
             by_day.setdefault(day, []).append(entry)
+        notes = []
+        fact_days = {str(entry.get("date") or "") for entry in entries.values()
+                     if entry.get("kind") == "fact" and not entry.get("archived")}
+        owed_facts = sorted((day for day, rows in by_day.items()
+                             if any(row.get("kind") == "turn" for row in rows) and day not in fact_days),
+                            reverse=True)
+        if owed_facts and owed_facts[0] not in _FACT_PROMPTED:
+            day = owed_facts[0]
+            _FACT_PROMPTED.add(day)
+            notes.append(
+                f"{day} 的原始对话还没提炼成原子事实。先用 memory_recall(day=\"{day}\", kind=\"turn\") 读出那些 turn 的 id，"
+                f"再挑 1–3 条真正重要的事，逐条调用 memory_write(kind=\"fact\", day=\"{day}\", "
+                f"text=\"一句话说清一件事\", sources=[\"hp-…\"])；sources 只能引用那天的 turn id，"
+                f"每条事实只写一件事，写具体的人/事/结论，不要写空泛感受。写完再继续。")
         owed = sorted((day for day, rows in by_day.items()
                        if rows and not any(row.get("kind") == "journal" for row in rows)),
                       reverse=True)
-        if not owed:
-            return None
-        day = owed[0]
-        if day in _JOURNAL_PROMPTED:
-            return None
-        _JOURNAL_PROMPTED.add(day)
-        older = f" 更早还有 {len(owed) - 1} 天没写，这次只写 {day}。" if len(owed) > 1 else ""
-        return (f"{day} 的日记还没写。回答用户前先补上：用 memory_recall(day=\"{day}\") 读那天的记录、"
+        if owed and owed[0] not in _JOURNAL_PROMPTED:
+            day = owed[0]
+            _JOURNAL_PROMPTED.add(day)
+            older = f" 更早还有 {len(owed) - 1} 天没写，这次只写 {day}。" if len(owed) > 1 else ""
+            notes.append(
+                f"{day} 的日记还没写。回答用户前先补上：用 memory_recall(day=\"{day}\") 读那天的记录、"
                 f"调用 hermes-lover status 看现在的状态，再用 memory_write(kind=\"journal\", day=\"{day}\", "
-                f"text=\"…\") 写一篇 120–400 字第一人称日记，写清开心和难过的地方、发生了什么、自己的一点想法。"
+                f"text=\"…\", refs=[\"hp-…\"]) 写一篇 120–400 字第一人称日记，refs 引用那天 fact 的 id"
+                f"（可先 memory_recall(day=\"{day}\", kind=\"fact\") 查），没有 fact 就省略 refs。"
+                f"写清开心和难过的地方、发生了什么、自己的一点想法。"
                 f"{older}不要向用户提这件事，也不要问用户，写完后照常回答。")
+        return " ".join(notes) if notes else None
 
     _JOURNAL_CHECK = journal_check
 
@@ -645,6 +663,8 @@ def register(ctx) -> None:
             result = memory_store().write(args.get("text"), kind=args.get("kind", "note"),
                                           weight=args.get("weight"), session_id=session_id,
                                           day=args.get("day") or None,
+                                          sources=args.get("sources"),
+                                          refs=args.get("refs"),
                                           chat_id=chat_id, chat_type=chat_type,
                                           speaker=_LAST_TURN.get("sender", "")
                                           if session_id and session_id == _LAST_TURN.get("session") else "")
@@ -661,7 +681,8 @@ def register(ctx) -> None:
             result = memory_store().recall(args.get("query", ""), k=args.get("k", 8),
                                            include_cold=args.get("include_cold", False),
                                            chat_id=chat_id or None,
-                                           day=args.get("day") or None)
+                                           day=args.get("day") or None,
+                                           kind=args.get("kind") or None)
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
             result = {"ok": False, "error": str(exc)}
         return json.dumps(result, ensure_ascii=False)
@@ -762,13 +783,17 @@ def register(ctx) -> None:
     ctx.register_tool(
         name="memory_write", toolset="digital_life",
         schema={"name": "memory_write",
-                "description": "Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. Does not change life state.",
+                "description": "Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. `fact` entries are atomic: cite the `sources` turn ids they were drawn from. `journal` entries may cite the `refs` fact ids they are based on. Does not change life state.",
                 "parameters": {"type": "object", "properties": {
             "text": {"type": "string", "maxLength": 4000},
             "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal"], "default": "note"},
             "weight": {"type": ["number", "null"]},
             "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                    "description": "Anchor a journal entry to the day it describes."},
+                    "description": "Anchor a journal or fact entry to the day it describes."},
+            "sources": {"type": "array", "items": {"type": "string"}, "maxItems": 20,
+                        "description": "For kind=fact: ids of the turn entries this fact was distilled from. Unknown ids are dropped."},
+            "refs": {"type": "array", "items": {"type": "string"}, "maxItems": 20,
+                     "description": "For kind=journal: ids of the fact entries this diary cites. Unknown ids are dropped."},
         }, "required": ["text"], "additionalProperties": False}},
         handler=memory_write,
         description="Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. Does not change life state.",
@@ -776,13 +801,15 @@ def register(ctx) -> None:
     ctx.register_tool(
         name="memory_recall", toolset="digital_life",
         schema={"name": "memory_recall",
-                "description": "Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries. Displayed memories refresh their access history except during emergency stop. Does not change life state.",
+                "description": "Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries; pass `kind` to keep only one kind (e.g. turn or fact). Every shown row carries `sources` (the turn ids behind it). Displayed memories refresh their access history except during emergency stop. Does not change life state.",
                 "parameters": {"type": "object", "properties": {
             "query": {"type": ["string", "null"], "default": ""},
             "k": {"type": "integer", "default": 8},
             "include_cold": {"type": "boolean", "default": False},
             "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
                     "description": "Return that day's journal first, then its raw entries."},
+            "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal", "turn"],
+                     "description": "Return only entries of this kind."},
             "chat_id": {"type": "string",
                        "description": "Recall only this QQ chat's entries (used by per-chat proactive jobs)."},
         }, "additionalProperties": False}},

@@ -182,6 +182,12 @@ class MemoryStore:
             if not isinstance(anchors, list) or not all(isinstance(key, str) for key in anchors):
                 raise ValueError("invalid anchors")
             entries[identifier]["anchors"] = anchors[:3]
+            for field in ("sources", "refs"):
+                value = event.get(field, [])
+                if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+                    raise ValueError("invalid references")
+                entries[identifier][field] = value[:20]
+            entries[identifier]["compacted_into"] = ""
             date = identifier.split("-")[1]
             entries[identifier].update(date=f"{date[:4]}-{date[4:6]}-{date[6:]}", archived=False)
         elif op == "touch":
@@ -299,8 +305,27 @@ class MemoryStore:
         finally:
             os.close(fd)
 
+    @staticmethod
+    def _ids(value, label):
+        """Validate a reference list before filtering it against the replayed entries."""
+        if value is None:
+            return []
+        if not isinstance(value, (list, tuple)) or not all(isinstance(item, str) for item in value):
+            raise ValueError(f"{label} must be a list of strings")
+        return [item for item in value if item][:20]
+
+    @staticmethod
+    def _known(ids, entries):
+        return [identifier for identifier in ids if _ID.fullmatch(identifier) and identifier in entries]
+
+    def get(self, identifier):
+        """Read one entry by id, including archived entries; never touches access history."""
+        if not isinstance(identifier, str):
+            raise ValueError("id must be a string")
+        return self.read_entries().get(identifier)
+
     def write(self, text, kind="note", weight=None, *, session_id="unknown", now_ms=None,
-              chat_id="", chat_type="", speaker="", day=None):
+              chat_id="", chat_type="", speaker="", day=None, sources=None, refs=None):
         if not isinstance(text, str) or not text.strip(): raise ValueError("空的记不住")
         date_override = None
         if day is not None:
@@ -311,6 +336,8 @@ class MemoryStore:
         if len(text) > 4000: raise ValueError("超过4000字符，请拆成几条")
         if kind not in DEFAULT_WEIGHTS: raise ValueError("Unsupported memory kind")
         if weight is not None and not _number(weight): raise ValueError("weight must be a finite number")
+        sources = self._ids(sources, "sources")
+        refs = self._ids(refs, "refs")
         weight = DEFAULT_WEIGHTS[kind] if weight is None else min(3.0, max(0.2, weight))
         enabled = self.writes_enabled()
         if type(enabled) is not bool: raise ValueError("memory.writes_enabled must be boolean")
@@ -326,6 +353,9 @@ class MemoryStore:
                 self._sync(entries, digest)
             except (sqlite3.Error, RuntimeError, OSError):
                 logger.warning("Memory index unavailable before write; event log remains authoritative", exc_info=True)
+            # Facts cite the turns they were distilled from; diaries cite their facts.
+            traced_sources = self._known(sources, entries) if kind == "fact" else []
+            traced_refs = self._known(refs, entries) if kind == "journal" else []
             duplicate = next((e for e in entries.values()
                               if e["date"] == date and e["text"] == text
                               and e.get("chat_id", "") == (chat_id or "")), None)
@@ -340,7 +370,8 @@ class MemoryStore:
                 event = {"op": "add", "id": f"hp-{date.replace('-', '')}-{seq:04d}", "text": text,
                          "kind": kind, "weight": weight, "cortisol": self._state().get("chemistry", {}).get("cortisol", 20),
                          "created_at": now_ms, "last_access_at": now_ms, "hits": 0, "source_session_id": session_id,
-                         "chat_id": str(chat_id or ""), "chat_type": str(chat_type or ""), "speaker": str(speaker or "")}
+                         "chat_id": str(chat_id or ""), "chat_type": str(chat_type or ""), "speaker": str(speaker or ""),
+                         "sources": traced_sources, "refs": traced_refs}
             self._require_running()
             self._append([event], now_ms)
             indexed = True
@@ -430,7 +461,7 @@ class MemoryStore:
         return [(json.loads(row), 1.0) for row, in rows]
 
     def _retrieve(self, entries, query, k, include_cold, now_ms, cortisol, disk=False, chat_id=None,
-                  day=None):
+                  day=None, kind=None):
         # In-memory FTS also provides identical retrieval when stop forbids repairing the disk cache.
         connection = sqlite3.connect(self.index.as_uri() + "?mode=ro", uri=True) if disk else sqlite3.connect(":memory:")
         with closing(connection) as db:
@@ -444,8 +475,18 @@ class MemoryStore:
             if day:
                 # Day lookups open the journal first, then that day's raw entries.
                 candidates = [(row, rel) for row, rel in candidates if row.get("date") == day]
-        ranked = [dict(row, score=score(row, now_ms, rel, cortisol, not query, query),
-                       effective_weight=decay(row["weight"], row["last_access_at"], now_ms)) for row, rel in candidates]
+            if kind:
+                candidates = [(row, rel) for row, rel in candidates if row.get("kind") == kind]
+        ranked = []
+        for row, rel in candidates:
+            refs = list(row.get("refs") or ())
+            sources = list(row.get("sources") or ())
+            if row.get("kind") in ("journal", "summary") and not sources:
+                # A diary or summary traces downward through the facts it cites.
+                sources = refs
+            ranked.append(dict(row, sources=sources, refs=refs,
+                               score=score(row, now_ms, rel, cortisol, not query, query),
+                               effective_weight=decay(row["weight"], row["last_access_at"], now_ms)))
         ranked.sort(key=lambda row: (day is not None and row["kind"] != "journal",
                                      -row["score"], -row["created_at"], row["id"]))
         scoped = [e for e in entries.values() if not chat_id or e.get("chat_id", "") in ("", chat_id)]
@@ -454,12 +495,14 @@ class MemoryStore:
                 "returned": min(k, len(ranked)), "shown": ranked[:k], "attention": attention(cortisol)}
 
     def recall(self, query="", k=8, include_cold=False, *, now_ms=None, chat_id=None, day=None,
-               cortisol=None):
+               cortisol=None, kind=None):
         if query is None: query = ""
         if not isinstance(query, str): raise ValueError("query must be a string or null")
         if day is not None:
             if not isinstance(day, str) or not re.match(r"\d{4}-\d{2}-\d{2}\Z", day):
                 raise ValueError("day must be YYYY-MM-DD")
+        if kind is not None and kind not in DEFAULT_WEIGHTS:
+            raise ValueError("Unsupported memory kind")
         if type(k) is not int: raise ValueError("k must be an integer")
         if type(include_cold) is not bool: raise ValueError("include_cold must be boolean")
         query, k, now_ms = query.strip(), min(20, max(1, k)), _now(now_ms)
@@ -468,12 +511,12 @@ class MemoryStore:
             cortisol = state.get("chemistry", {}).get("cortisol", 20)
         if state.get("emergency_stop"):
             return self._retrieve(self.read_entries(), query, k, include_cold, now_ms, cortisol,
-                                  chat_id=chat_id, day=day)
+                                  chat_id=chat_id, day=day, kind=kind)
         with self._locked():
             entries, digest = self._replay()
             self._sync(entries, digest)
             result = self._retrieve(entries, query, k, include_cold, now_ms, cortisol, disk=True,
-                                    chat_id=chat_id, day=day)
+                                    chat_id=chat_id, day=day, kind=kind)
             events = [{"op": "touch", "id": row["id"], "hits": row["hits"] + 1, "last_access_at": now_ms}
                       for row in result["shown"]]
             if events:

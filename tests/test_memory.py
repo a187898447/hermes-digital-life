@@ -125,6 +125,49 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(entry["kind"], "journal")
         self.assertEqual(entry["date"], "2026-10-31")
 
+    def test_fact_sources_trace_to_turns_and_drop_unknown_ids(self):
+        turn = self.store.capture("用户：今天又熬夜了\n助手：别熬了", session_id="s1", now_ms=NOW)
+        fact = self.write("用户今天熬夜到很晚", kind="fact",
+                          sources=[turn["id"], "hp-20261102-9999", "not-an-id"])
+        self.assertEqual(self.store.get(fact["id"])["sources"], [turn["id"]])
+        shown = self.recall("熬夜", kind="fact")["shown"]
+        self.assertEqual([row["id"] for row in shown], [fact["id"]])
+        self.assertEqual(shown[0]["sources"], [turn["id"]])
+
+    def test_journal_refs_cite_facts_and_surface_as_sources(self):
+        fact = self.write("用户今天熬夜到很晚", kind="fact")
+        diary = self.write("【日记】今天他又熬夜，我有点心疼。", kind="journal", day="2026-11-02",
+                           refs=[fact["id"], "hp-20261102-9999"])
+        self.assertEqual(self.store.get(diary["id"])["refs"], [fact["id"]])
+        shown = self.recall(day="2026-11-02")["shown"]
+        self.assertEqual(shown[0]["kind"], "journal")
+        self.assertEqual(shown[0]["sources"], [fact["id"]])
+
+    def test_references_are_type_checked_and_ignored_for_other_kinds(self):
+        with self.assertRaises(ValueError):
+            self.write(kind="fact", sources="hp-20261102-0001")
+        with self.assertRaises(ValueError):
+            self.write(kind="journal", refs=[1])
+        note = self.write("普通记录", sources=["hp-20261102-0001"], refs=["hp-20261102-0001"])
+        self.assertEqual(self.store.get(note["id"])["sources"], [])
+        self.assertEqual(self.store.get(note["id"])["refs"], [])
+
+    def test_recall_kind_filter_and_unknown_kind(self):
+        self.store.capture("用户：今天好累", session_id="s1", now_ms=NOW)
+        fact = self.write("用户很累", kind="fact")
+        self.assertEqual([row["id"] for row in self.recall(kind="fact")["shown"]], [fact["id"]])
+        self.assertEqual([row["kind"] for row in self.recall(kind="turn")["shown"]], ["turn"])
+        with self.assertRaises(ValueError):
+            self.recall(kind="nope")
+
+    def test_get_reads_archived_entry_without_touching_it(self):
+        result = self.write("会被归档")
+        self.store.clear()
+        entry = self.store.get(result["id"])
+        self.assertTrue(entry["archived"])
+        self.assertEqual(entry["hits"], 0)
+        self.assertEqual(entry["last_access_at"], NOW)
+
     def test_day_recall_opens_journal_first_then_raw_entries(self):
         day = "2026-11-02"
         self.store.capture("用户：今天好累\n助手：早点睡", session_id="s1", now_ms=NOW)
