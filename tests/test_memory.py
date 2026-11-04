@@ -15,6 +15,21 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
+import sys
+import types
+
+if "plugins" not in sys.modules:
+    # Keep this file runnable on its own; the full suite reuses test_events' richer stub.
+    _plugins = types.ModuleType("plugins")
+    _plugins.__path__ = []
+    _api = types.ModuleType("plugins.plugin_storage")
+    _api.plugin_data_dir = lambda name: Path(tempfile.gettempdir()) / f"{name}-memory-test"
+    _api.plugin_db = lambda name, filename="data.db": sqlite3.connect(
+        Path(tempfile.gettempdir()) / f"{name}-{filename}")
+    _plugins.plugin_storage = _api
+    sys.modules["plugins"] = _plugins
+    sys.modules["plugins.plugin_storage"] = _api
+
 from digital_life import memory
 
 NOW = 1793592000000
@@ -71,7 +86,8 @@ class MemoryTests(unittest.TestCase):
 
     def test_registered_handlers_config_and_life_state_unchanged(self):
         from test_events import plugin, RecordingContext
-        host_storage = plugin.digital_life.storage
+        import importlib
+        host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
         ctx = RecordingContext()
         enabled = [True]
         ctx.get_config = lambda key, default: enabled[0]
@@ -489,6 +505,16 @@ class CompactTests(unittest.TestCase):
                 self.assertIn(identifier, entries[target]["text"])
             self.assertEqual(sorted(entries[target]["sources"]), sorted(group))
         self.assertEqual(entries[live]["compacted_into"], "")
+
+    def test_compact_summary_cites_every_member_past_twenty(self):
+        ids = [self.store.write(f"十月的旧事第{index}条", day="2026-10-01",
+                                session_id=f"s-{index}", now_ms=NOW)["id"]
+               for index in range(25)]
+        self.store.clear(now_ms=NOW)
+        self.store.compact(days=30, now_ms=self.later)
+        summary = next(e for e in self.store.read_entries().values() if e["kind"] == "summary")
+        self.assertEqual(sorted(summary["sources"]), sorted(ids))
+        self.assertLessEqual(len(summary["text"]), 200)
 
     def test_second_compact_is_idempotent(self):
         self.seed("旧事一", "旧事二")

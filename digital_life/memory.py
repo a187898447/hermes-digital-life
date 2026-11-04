@@ -193,7 +193,8 @@ class MemoryStore:
                 value = event.get(field, [])
                 if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
                     raise ValueError("invalid references")
-                entries[identifier][field] = value[:20]
+                # Store-written summaries may cite a whole cold group; model input stays at 20.
+                entries[identifier][field] = value[:512]
             entries[identifier]["compacted_into"] = ""
             date = identifier.split("-")[1]
             entries[identifier].update(date=f"{date[:4]}-{date[4:6]}-{date[6:]}", archived=False)
@@ -558,7 +559,7 @@ class MemoryStore:
                     "created_at": now_ms, "last_access_at": now_ms, "hits": 0,
                     "source_session_id": "memory-compact", "chat_id": chat_id,
                     "chat_type": rows[0].get("chat_type", ""), "speaker": "",
-                    "sources": ids[:20], "refs": []})
+                    "sources": ids, "refs": []})
                 events.append({"op": "forget", "id": summary_id, "archived_at": now_ms})
                 events.extend({"op": "compact", "id": identifier, "into": summary_id, "at": now_ms}
                               for identifier in ids)
