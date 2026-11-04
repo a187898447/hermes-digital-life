@@ -707,8 +707,14 @@ def register(ctx) -> None:
     def memory_recall(args, session_id="", **kwargs):
         try:
             chat_id, _chat_type = _session_scope(session_id)
-            if not chat_id and args.get("chat_id"):
-                raise ValueError("chat_id is resolved from the calling session, not from arguments")
+            source = _session_source(session_id)
+            explicit = str(args.get("chat_id") or "").strip()
+            if explicit:
+                if source != "cron":
+                    raise ValueError("chat_id is only accepted from scheduled runs")
+                chat_id = explicit
+            elif not chat_id and source == "qqbot":
+                raise ValueError("cannot resolve this QQ session's chat; refusing an unscoped recall")
             result = memory_store().recall(args.get("query", ""), k=args.get("k", 8),
                                            include_cold=args.get("include_cold", False),
                                            chat_id=chat_id or None,
@@ -719,7 +725,7 @@ def register(ctx) -> None:
         return json.dumps(result, ensure_ascii=False)
 
     def beat_targets(args, session_id="", **kwargs):
-        if _session_source(session_id) == "qqbot":
+        if _session_source(session_id) != "cron":
             return json.dumps({"ok": False, "error": "beat tools are only available to scheduled runs"})
         import os
         from pathlib import Path as _Path
@@ -775,7 +781,7 @@ def register(ctx) -> None:
         return json.dumps({"targets": targets}, ensure_ascii=False)
 
     def beat_send(args, session_id="", **kwargs):
-        if _session_source(session_id) == "qqbot":
+        if _session_source(session_id) != "cron":
             return json.dumps({"ok": False, "error": "beat tools are only available to scheduled runs"})
         chat_id = str(args.get("chat_id") or "").strip()
         text = str(args.get("text") or "").strip()
@@ -848,6 +854,8 @@ def register(ctx) -> None:
                     "description": "Return that day's journal first, then its raw entries."},
             "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal", "turn"],
                      "description": "Return only entries of this kind."},
+            "chat_id": {"type": ["string", "null"],
+                        "description": "Scheduled runs only: recall another chat's memory. Interactive sessions always use their own chat."},
         }, "additionalProperties": False}},
         handler=memory_recall,
         description="Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries. Displayed memories refresh their access history except during emergency stop. Does not change life state.",

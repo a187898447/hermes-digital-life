@@ -159,10 +159,19 @@ def cmd_wait(profile: str, timeout: int, allow_all: bool = False) -> int:
             last = status
         if status == BindStatus.COMPLETED:
             secret = decrypt(enc, state["key"])
+            env_file = hermes_home(profile) / ".env"
+            before = env_file.read_text() if env_file.exists() else None
             env = write_env(profile, app_id, secret, openid, allow_all=allow_all)
             words = load_wake_words(profile, str(state.get("wake_words", "")))
             failed = configure(profile, allow_all=allow_all, wake_words=words)
             if failed:
+                # Do not leave credentials behind: a later gateway restart would
+                # otherwise start qqbot with whatever toolset the config still has.
+                if before is None:
+                    env.unlink(missing_ok=True)
+                else:
+                    env.write_text(before)
+                    os.chmod(env, 0o600)
                 path.unlink(missing_ok=True)
                 print("\n绑定失败：以下配置没有写入成功，已停止（未重启网关，避免退回全量工具集）：")
                 for line in failed:

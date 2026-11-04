@@ -330,9 +330,12 @@ class RegistrationTests(unittest.TestCase):
             result = json.loads(handlers["memory_recall"]({"chat_id": "other-chat"},
                                                           session_id="s-cli"))
             self.assertFalse(result["ok"])
-            self.assertIn("session", result["error"])
+            self.assertIn("scheduled", result["error"])
+        with patch.object(plugin, "_session_source", return_value="qqbot"):
+            blocked = json.loads(handlers["memory_recall"]({}, session_id="s-qq"))
+            self.assertFalse(blocked["ok"])
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
-        self.assertNotIn("chat_id", schemas["memory_recall"])
+        self.assertIn("chat_id", schemas["memory_recall"])
 
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()

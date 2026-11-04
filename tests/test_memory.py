@@ -112,6 +112,29 @@ class MemoryTests(unittest.TestCase):
             self.assertEqual(json.loads(handlers["memory_recall"]({}))["returned"], 1)
             self.assertEqual(files(self.root), before)
 
+    def test_scheduled_runs_may_recall_a_named_chat(self):
+        from test_events import plugin, RecordingContext
+        import importlib
+        host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default: True
+        plugin.register(ctx)
+        handlers = {tool["name"]: tool["handler"] for tool in ctx.tools}
+        with (
+            patch.object(host_storage, "data_root", return_value=self.root),
+            patch.object(host_storage, "plugin_db",
+                         side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+            patch.object(plugin, "_session_scope", return_value=("chat-a", "group")),
+            patch.object(plugin, "_session_source", return_value="cron"),
+        ):
+            handlers["memory_write"]({"text": "群里聊到熬夜"}, session_id="cron-1")
+            got = json.loads(handlers["memory_recall"]({"chat_id": "chat-a", "query": "熬夜"},
+                                                       session_id="cron-1"))
+            self.assertEqual(got["returned"], 1)
+            other = json.loads(handlers["memory_recall"]({"chat_id": "chat-b"},
+                                                         session_id="cron-1"))
+            self.assertEqual(other["returned"], 0)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
