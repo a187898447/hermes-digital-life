@@ -571,6 +571,11 @@ def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs)
 def register(ctx) -> None:
     global _CTX
     _CTX = ctx
+    from .digital_life import domain as _configured_domain
+    _configured_domain.configure(
+        temperament=ctx.get_config("temperament", None),
+        stress_cortisol=ctx.get_config("stress_cortisol", None),
+    )
     from .digital_life.cli import run_command, setup_parser
     from .digital_life.memory import MemoryStore
     from .digital_life import storage
