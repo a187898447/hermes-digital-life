@@ -23,8 +23,10 @@ DELTAS = {
 _HARD_INSULT = re.compile(r"(傻[逼比]?|废物|闭嘴|破程序|智障|脑残|去死|他妈的|妈的)")
 # Everyday words that are only abuse when they stand alone: 「垃圾回收器」和「滚轮」不是骂人。
 _BOUNDARY = r"(?:^|[\s，。！？,.!?、…~])"
+_END = r"(?:$|[\s，。！？,.!?、…~])"
+# 「你滚」「真垃圾啊」「太蠢了」都是骂人；前缀只放程度副词和人称，避免吞掉正常词。
 _SOFT_INSULT = re.compile(
-    _BOUNDARY + r"(滚|垃圾|有病|蠢货|蠢)" + r"(?:$|[\s，。！？,.!?、…~])"
+    _BOUNDARY + r"(?:你|真|太|好|很|就|快|再)?" + r"(滚|垃圾|有病|蠢货|蠢)" + r"(?:啊|呢|吧|了|呀)?" + _END
 )
 # Praise words are specific enough to match as substrings.
 _PRAISE = re.compile(

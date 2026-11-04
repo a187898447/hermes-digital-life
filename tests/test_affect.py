@@ -135,6 +135,8 @@ def setUpModule():
     re-imported per test and ``patch.object`` would target a stale module.
     """
     if "plugins.plugin_storage" not in sys.modules:
+        # Process-level on purpose: later modules in the same discover run will see
+        # this stub too.  test_events installs a real sqlite-backed one when it runs first.
         stub = types.ModuleType("plugins.plugin_storage")
         stub.plugin_db = lambda *args, **kwargs: None
         sys.modules.setdefault("plugins", types.ModuleType("plugins"))
@@ -202,6 +204,10 @@ class EventImpulseTests(unittest.TestCase):
         for message in ("这个垃圾回收器有问题", "滚轮事件没触发", "页面滚不动"):
             self.assertIsNone(events.classify(message))
         self.assertEqual(events.classify("滚"), "insult")
+
+    def test_degree_adverbs_still_read_as_abuse(self):
+        for message in ("你滚", "真垃圾啊", "太蠢了", "好蠢"):
+            self.assertEqual(events.classify(message), "insult")
 
 
 if __name__ == "__main__":
