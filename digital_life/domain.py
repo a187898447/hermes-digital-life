@@ -109,7 +109,7 @@ def default_state(now_ms: float) -> dict[str, Any]:
     chemistry = ChemicalPool().initial_chemistry(temperament)
     return {"schema_version": 1, "chemistry": chemistry, "energy": 100.0, "temperament": temperament,
             "last_interaction_at": now_ms, "last_settled_at": now_ms, "gaps": [],
-            "emergency_stop": False}
+            "emergency_stop": False, "tools_succeeded": [], "last_epiphany_at": 0.0}
 
 
 def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
@@ -125,6 +125,10 @@ def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
     gaps = raw.get("gaps")
     if isinstance(gaps, list):
         state["gaps"] = [gap for gap in gaps[-200:] if isinstance(gap, dict)]
+    succeeded = raw.get("tools_succeeded")
+    if isinstance(succeeded, list):
+        state["tools_succeeded"] = [str(name)[:60] for name in succeeded[-32:] if isinstance(name, str)]
+    state["last_epiphany_at"] = max(0.0, float_or(raw.get("last_epiphany_at"), 0.0))
     return state
 
 

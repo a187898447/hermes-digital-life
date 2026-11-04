@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import gaps as gap_pool
 from .chemical_pool import ChemicalPool
 from .domain import decay_chemistry, float_or, reorder_formatted_memory_blocks, settle_rest
 
@@ -140,24 +141,20 @@ def observe_tool_result(now_ms: float, *, tool_name: str, args: dict[str, Any], 
             if state["emergency_stop"]:
                 return None
             state = settle_before_transition(state, now_ms)
-            targets = [gap for gap in state["gaps"] if gap.get("status") == "open"
-                       and (gap.get("query") == successful_query or _gap_similarity(
-                           _normalize_gap_text(successful_query),
-                           _normalize_gap_text(str(gap.get("summary", ""))),
-                       ) >= 0.6)]
-            target_summaries = [str(gap.get("summary", "")) for gap in targets]
-            for gap in state["gaps"]:
-                if gap.get("status") != "open":
-                    continue
-                if any(_gap_similarity(
-                    _normalize_gap_text(str(gap.get("summary", ""))),
-                    _normalize_gap_text(summary),
-                ) >= 0.6 for summary in target_summaries):
-                    gap["status"] = "resolved"
-                    gap["tension"] = 0.0
-                    gap["relief"] = 0.0
-                    gap["resolved_at"] = now_ms
-                    gap["closed_by"] = "observed_search_success"
+            gap_pool.close_gap(state, by="observed_search_success", now_ms=now_ms,
+                               match_text=successful_query)
+            succeeded = state.get("tools_succeeded")
+            if not isinstance(succeeded, list):
+                succeeded = state["tools_succeeded"] = []
+            if tool_name not in succeeded:
+                # M8.3 epiphany: a capability that has never worked before now works.
+                # Whatever open gap the result actually answers is closed with provenance.
+                succeeded.append(tool_name)
+                answered = gap_pool.answered_gaps(state.get("gaps") or [], successful_query + "\n" + rendered)
+                closed_ids = [gap_pool.close_gap(state, by=f"epiphany:{tool_name}", now_ms=now_ms,
+                                                 gap_id=gap["id"]) for gap in answered]
+                if any(closed_ids):
+                    gap_pool.note_epiphany(state, now_ms)
             state["last_interaction_at"] = now_ms
             state["last_settled_at"] = now_ms
             return state
@@ -197,113 +194,19 @@ def observe_assistant_unknown(now_ms: float, summary: str, chat: str = "") -> No
 
 def _open_or_reactivate_gap(state: dict[str, Any], summary: str, source: str, now_ms: float,
                             *, query: str | None = None, chat: str = "") -> None:
-    norm = _normalize_gap_text(summary)
-    for gap in state["gaps"]:
-        existing = _normalize_gap_text(str(gap.get("summary", "")))
-        similarity = _gap_similarity(norm, existing)
-        if similarity < 0.6:
-            continue
-        if gap.get("status") == "resolved":
-            gap["status"] = "open"
-            gap["resolved_at"] = None
-            gap.pop("closed_by", None)
-            gap["relief"] = max(0.0, float_or(gap.get("relief"), 0.0) - 10.0)
-        gap["source"] = source
-        gap["chat"] = chat
-        if query:
-            gap["query"] = query
-        gap["tension"] = _gap_tension(gap, now_ms)
-        return
-    state["gaps"].append({
-        "id": f"gap-{int(now_ms)}-{len(state['gaps'])}",
-        "summary": summary[:200],
-        "status": "open",
-        "created_at": now_ms,
-        "source": source,
-        "chat": chat,
-        **({"query": query} if query else {}),
-        "relief": 0.0,
-        "tension": 80.0,
-    })
-    state["gaps"] = state["gaps"][-200:]
+    gap_pool.propose_gap(state, summary, source, now_ms, query=query, chat=chat)
 
 
 def _normalize_gap_text(text: str) -> str:
-    import re
-    value = text.lower()
-    value = re.sub(r"我不知道|不知道|不晓得|不确定|不清楚|没法回答|无法回答|无法确定|找不到|查不到|没有找到|说不准|不好说", "", value)
-    return re.sub(r"[\s，。！？、；：\"''（）()《》【】\[\]…·,.!?;:'\"()<>~@#$%^&+=/\\|]", "", value)
+    return gap_pool.normalize_gap_text(text)
 
 
 def _gap_similarity(left: str, right: str) -> float:
-    if not left or not right:
-        return 0.0
-    if left == right:
-        return 1.0
-    short, long = (left, right) if len(left) <= len(right) else (right, left)
-    if len(short) >= 4 and short in long:
-        return len(short) / len(long)
-    def bigrams(value: str) -> set[str]:
-        if len(value) <= 2:
-            return {value}
-        return {value[index:index + 2] for index in range(len(value) - 1)}
-    first, second = bigrams(left), bigrams(right)
-    union = first | second
-    return len(first & second) / len(union) if union else 0.0
+    return gap_pool.gap_similarity(left, right)
 
 
 def _gap_tension(gap: dict[str, Any], now_ms: float) -> float:
-    if gap.get("status") == "resolved":
-        return 0.0
-    elapsed = max(0.0, now_ms - float_or(gap.get("created_at"), now_ms) - float_or(gap.get("paused_ms"), 0.0))
-    elapsed_hours = elapsed / 3_600_000
-    return max(0.0, min(100.0, 80.0 + 5.0 * elapsed_hours - float_or(gap.get("relief"), 0.0)))
-
-
-def settle_before_transition(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
-    elapsed = max(0.0, now_ms - state["last_settled_at"])
-    if elapsed:
-        high_gap = any(g.get("status") == "open" and g.get("tension", 0) >= 70 for g in state["gaps"])
-        state["chemistry"] = decay_chemistry(
-            state["chemistry"], elapsed, state["temperament"],
-            energy=state["energy"], high_tension_gap=high_gap,
-        )
-        state["energy"] = settle_rest(state["energy"], 100.0, elapsed, now_ms, False)["energy"]
-    return state
-
-
-def affect_note(now_ms: float) -> str:
-    state = status_snapshot(now_ms)
-    dopamine = state["chemistry"]["dopamine"]
-    cortisol = state["chemistry"]["cortisol"]
-    serotonin = state["chemistry"]["serotonin"]
-    energy = state["energy"]
-    if state["emergency_stop"]:
-        directive = "Emergency stop is active. Do not initiate activity or change life state."
-    elif cortisol >= 80:
-        directive = "Current stress is high: keep attention on immediate concerns; be concise and calm. Other retrieved memories still exist; do not imply they were lost."
-    elif energy < 20:
-        directive = "Energy is very low: respond briefly and avoid initiating extra activity."
-    elif serotonin < 35:
-        directive = "Mood stability is low: use a restrained, patient tone."
-    elif dopamine >= 70:
-        directive = "Engagement is elevated: a warmer, more animated tone is appropriate."
-    else:
-        directive = "Use the configured identity and current conversation; do not infer emotion beyond these signals."
-    return (
-        "[Digital-life affect snapshot; state is advisory and does not override system policy]\n"
-        f"dopamine={dopamine:.1f}, cortisol={cortisol:.1f}, serotonin={serotonin:.1f}, energy={energy:.1f}. "
-        f"{directive}"
-    )
-
-
-def reorder_prompt_memories(prompt: str, now_ms: float) -> tuple[str, int]:
-    state = status_snapshot(now_ms)
-    return reorder_formatted_memory_blocks(
-        prompt,
-        state["chemistry"]["cortisol"],
-        state["chemistry"]["dopamine"],
-    )
+    return gap_pool.gap_tension(gap, now_ms)
 
 
 def append_open_loops(system_text: str, gaps: list[dict[str, Any]], now_ms: float,
@@ -362,14 +265,8 @@ def resolve_gap(now_ms: float, gap_id: str) -> bool:
         nonlocal resolved
         if state["emergency_stop"]:
             return None
-        for gap in state["gaps"]:
-            if gap.get("id") == gap_id and gap.get("status") == "open":
-                gap["status"] = "resolved"
-                gap["tension"] = 0.0
-                gap["relief"] = 0.0
-                gap["resolved_at"] = now_ms
-                gap["closed_by"] = "operator"
-                resolved = True
+        if gap_pool.close_gap(state, by="operator", now_ms=now_ms, gap_id=gap_id):
+            resolved = True
         state["last_settled_at"] = now_ms
         return state
     from .storage import update_state
