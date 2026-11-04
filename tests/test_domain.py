@@ -7,6 +7,7 @@ import json
 import unittest
 from pathlib import Path
 
+from digital_life import domain
 from digital_life.domain import (
     DEFAULT_CHEMICALS,
     attention_weights,
@@ -249,6 +250,25 @@ class SignalDomainTests(unittest.TestCase):
         self.assertIn("tension=95", suffix)
         self.assertNotIn("tension=65", suffix)
         self.assertIn("2d", suffix)
+
+class StressDirectiveTests(unittest.TestCase):
+    def test_directive_starts_at_the_stress_boundary(self):
+        self.assertEqual(domain.stress_directive(79.9), "")
+        directive = domain.stress_directive(80)
+        self.assertTrue(directive.startswith("Current stress is high."))
+        self.assertLessEqual(len(directive), domain.STRESS_DIRECTIVE_LIMIT)
+
+    def test_directive_forbids_losing_or_faking_memories(self):
+        directive = domain.stress_directive(95).lower()
+        self.assertIn("still present", directive)
+        self.assertIn("do not invent certainty", directive)
+        self.assertNotIn("ignore", directive)
+
+    def test_directive_survives_bad_input(self):
+        for value in (float("nan"), float("inf"), -10, "abc", None):
+            self.assertIn(domain.stress_directive(value), ("", domain.stress_directive(100)))
+        self.assertEqual(domain.stress_directive(float("nan")), "")
+
 
 if __name__ == "__main__":
     unittest.main()

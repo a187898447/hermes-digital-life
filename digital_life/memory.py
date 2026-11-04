@@ -17,6 +17,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .domain import anchor_key
+
 logger = logging.getLogger(__name__)
 DAY_MS = 86_400_000
 DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8, "turn": 0.4,
@@ -54,7 +56,19 @@ def relevance(bm25: float) -> float:
     return strength / (1 + strength)
 
 
-def score(entry: dict, now_ms: float, rel: float, cortisol: float, empty_query: bool) -> float:
+ANCHOR_BOOST = 1.5
+
+
+def anchor_affinity(entry: dict, query: str) -> bool:
+    """A query that names a recorded anchor pulls that memory forward."""
+    if not query:
+        return False
+    lowered = query.lower()
+    return any(key and key in lowered for key in entry.get("anchors") or ())
+
+
+def score(entry: dict, now_ms: float, rel: float, cortisol: float, empty_query: bool,
+          query: str = "") -> float:
     effective = decay(entry["weight"], entry["last_access_at"], now_ms)
     recency = 1 / (1 + max(0, now_ms - entry["created_at"]) / DAY_MS / 30)
     multiplier = attention(cortisol)[entry["kind"]]
@@ -62,7 +76,21 @@ def score(entry: dict, now_ms: float, rel: float, cortisol: float, empty_query: 
         # B-class policy: no-query recall can still reflect current attention.
         bias = min(1, max(0, (multiplier - 0.1) / 2.9))
         return 0.55 * min(1.5, effective) + 0.25 * recency + 0.20 * bias
-    return 0.40 * rel + 0.20 * min(1.5, effective) + 0.15 * recency + 0.25 * rel * multiplier
+    total = 0.40 * rel + 0.20 * min(1.5, effective) + 0.15 * recency + 0.25 * rel * multiplier
+    return total * ANCHOR_BOOST if anchor_affinity(entry, query) else total
+
+
+def anchor_keys(text: str) -> list[str]:
+    """Anchors are the stable opening lines of an exchange, not the whole blob."""
+    keys: list[str] = []
+    for line in text.splitlines():
+        key = anchor_key(line)
+        if len(key) < 2 or key in keys:
+            continue
+        keys.append(key)
+        if len(keys) == 3:
+            break
+    return keys
 
 
 def _number(value: Any) -> bool:
@@ -150,6 +178,10 @@ class MemoryStore:
                 if not isinstance(value, str):
                     raise ValueError("invalid scope")
                 entries[identifier][field] = value
+            anchors = event.get("anchors", [])
+            if not isinstance(anchors, list) or not all(isinstance(key, str) for key in anchors):
+                raise ValueError("invalid anchors")
+            entries[identifier]["anchors"] = anchors[:3]
             date = identifier.split("-")[1]
             entries[identifier].update(date=f"{date[:4]}-{date[4:6]}-{date[6:]}", archived=False)
         elif op == "touch":
@@ -350,7 +382,8 @@ class MemoryStore:
                      "cortisol": self._state().get("chemistry", {}).get("cortisol", 20),
                      "created_at": now_ms, "last_access_at": now_ms, "hits": 0,
                      "source_session_id": session_id,
-                     "chat_id": str(chat_id or ""), "chat_type": str(chat_type or ""), "speaker": str(speaker or "")}
+                     "chat_id": str(chat_id or ""), "chat_type": str(chat_type or ""), "speaker": str(speaker or ""),
+                     "anchors": anchor_keys(text)}
             self._require_running()
             self._append([event], now_ms)
             try:
@@ -411,7 +444,7 @@ class MemoryStore:
             if day:
                 # Day lookups open the journal first, then that day's raw entries.
                 candidates = [(row, rel) for row, rel in candidates if row.get("date") == day]
-        ranked = [dict(row, score=score(row, now_ms, rel, cortisol, not query),
+        ranked = [dict(row, score=score(row, now_ms, rel, cortisol, not query, query),
                        effective_weight=decay(row["weight"], row["last_access_at"], now_ms)) for row, rel in candidates]
         ranked.sort(key=lambda row: (day is not None and row["kind"] != "journal",
                                      -row["score"], -row["created_at"], row["id"]))
@@ -420,7 +453,8 @@ class MemoryStore:
                 "cold_total": sum(e["archived"] for e in scoped), "matched": len(ranked),
                 "returned": min(k, len(ranked)), "shown": ranked[:k], "attention": attention(cortisol)}
 
-    def recall(self, query="", k=8, include_cold=False, *, now_ms=None, chat_id=None, day=None):
+    def recall(self, query="", k=8, include_cold=False, *, now_ms=None, chat_id=None, day=None,
+               cortisol=None):
         if query is None: query = ""
         if not isinstance(query, str): raise ValueError("query must be a string or null")
         if day is not None:
@@ -430,7 +464,8 @@ class MemoryStore:
         if type(include_cold) is not bool: raise ValueError("include_cold must be boolean")
         query, k, now_ms = query.strip(), min(20, max(1, k)), _now(now_ms)
         state = self._state()
-        cortisol = state.get("chemistry", {}).get("cortisol", 20)
+        if cortisol is None:
+            cortisol = state.get("chemistry", {}).get("cortisol", 20)
         if state.get("emergency_stop"):
             return self._retrieve(self.read_entries(), query, k, include_cold, now_ms, cortisol,
                                   chat_id=chat_id, day=day)

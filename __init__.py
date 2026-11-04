@@ -234,6 +234,28 @@ def _append_open_loops_once(content: Any, gaps: list[dict[str, Any]], now_ms: fl
     return content, False
 
 
+def _with_directive(text: str, directive: str) -> str:
+    if not directive or directive in text:
+        return text
+    return f"{directive}\n\n{text}"
+
+
+def _stamp_directive(message: dict[str, Any], directive: str, text_type: str = "text") -> dict[str, Any] | None:
+    if not directive:
+        return None
+    content = message.get("content")
+    if isinstance(content, str):
+        stamped = _with_directive(content, directive)
+        return {**message, "content": stamped} if stamped != content else None
+    if isinstance(content, list):
+        if any(isinstance(part, dict) and part.get("text") == directive for part in content):
+            return None
+        return {**message, "content": [{"type": text_type, "text": directive}, *content]}
+    if content is None:
+        return {**message, "content": directive}
+    return None
+
+
 def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     now_ms = time.time() * 1000
     record_request(now_ms)
@@ -246,14 +268,17 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
         if "temperature" not in request or temperature is None else None
     )
     note = digital_life.runtime.affect_note(now_ms)
+    # PRD M7.2 order: stress directive, then affect snapshot, then reordered memory.
+    directive = digital_life.domain.stress_directive(state["chemistry"]["cortisol"])
     changed = result_temperature is not None
     result = dict(request)
     system = result.get("system")
     if isinstance(system, str):
         rewritten, blocks = digital_life.runtime.reorder_prompt_memories(system, now_ms)
         appended = digital_life.runtime.append_open_loops(rewritten, state["gaps"], now_ms, scope=scope or None)
-        if blocks or appended != system:
-            result["system"] = appended
+        final = _with_directive(appended, directive)
+        if blocks or final != system:
+            result["system"] = final
             changed = True
     elif isinstance(system, list):
         system_items = list(system)
@@ -266,6 +291,14 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
         system_items, appended = _append_open_loops_once(system_items, state["gaps"], now_ms, scope=scope or None)
         if appended:
             changed = True
+        if directive:
+            for index, item in enumerate(system_items):
+                if isinstance(item, dict) and isinstance(item.get("text"), str):
+                    stamped = _stamp_directive(item, directive)
+                    if stamped is not None:
+                        system_items[index] = stamped
+                        changed = True
+                    break
         if changed:
             result["system"] = system_items
     messages = request.get("messages")
@@ -280,6 +313,14 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
             if reordered:
                 rewritten[index] = {**message, "content": content}
                 changed = True
+        if directive and rewritten:
+            for index, message in enumerate(rewritten):
+                if isinstance(message, dict) and message.get("role") == "system":
+                    stamped = _stamp_directive(message, directive)
+                    if stamped is not None:
+                        rewritten[index] = stamped
+                        changed = True
+                    break
         user_index = next((index for index in range(len(rewritten) - 1, -1, -1)
                            if isinstance(rewritten[index], dict) and rewritten[index].get("role") == "user"), None)
         if user_index is not None:
@@ -315,6 +356,14 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
             if reordered:
                 rewritten[index] = {**item, "content": content}
                 changed = True
+        if directive and rewritten:
+            for index, item in enumerate(rewritten):
+                if isinstance(item, dict) and item.get("role") in {"system", "developer"}:
+                    stamped = _stamp_directive(item, directive, "input_text")
+                    if stamped is not None:
+                        rewritten[index] = stamped
+                        changed = True
+                    break
         user_index = next((index for index in range(len(rewritten) - 1, -1, -1)
                            if isinstance(rewritten[index], dict) and rewritten[index].get("role") == "user"), None)
         if user_index is not None:

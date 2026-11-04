@@ -365,5 +365,49 @@ class ScoringTests(unittest.TestCase):
         self.assertGreater(memory.score(row, NOW, 0, 20, True), low)
 
 
+class AnchorAndStressTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.store = memory.MemoryStore(self.root)
+
+    def test_capture_records_anchor_lines(self):
+        self.store.capture("用户：重启网关的步骤\n助手：先 stop 再 start", session_id="s1", now_ms=NOW)
+        entry = next(iter(self.store.read_entries().values()))
+        self.assertEqual(entry["anchors"][0], "用户：重启网关的步骤")
+        self.assertEqual(len(entry["anchors"]), 2)
+
+    def test_written_entries_default_to_no_anchors(self):
+        result = self.store.write("今天下午在群里聊到熬夜", now_ms=NOW)
+        self.assertEqual(self.store.read_entries()[result["id"]]["anchors"], [])
+
+    def test_anchor_affinity_boosts_only_matching_queries(self):
+        row = {"weight": 1, "last_access_at": NOW, "created_at": NOW, "kind": "note",
+               "anchors": ["重启网关的步骤"]}
+        boosted = memory.score(row, NOW, 0.5, 20, False, "重启网关的步骤现在")
+        plain = memory.score(dict(row, anchors=[]), NOW, 0.5, 20, False, "重启网关的步骤现在")
+        unrelated = memory.score(row, NOW, 0.5, 20, False, "晚饭吃什么")
+        self.assertAlmostEqual(boosted, plain * memory.ANCHOR_BOOST)
+        self.assertAlmostEqual(unrelated, plain)
+        self.assertTrue(memory.anchor_affinity(row, "重启网关的步骤现在"))
+        self.assertFalse(memory.anchor_affinity(row, "晚饭吃什么"))
+
+    def test_recall_cortisol_override_crosses_the_80_boundary(self):
+        crisis = self.store.write("出事了，他很慌", kind="crisis", now_ms=NOW)
+        daily = self.store.write("今天天气很好", kind="daily", now_ms=NOW)
+        calm = self.store.recall("", now_ms=NOW, cortisol=40)
+        stressed = self.store.recall("", now_ms=NOW, cortisol=80)
+        self.assertEqual(stressed["attention"]["crisis"], 3.0)
+        self.assertEqual(stressed["attention"]["daily"], 0.1)
+        self.assertEqual(calm["attention"]["crisis"], 1.0)
+        self.assertEqual(stressed["shown"][0]["id"], crisis["id"])
+        self.assertEqual(calm["attention"]["daily"], 1.0)
+
+    def test_state_cortisol_is_used_when_no_override(self):
+        self.store.life_state = lambda: {"emergency_stop": False, "chemistry": {"cortisol": 80}}
+        self.assertEqual(self.store.recall("", now_ms=NOW)["attention"]["crisis"], 3.0)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -190,6 +190,26 @@ def settle_rest(energy: float, max_energy: float, elapsed_ms: float, now_ms: flo
 
 STRESS_CORTISOL = 80
 CALM_CORTISOL = 40
+
+STRESS_DIRECTIVE_LIMIT = 400
+
+
+def stress_directive(cortisol: float) -> str:
+    """Short, bounded instruction injected ahead of memory when stress is high (PRD M7.2).
+
+    Stress narrows attention; it must never read as permission to drop or fabricate
+    memories, so the directive states both limits explicitly.
+    """
+    value = float_or(cortisol, 0.0)
+    if value < STRESS_CORTISOL:
+        return ""
+    text = (
+        "Current stress is high. Keep attention on the immediate problem: answer what was asked, "
+        "concretely and briefly, and defer optional exploration. Do not invent certainty; if something "
+        "is unknown, say so. The memories supplied here are all still present — stress changes their "
+        "salience, never their existence, so do not imply anything was lost. Stay calm."
+    )
+    return text[:STRESS_DIRECTIVE_LIMIT]
 CRISIS_WEIGHT = 3.0
 DAILY_WEIGHT = 0.1
 RANK_DECAY = 0.9

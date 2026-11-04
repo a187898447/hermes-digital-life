@@ -516,5 +516,40 @@ class QqBubbleTransformTests(unittest.TestCase):
                 self.assertEqual(plugin._MEMORY_STORE["factory"]().read_entries(), {})
 
 
+    def test_stress_directive_leads_the_system_prompt(self):
+        state = default_state(1_000_000)
+        state["chemistry"]["cortisol"] = 80
+        runtime = plugin.digital_life.runtime
+        directive = plugin.digital_life.domain.stress_directive(80)
+        self.assertTrue(directive)
+        with patch.object(runtime, "status_snapshot", return_value=state), patch.object(runtime, "record_request"):
+            request = {"system": "base prompt", "messages": [{"role": "user", "content": "hi"}]}
+            result = plugin._affect_request(request)["request"]
+        self.assertTrue(result["system"].startswith(directive))
+        self.assertIn("base prompt", result["system"])
+        self.assertLessEqual(len(directive), 400)
+
+    def test_calm_state_adds_no_stress_directive(self):
+        state = default_state(1_000_000)
+        runtime = plugin.digital_life.runtime
+        with patch.object(runtime, "status_snapshot", return_value=state), patch.object(runtime, "record_request"):
+            request = {"system": "base prompt", "messages": [{"role": "user", "content": "hi"}]}
+            result = plugin._affect_request(request)["request"]
+        self.assertEqual(result.get("system", "base prompt"), "base prompt")
+        self.assertNotIn("Current stress is high", json.dumps(result, ensure_ascii=False))
+
+    def test_stress_directive_is_stamped_once_into_message_systems(self):
+        state = default_state(1_000_000)
+        state["chemistry"]["cortisol"] = 90
+        runtime = plugin.digital_life.runtime
+        directive = plugin.digital_life.domain.stress_directive(90)
+        with patch.object(runtime, "status_snapshot", return_value=state), patch.object(runtime, "record_request"):
+            request = {"messages": [{"role": "system", "content": "rules"},
+                                    {"role": "user", "content": "hi"}]}
+            result = plugin._affect_request(request)["request"]
+        self.assertTrue(result["messages"][0]["content"].startswith(directive))
+        self.assertEqual(result["messages"][1]["role"], "user")
+
+
 if __name__ == "__main__":
     unittest.main()
