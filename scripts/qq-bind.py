@@ -112,7 +112,23 @@ def configure(profile: str, allow_all: bool = False, wake_words: list[str] | Non
         if proc.returncode != 0:
             detail = (proc.stderr or proc.stdout or "").strip().splitlines()
             failed.append(f"{key}: {detail[-1][:120] if detail else 'exit ' + str(proc.returncode)}")
+            continue
+        # Managed profiles can accept `config set` as a silent no-op and still exit 0.
+        read = subprocess.run(["hermes", "-p", profile, "config", "get", key],
+                              capture_output=True, text=True)
+        actual = (read.stdout or "").strip()
+        if read.returncode != 0 or not _same_value(value, actual):
+            failed.append(f"{key}: set did not stick (wrote {value}, read {actual[:80] or 'nothing'})")
     return failed
+
+
+def _same_value(written: str, read_back: str) -> bool:
+    def parse(text: str):
+        try:
+            return json.loads(text)
+        except ValueError:
+            return text.strip()
+    return parse(written) == parse(read_back)
 
 
 def cmd_start(profile: str, allow_all: bool = False, show_qr: bool = False,

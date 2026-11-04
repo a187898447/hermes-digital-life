@@ -19,6 +19,14 @@ logger = logging.getLogger(__name__)
 
 _TURN_META: dict[str, dict[str, str]] = {}
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
+_CACHE_LIMIT = 512
+
+
+def _remember(cache: dict[str, object], key: str, value: object) -> None:
+    """Insertion-ordered, bounded: QQ profiles can outlive thousands of sessions."""
+    cache[key] = value
+    while len(cache) > _CACHE_LIMIT:
+        cache.pop(next(iter(cache)))
 _CAPTURE = None
 _JOURNAL_CHECK = None
 _CTX = None
@@ -45,7 +53,7 @@ def _session_scope(session_id: str) -> tuple[str, str]:
             connection.close()
         if row:
             chat_id, chat_type = str(row[0] or ""), str(row[1] or "")
-            _SCOPE_CACHE[session_id] = (chat_id, chat_type)
+            _remember(_SCOPE_CACHE, session_id, (chat_id, chat_type))
     except (sqlite3.Error, OSError, TypeError, ValueError):
         pass
     return chat_id, chat_type
@@ -72,7 +80,7 @@ def _session_source(session_id: str) -> str | None:
             connection.close()
         if row:
             source = str(row[0] or "")
-            _SOURCE_CACHE[session_id] = source
+            _remember(_SOURCE_CACHE, session_id, source)
     except (sqlite3.Error, OSError, TypeError, ValueError):
         source = None
     return source
@@ -298,7 +306,7 @@ def _on_user_message(
         "platform": platform or "",
     }
     meta["chat_id"], meta["chat_type"] = _session_scope(meta["session"])
-    _TURN_META[meta["session"]] = meta
+    _remember(_TURN_META, meta["session"], meta)
     if (meta["platform"] or "") == "qqbot" and meta["chat_id"]:
         try:
             _proactive.track_chat({"chat_id": meta["chat_id"], "chat_type": meta["chat_type"]})
@@ -659,10 +667,13 @@ def register(ctx) -> None:
             day = str(entry.get("date") or "")
             if not day or day >= today or entry.get("archived"):
                 continue
+            if str(entry.get("chat_id") or "") not in (chat_id, ""):
+                continue
             by_day.setdefault(day, []).append(entry)
         notes = []
         fact_days = {str(entry.get("date") or "") for entry in entries.values()
-                     if entry.get("kind") == "fact" and not entry.get("archived")}
+                     if entry.get("kind") == "fact" and not entry.get("archived")
+                     and str(entry.get("chat_id") or "") in (chat_id, "")}
         owed_facts = sorted((day for day, rows in by_day.items()
                              if any(row.get("kind") == "turn" for row in rows) and day not in fact_days),
                             reverse=True)
@@ -716,8 +727,8 @@ def register(ctx) -> None:
                 if source != "cron":
                     raise ValueError("chat_id is only accepted from scheduled runs")
                 chat_id = explicit
-            elif not chat_id and source == "qqbot":
-                raise ValueError("cannot resolve this QQ session's chat; refusing an unscoped recall")
+            elif not chat_id and session_id and (source is None or source in ("", "qqbot")):
+                raise ValueError("cannot verify the calling session; refusing an unscoped recall")
             result = memory_store().recall(args.get("query", ""), k=args.get("k", 8),
                                            include_cold=args.get("include_cold", False),
                                            chat_id=chat_id or None,

@@ -334,6 +334,11 @@ class RegistrationTests(unittest.TestCase):
         with patch.object(plugin, "_session_source", return_value="qqbot"):
             blocked = json.loads(handlers["memory_recall"]({}, session_id="s-qq"))
             self.assertFalse(blocked["ok"])
+        with patch.object(plugin, "_session_source", return_value=""), \
+                patch.object(plugin, "_session_scope", return_value=("", "")):
+            unknown = json.loads(handlers["memory_recall"]({}, session_id="s-new"))
+            self.assertFalse(unknown["ok"])
+            self.assertIn("unscoped", unknown["error"])
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertIn("chat_id", schemas["memory_recall"])
 

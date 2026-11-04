@@ -138,6 +138,29 @@ class MemoryTests(unittest.TestCase):
         entry = next(iter(e for e in self.store.read_entries().values() if e["text"] == "无归属的一条"))
         self.assertEqual(entry.get("speaker"), "")
 
+    def test_journal_owed_days_are_per_chat_and_caches_are_bounded(self):
+        from test_events import plugin, RecordingContext
+        import importlib
+        host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default: True
+        plugin.register(ctx)
+        plugin._JOURNAL_PROMPTED.clear()
+        plugin._FACT_PROMPTED.clear()
+        with (
+            patch.object(host_storage, "data_root", return_value=self.root),
+            patch.object(host_storage, "plugin_db",
+                         side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+        ):
+            self.store.write("chat-a 的旧事", kind="turn", day="2026-11-01", chat_id="chat-a")
+            self.assertEqual(plugin._JOURNAL_CHECK("qqbot", "chat-b") or "", "")
+            self.assertIn("2026-11-01", plugin._JOURNAL_CHECK("qqbot", "chat-a"))
+        for index in range(600):
+            plugin._remember(plugin._SOURCE_CACHE, f"s-{index}", "cli")
+        self.assertLessEqual(len(plugin._SOURCE_CACHE), 512)
+        self.assertIn("s-599", plugin._SOURCE_CACHE)
+        plugin._SOURCE_CACHE.clear()
+
     def test_scheduled_runs_may_recall_a_named_chat(self):
         from test_events import plugin, RecordingContext
         import importlib
