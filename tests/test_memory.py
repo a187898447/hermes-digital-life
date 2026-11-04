@@ -7,6 +7,7 @@ from contextlib import closing
 import multiprocessing
 import os
 import sqlite3
+import struct
 import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
@@ -367,6 +368,90 @@ class MemoryTests(unittest.TestCase):
         (self.root / "memory-index.db").unlink()
         self.store.rebuild_index()
         self.assertEqual(self.store.read_entries(), expected)
+
+
+class FakeEmbedder:
+    """熬夜/通宵/晚睡 collapse to one axis so a synonym query can find the other word."""
+
+    def embed(self, texts):
+        return [[1.0, 0.0] if any(word in text for word in ("熬夜", "通宵", "晚睡")) else [0.0, 1.0]
+                for text in texts]
+
+
+class HybridRecallTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.store = memory.MemoryStore(self.root, embedder=FakeEmbedder())
+
+    def write(self, text="昨晚熬夜到三点", **kwargs):
+        return self.store.write(text, now_ms=NOW, **kwargs)
+
+    def recall(self, query="", **kwargs):
+        return self.store.recall(query, now_ms=NOW, **kwargs)
+
+    def test_synonym_recall_finds_what_fts_cannot(self):
+        fact = self.write("昨晚熬夜到三点", kind="fact")
+        self.write("今天吃了火锅", kind="fact")
+        result = self.recall("通宵")
+        self.assertEqual(result["mode"], "hybrid")
+        self.assertEqual(result["shown"][0]["id"], fact["id"])
+        plain = memory.MemoryStore(self.root, embedder=False).recall("通宵", now_ms=NOW)
+        self.assertEqual(plain["mode"], "fts")
+        self.assertEqual(plain["matched"], 0)
+
+    def test_vectors_are_written_with_fact_and_journal_entries(self):
+        fact = self.write("昨晚熬夜", kind="fact")
+        diary = self.write("【日记】昨晚他又熬夜。", kind="journal")
+        with closing(sqlite3.connect(self.root / "memory-index.db")) as db:
+            ids = {row[0] for row in db.execute("SELECT id, dim, blob FROM vectors")}
+        self.assertEqual(ids, {fact["id"], diary["id"]})
+
+    def test_missing_embedder_degrades_to_fts(self):
+        store = memory.MemoryStore(self.root, embedder=False)
+        store.write("昨晚熬夜", kind="fact", now_ms=NOW)
+        result = store.recall("通宵", now_ms=NOW)
+        self.assertEqual(result["mode"], "fts")
+        self.assertEqual(result["matched"], 0)
+        self.assertEqual(store.recall("熬夜", now_ms=NOW)["shown"][0]["text"], "昨晚熬夜")
+        with closing(sqlite3.connect(self.root / "memory-index.db")) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM vectors").fetchone()[0], 0)
+
+    def test_hybrid_flag_can_be_turned_off(self):
+        self.write("昨晚熬夜", kind="fact")
+        self.assertEqual(self.recall("熬夜", hybrid=False)["mode"], "fts")
+        with self.assertRaises(ValueError):
+            self.recall(hybrid="yes")
+
+    def test_corrupt_vectors_are_cleared_and_recall_falls_back(self):
+        self.write("昨晚熬夜", kind="fact")
+        with closing(sqlite3.connect(self.root / "memory-index.db")) as db:
+            db.execute("UPDATE vectors SET blob = x'00'")
+            db.commit()
+        result = self.recall("通宵")
+        self.assertEqual(result["mode"], "fts")
+        with closing(sqlite3.connect(self.root / "memory-index.db")) as db:
+            table = db.execute("SELECT COUNT(*) FROM sqlite_master WHERE name='vectors'").fetchone()[0]
+        self.assertEqual(table, 0)
+
+    def test_dimension_change_falls_back_then_refills(self):
+        fact = self.write("昨晚熬夜", kind="fact")
+        with closing(sqlite3.connect(self.root / "memory-index.db")) as db:
+            db.execute("UPDATE vectors SET dim = 3, blob = ?", (struct.pack("<3f", 1, 0, 0),))
+            db.commit()
+        self.assertEqual(self.recall("通宵")["mode"], "fts")
+        again = self.recall("通宵")
+        self.assertEqual(again["mode"], "hybrid")
+        self.assertEqual(again["shown"][0]["id"], fact["id"])
+
+    def test_rrf_order_is_stable_across_calls(self):
+        self.write("昨晚熬夜看剧", kind="fact")
+        self.write("今天熬夜加班", kind="fact")
+        first = [row["id"] for row in self.recall("熬夜")["shown"]]
+        second = [row["id"] for row in self.recall("熬夜")["shown"]]
+        self.assertEqual(first, second)
+        self.assertEqual(len(first), 2)
 
 
 class ScoringTests(unittest.TestCase):

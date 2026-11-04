@@ -10,6 +10,7 @@ import math
 import os
 import re
 import sqlite3
+import struct
 import threading
 import time
 from contextlib import closing, contextmanager
@@ -17,9 +18,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from . import embeddings
 from .domain import anchor_key
 
 logger = logging.getLogger(__name__)
+RRF_K = 60
+VECTOR_TOP = 20
 DAY_MS = 86_400_000
 DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8, "turn": 0.4,
                    "journal": 2.5}
@@ -102,13 +106,16 @@ def _now(value):
 
 
 class MemoryStore:
-    def __init__(self, root: Path, *, connect=None, life_state=None, writes_enabled=None):
+    def __init__(self, root: Path, *, connect=None, life_state=None, writes_enabled=None,
+                 embedder=None):
         self.root = Path(root)
         self.directory = self.root / "memory"
         self.index = self.root / "memory-index.db"
         self.connect = connect or (lambda: sqlite3.connect(self.index))
         self.life_state = life_state or (lambda: {"emergency_stop": False, "chemistry": {"cortisol": 20}})
         self.writes_enabled = writes_enabled or (lambda: True)
+        # None means "whatever this machine offers"; False disables vectors for tests/ops.
+        self.embedder = embeddings.default_embedder() if embedder is None else embedder
 
     def _state(self):
         return self.life_state()
@@ -221,16 +228,49 @@ class MemoryStore:
         except sqlite3.OperationalError as exc:
             raise RuntimeError("SQLite FTS5 is required for event memory") from exc
         db.execute("CREATE TABLE cache_meta(digest TEXT)")
+        # Vectors survive a rebuild by id; entries are immutable, so only missing ids are embedded.
+        db.execute("CREATE TABLE IF NOT EXISTS vectors(id TEXT PRIMARY KEY, dim INTEGER NOT NULL, blob BLOB NOT NULL)")
         for row in entries.values():
             db.execute("INSERT INTO entries VALUES(?,?,?,?)", (
                 row["id"], row["text"], int(row["archived"]), json.dumps(row, ensure_ascii=False)))
             db.execute("INSERT INTO entries_fts VALUES(?,?)", (row["id"], " ".join(tokens(row["text"]))))
+
+    def _ensure_vectors(self, db, entries):
+        """Embed entries that have no vector yet. A failure only costs hybrid recall."""
+        if not self.embedder:
+            return 0
+        written = 0
+        try:
+            db.execute("CREATE TABLE IF NOT EXISTS vectors(id TEXT PRIMARY KEY, dim INTEGER NOT NULL, blob BLOB NOT NULL)")
+            have = {row[0] for row in db.execute("SELECT id FROM vectors")}
+            missing = [entry for identifier, entry in entries.items() if identifier not in have]
+            for start in range(0, len(missing), 16):
+                batch = missing[start:start + 16]
+                vectors = self.embedder.embed([entry["text"] for entry in batch])
+                if not vectors or len(vectors) != len(batch):
+                    return written
+                for entry, vector in zip(batch, vectors):
+                    if not isinstance(vector, (list, tuple)) or not vector:
+                        continue
+                    values = [float(value) for value in vector]
+                    if not all(math.isfinite(value) for value in values):
+                        continue
+                    unit = embeddings.normalize(values)
+                    if unit is None:
+                        continue
+                    db.execute("INSERT OR REPLACE INTO vectors VALUES(?,?,?)",
+                               (entry["id"], len(unit), struct.pack(f"<{len(unit)}f", *unit)))
+                    written += 1
+        except Exception:
+            logger.warning("Vector indexing failed; memory recall falls back to FTS", exc_info=True)
+        return written
 
     def _save_index(self, entries, digest):
         db = self.connect()
         try:
             db.execute("BEGIN IMMEDIATE")
             self._populate(db, entries)
+            self._ensure_vectors(db, entries)
             db.execute("INSERT INTO cache_meta VALUES(?)", (digest,))
             db.commit()
         except BaseException:
@@ -460,14 +500,97 @@ class MemoryStore:
         rows = db.execute(f"SELECT e.payload FROM entries e WHERE {condition} AND e.text LIKE ? ESCAPE '\\'", (f"%{literal}%",)).fetchall()
         return [(json.loads(row), 1.0) for row, in rows]
 
+    def _query_vector(self, query):
+        if not self.embedder:
+            return None
+        try:
+            vectors = self.embedder.embed([query])
+        except Exception:
+            logger.warning("Query embedding failed; memory recall stays on FTS", exc_info=True)
+            return None
+        if not vectors or not vectors[0]:
+            return None
+        try:
+            values = [float(value) for value in vectors[0]]
+        except (TypeError, ValueError):
+            return None
+        if not values or not all(math.isfinite(value) for value in values):
+            return None
+        return embeddings.normalize(values)
+
+    def _vector_hits(self, db, entries, query_vector, include_cold, chat_id, day, kind):
+        """Cosine top-20 from the persisted vectors, filtered like the FTS path."""
+        rows = db.execute("SELECT id, dim, blob FROM vectors").fetchall()
+        hits = []
+        for identifier, dim, blob in rows:
+            if dim != len(query_vector):
+                raise ValueError("embedding dimension changed")
+            if blob is None or len(blob) != 4 * dim:
+                raise ValueError("corrupt embedding")
+            entry = entries.get(identifier)
+            if entry is None or (not include_cold and entry.get("archived")):
+                continue
+            if chat_id and entry.get("chat_id", "") not in ("", chat_id):
+                continue
+            if day and entry.get("date") != day:
+                continue
+            if kind and entry.get("kind") != kind:
+                continue
+            vector = struct.unpack(f"<{dim}f", blob)
+            hits.append((sum(a * b for a, b in zip(query_vector, vector)), identifier))
+        hits.sort(key=lambda item: (-item[0], item[1]))
+        return [identifier for _, identifier in hits[:VECTOR_TOP]]
+
+    def _index_vectors(self, entries):
+        """Backfill vectors for entries written before P1 or after a reset."""
+        if not self.embedder:
+            return
+        try:
+            with closing(sqlite3.connect(self.index.as_uri() + "?mode=ro", uri=True)) as db:
+                if db.execute("SELECT COUNT(*) FROM vectors").fetchone()[0] >= len(entries):
+                    return
+        except sqlite3.Error:
+            pass
+        db = self.connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            self._ensure_vectors(db, entries)
+            db.commit()
+        except BaseException:
+            db.rollback()
+            logger.warning("Vector backfill failed; memory recall stays on FTS", exc_info=True)
+        finally:
+            db.close()
+
+    def _drop_vectors(self):
+        db = self.connect()
+        try:
+            db.execute("DROP TABLE IF EXISTS vectors")
+            db.commit()
+        except sqlite3.Error:
+            logger.warning("Could not clear the broken vector index", exc_info=True)
+        finally:
+            db.close()
+
     def _retrieve(self, entries, query, k, include_cold, now_ms, cortisol, disk=False, chat_id=None,
-                  day=None, kind=None):
+                  day=None, kind=None, hybrid=False):
         # In-memory FTS also provides identical retrieval when stop forbids repairing the disk cache.
         connection = sqlite3.connect(self.index.as_uri() + "?mode=ro", uri=True) if disk else sqlite3.connect(":memory:")
+        mode, broken, vector_ids = "fts", False, []
         with closing(connection) as db:
             if not disk:
                 self._populate(db, entries)
             candidates = self._query(db, query, include_cold)
+            if hybrid and query and disk:
+                query_vector = self._query_vector(query)
+                if query_vector:
+                    try:
+                        vector_ids = self._vector_hits(db, entries, query_vector, include_cold,
+                                                       chat_id, day, kind)
+                        mode = "hybrid"
+                    except (sqlite3.Error, ValueError, TypeError, struct.error) as exc:
+                        logger.warning("Vector index unusable; clearing it and using FTS: %s", exc)
+                        broken = True
             if chat_id:
                 # A conversation only sees its own exchanges plus globally written notes.
                 candidates = [(row, rel) for row, rel in candidates
@@ -477,25 +600,47 @@ class MemoryStore:
                 candidates = [(row, rel) for row, rel in candidates if row.get("date") == day]
             if kind:
                 candidates = [(row, rel) for row, rel in candidates if row.get("kind") == kind]
-        ranked = []
-        for row, rel in candidates:
+        fts_rows = [(row, rel, score(row, now_ms, rel, cortisol, not query, query))
+                    for row, rel in candidates]
+        fts_rows.sort(key=lambda item: (-item[2], -item[0]["created_at"], item[0]["id"]))
+        if mode == "hybrid":
+            # Reciprocal-rank fusion keeps one strong signal from either side near the top.
+            rrf = {}
+            for position, (row, _rel, _row_score) in enumerate(fts_rows[:VECTOR_TOP], 1):
+                rrf[row["id"]] = (rrf.get(row["id"], 0.0) or 0.0) + 1.0 / (RRF_K + position)
+            for position, identifier in enumerate(vector_ids, 1):
+                rrf[identifier] = (rrf.get(identifier, 0.0) or 0.0) + 1.0 / (RRF_K + position)
+            fused = {row["id"]: (row, row_score) for row, _rel, row_score in fts_rows}
+            for identifier in vector_ids:
+                if identifier not in fused:
+                    row = entries[identifier]
+                    fused[identifier] = (row, score(row, now_ms, 0.0, cortisol, False, query))
+            ordered = sorted(fused.items(), key=lambda item: (
+                day is not None and item[1][0]["kind"] != "journal",
+                -(rrf.get(item[0]) or 0.0), -item[1][1],
+                -item[1][0]["created_at"], item[0]))
+            ranked = [pair for _identifier, pair in ordered]
+        else:
+            ranked = [(row, row_score) for row, _rel, row_score in fts_rows]
+            ranked.sort(key=lambda item: (day is not None and item[0]["kind"] != "journal",
+                                          -item[1], -item[0]["created_at"], item[0]["id"]))
+        shown = []
+        for row, row_score in ranked:
             refs = list(row.get("refs") or ())
             sources = list(row.get("sources") or ())
             if row.get("kind") in ("journal", "summary") and not sources:
                 # A diary or summary traces downward through the facts it cites.
                 sources = refs
-            ranked.append(dict(row, sources=sources, refs=refs,
-                               score=score(row, now_ms, rel, cortisol, not query, query),
-                               effective_weight=decay(row["weight"], row["last_access_at"], now_ms)))
-        ranked.sort(key=lambda row: (day is not None and row["kind"] != "journal",
-                                     -row["score"], -row["created_at"], row["id"]))
+            shown.append(dict(row, sources=sources, refs=refs, score=row_score,
+                              effective_weight=decay(row["weight"], row["last_access_at"], now_ms)))
         scoped = [e for e in entries.values() if not chat_id or e.get("chat_id", "") in ("", chat_id)]
         return {"total": sum(not e["archived"] for e in scoped),
-                "cold_total": sum(e["archived"] for e in scoped), "matched": len(ranked),
-                "returned": min(k, len(ranked)), "shown": ranked[:k], "attention": attention(cortisol)}
+                "cold_total": sum(e["archived"] for e in scoped), "matched": len(shown),
+                "returned": min(k, len(shown)), "shown": shown[:k], "attention": attention(cortisol),
+                "mode": mode, "_vector_broken": broken}
 
     def recall(self, query="", k=8, include_cold=False, *, now_ms=None, chat_id=None, day=None,
-               cortisol=None, kind=None):
+               cortisol=None, kind=None, hybrid=True):
         if query is None: query = ""
         if not isinstance(query, str): raise ValueError("query must be a string or null")
         if day is not None:
@@ -505,18 +650,25 @@ class MemoryStore:
             raise ValueError("Unsupported memory kind")
         if type(k) is not int: raise ValueError("k must be an integer")
         if type(include_cold) is not bool: raise ValueError("include_cold must be boolean")
+        if type(hybrid) is not bool: raise ValueError("hybrid must be boolean")
         query, k, now_ms = query.strip(), min(20, max(1, k)), _now(now_ms)
         state = self._state()
         if cortisol is None:
             cortisol = state.get("chemistry", {}).get("cortisol", 20)
         if state.get("emergency_stop"):
-            return self._retrieve(self.read_entries(), query, k, include_cold, now_ms, cortisol,
-                                  chat_id=chat_id, day=day, kind=kind)
+            result = self._retrieve(self.read_entries(), query, k, include_cold, now_ms, cortisol,
+                                    chat_id=chat_id, day=day, kind=kind)
+            result.pop("_vector_broken", None)
+            return result
         with self._locked():
             entries, digest = self._replay()
             self._sync(entries, digest)
+            if hybrid:
+                self._index_vectors(entries)
             result = self._retrieve(entries, query, k, include_cold, now_ms, cortisol, disk=True,
-                                    chat_id=chat_id, day=day, kind=kind)
+                                    chat_id=chat_id, day=day, kind=kind, hybrid=hybrid)
+            if result.pop("_vector_broken", False):
+                self._drop_vectors()
             events = [{"op": "touch", "id": row["id"], "hits": row["hits"] + 1, "last_access_at": now_ms}
                       for row in result["shown"]]
             if events:
