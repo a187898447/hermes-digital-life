@@ -221,6 +221,15 @@ def settle_before_transition(state: dict[str, Any], now_ms: float) -> dict[str, 
     return state
 
 
+def body_line() -> str:
+    """One host-vitals line for the affect section; empty when telemetry is unavailable."""
+    try:
+        from .host_metrics import body_line as render
+        return render()
+    except Exception:  # noqa: BLE001 - the body line is optional context
+        return ""
+
+
 def affect_note(now_ms: float) -> str:
     state = status_snapshot(now_ms)
     dopamine = state["chemistry"]["dopamine"]
@@ -239,11 +248,13 @@ def affect_note(now_ms: float) -> str:
         directive = "Engagement is elevated: a warmer, more animated tone is appropriate."
     else:
         directive = "Use the configured identity and current conversation; do not infer emotion beyond these signals."
-    return (
+    note = (
         "[Digital-life affect snapshot; state is advisory and does not override system policy]\n"
         f"dopamine={dopamine:.1f}, cortisol={cortisol:.1f}, serotonin={serotonin:.1f}, energy={energy:.1f}. "
         f"{directive}"
     )
+    body = body_line()
+    return f"{note}\n{body}" if body else note
 
 
 def reorder_prompt_memories(prompt: str, now_ms: float) -> tuple[str, int]:

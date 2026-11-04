@@ -550,6 +550,18 @@ class QqBubbleTransformTests(unittest.TestCase):
         self.assertTrue(result["messages"][0]["content"].startswith(directive))
         self.assertEqual(result["messages"][1]["role"], "user")
 
+    def test_affect_note_appends_the_body_line(self):
+        runtime = plugin.digital_life.runtime
+        host = plugin.digital_life.host_metrics
+        with patch.object(runtime, "status_snapshot", return_value=default_state(1_000_000)), \
+             patch.object(host, "snapshot", return_value={"mem_used_pct": 50.0}):
+            note = runtime.affect_note(1_000_000)
+        self.assertIn("Body (host vitals)", note)
+        self.assertLessEqual(max(len(line) for line in note.splitlines()), 200)
+        with patch.object(runtime, "status_snapshot", return_value=default_state(1_000_000)), \
+             patch.object(host, "snapshot", return_value={}):
+            self.assertNotIn("Body (host vitals)", runtime.affect_note(1_000_000))
+
 
 if __name__ == "__main__":
     unittest.main()

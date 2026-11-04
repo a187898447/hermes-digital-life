@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import math
+import sys
 import json
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from digital_life import domain
@@ -268,6 +270,44 @@ class StressDirectiveTests(unittest.TestCase):
         for value in (float("nan"), float("inf"), -10, "abc", None):
             self.assertIn(domain.stress_directive(value), ("", domain.stress_directive(100)))
         self.assertEqual(domain.stress_directive(float("nan")), "")
+
+
+class HostMetricsTests(unittest.TestCase):
+    def setUp(self):
+        import importlib
+
+        from digital_life import host_metrics
+        self.host = importlib.reload(host_metrics)
+
+    def test_snapshot_reads_optional_probes(self):
+        data = self.host.snapshot()
+        self.assertIsInstance(data, dict)
+        self.assertLessEqual(set(data), {"cpu", "load1", "mem_used_pct", "disk_free_pct"})
+        for key in ("cpu", "mem_used_pct", "disk_free_pct"):
+            if key in data:
+                self.assertGreaterEqual(data[key], 0.0)
+                self.assertLessEqual(data[key], 100.0)
+        self.assertNotIn("sourdough", data)
+
+    def test_missing_psutil_degrades_instead_of_raising(self):
+        with patch.dict(sys.modules, {"psutil": None}):
+            data = self.host.snapshot()
+        self.assertIsInstance(data, dict)
+        self.assertNotIn("mem_used_pct", data)
+
+    def test_failing_probes_never_raise(self):
+        with patch.object(self.host.os, "getloadavg", side_effect=OSError("no loadavg"), create=True), \
+             patch.object(self.host.shutil, "disk_usage", side_effect=OSError("gone")):
+            data = self.host.snapshot()
+        self.assertIsInstance(data, dict)
+        self.assertNotIn("load1", data)
+        self.assertNotIn("disk_free_pct", data)
+
+    def test_body_line_is_one_short_line(self):
+        line = self.host.body_line({"cpu": 42.0, "load1": 1.25, "mem_used_pct": 63.0, "disk_free_pct": 12.0})
+        self.assertLessEqual(len(line), 160)
+        self.assertNotIn("\n", line)
+        self.assertEqual(self.host.body_line({}), "")
 
 
 if __name__ == "__main__":
