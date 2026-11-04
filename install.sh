@@ -161,7 +161,7 @@ elif [[ -f "$BEAT_SCRIPT" ]]; then
   mkdir -p "$PROFILE_HOME/scripts"
   cp "$BEAT_SCRIPT" "$PROFILE_HOME/scripts/hermes-lover-beat.py"
   chmod +x "$PROFILE_HOME/scripts/hermes-lover-beat.py"
-  BEAT_PROMPT='这是 hermes-lover 的主动消息触发点，监控输出里的 FIRE 标记表示刚刚到点（MORNING 上午 / MIDDAY 午后 / AFTERNOON 傍晚前 / EVENING 晚间 / NIGHT 夜里）。按顺序做：1) 调 beat_targets 取会话列表，每项带 minutes_ago 与 chat_type。2) 逐个会话判断：如果 minutes_ago 小于 15，说明对方正在聊，跳过这个会话，绝不插话。3) 对要发的会话先调 memory_recall(day=今天, chat_id=该会话) 取今天的最近几条，用最后 1-3 条对话确定“现在聊到哪了”，这是主线。4) 再调一次 memory_recall(chat_id=该会话) 取 2-3 条更早的记忆（关系、长期事实、没聊完的事）当背景：背景只用来决定称呼和语气，不要把旧话题当成新话题去接；日记只作背景，不能当开场白。5) 每个会话单独想一句不超过 40 字、接得上主线的话；不同会话的内容必须不同，禁止把同一句复制给多个人。6) 调 beat_send(chat_id, text, delay_seconds=15~120 的随机数)，各会话延迟错开。7) 全部发完就结束，不要输出正文——这条任务的 Deliver 是 local，由 beat_send 自己投递。'
+  BEAT_PROMPT='这是 hermes-lover 的主动消息触发点，监控输出里的 FIRE 标记表示刚刚到点（MORNING 上午 / MIDDAY 午后 / AFTERNOON 傍晚前 / EVENING 晚间 / NIGHT 夜里）。按顺序做：1) 调 beat_targets 取会话列表，每项带 minutes_ago 与 chat_type。2) 逐个会话判断：如果 minutes_ago 小于 15，说明对方正在聊，跳过这个会话，绝不插话。3) 每个会话的 last_turns 就是最近 3 条对话（按时间正序），用它判断“现在聊到哪了”，这是唯一的主线；不要用 memory_recall 的结果去猜主线。4) 再调一次 memory_recall(chat_id=该会话) 取 2-3 条更早的记忆（关系、长期事实、没聊完的事）当背景：背景只用来决定称呼和语气，不要把旧话题当成新话题去接；日记只作背景，不能当开场白。5) 每个会话单独想一句不超过 40 字、接得上主线的话；不同会话的内容必须不同，禁止把同一句复制给多个人。6) 调 beat_send(chat_id, text, delay_seconds=15~120 的随机数)，各会话延迟错开。7) 全部发完就结束，不要输出正文——这条任务的 Deliver 是 local，由 beat_send 自己投递。'
   if hermes -p "$PROFILE" cron create "*/5 9-21 * * *" "$BEAT_PROMPT" \
       --name hermes-lover-beat \
       --monitor-script "hermes-lover-beat.py" \

@@ -542,6 +542,23 @@ def register(ctx) -> None:
                         "AND s.chat_id NOT LIKE 'local-%' "
                         "GROUP BY s.chat_id ORDER BY seen DESC"
                     ).fetchall()
+                    recent: dict[str, list[dict]] = {}
+                    for chat_id, in conn.execute(
+                        "SELECT DISTINCT s.chat_id FROM sessions s "
+                        "WHERE s.source = 'qqbot' AND s.chat_id NOT LIKE 'local-%'"
+                    ).fetchall():
+                        turns = conn.execute(
+                            "SELECT m.role, m.content, m.timestamp FROM messages m "
+                            "JOIN sessions s ON s.id = m.session_id "
+                            "WHERE s.chat_id = ? AND s.source = 'qqbot' "
+                            "AND m.role IN ('user', 'assistant') AND m.content != '' "
+                            "ORDER BY m.timestamp DESC LIMIT 3",
+                            (chat_id,),
+                        ).fetchall()
+                        recent[str(chat_id)] = [
+                            {"role": str(role), "text": str(text)[:120], "at": ts}
+                            for role, text, ts in reversed(turns)
+                        ]
                 finally:
                     conn.close()
             except sqlite3.Error:
@@ -550,7 +567,8 @@ def register(ctx) -> None:
         targets = [
             {"chat_id": str(r[0]), "chat_type": str(r[1] or ""),
              "last_at": (r[2] or 0), "last_user_at": (r[3] or r[2] or 0),
-             "minutes_ago": round(max(0.0, now_ms - (r[3] or r[2] or 0)) / 60000, 1)}
+             "minutes_ago": round(max(0.0, now_ms - (r[3] or r[2] or 0)) / 60000, 1),
+             "last_turns": recent.get(str(r[0]), [])}
             for r in rows
         ]
         return json.dumps({"targets": targets}, ensure_ascii=False)
