@@ -180,8 +180,8 @@ def default_state(now_ms: float) -> dict[str, Any]:
     chemistry = {key: value["initial"] for key, value in DEFAULT_CHEMICALS.items()}
     chemistry["dopamine"] = temperament["enthusiasm"]
     return {"schema_version": 1, "chemistry": chemistry, "energy": 100.0, "temperament": temperament,
-            "last_interaction_at": now_ms, "last_settled_at": now_ms, "gaps": [], "commitment": None,
-            "emergency_stop": False, "wake": {"last_wake_at": None, "pending": None}}
+            "last_interaction_at": now_ms, "last_settled_at": now_ms, "gaps": [],
+            "emergency_stop": False}
 
 
 def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
@@ -199,13 +199,6 @@ def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
     state["last_interaction_at"] = max(0.0, float_or(raw.get("last_interaction_at"), now_ms))
     state["last_settled_at"] = max(0.0, float_or(raw.get("last_settled_at"), now_ms))
     state["emergency_stop"] = raw.get("emergency_stop") is True
-    state["commitment"] = raw.get("commitment") if isinstance(raw.get("commitment"), dict) else None
-    wake = raw.get("wake")
-    if isinstance(wake, dict):
-        state["wake"] = {
-            "last_wake_at": float_or(wake.get("last_wake_at"), 0.0) or None,
-            "pending": wake.get("pending") if isinstance(wake.get("pending"), dict) else None,
-        }
     gaps = raw.get("gaps")
     if isinstance(gaps, list):
         state["gaps"] = [gap for gap in gaps[-200:] if isinstance(gap, dict)]
