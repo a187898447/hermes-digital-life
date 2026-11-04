@@ -58,6 +58,20 @@ class ConfigureTests(unittest.TestCase):
             self.assertEqual(qq_bind.configure("p", allow_all=False, wake_words=[]), [])
         self.assertTrue(any("--json" in call for call in calls))
 
+    def test_string_stored_wake_words_match_the_written_list(self):
+        run, _ = self._fake_cli("ok")
+
+        def run_quoted(argv, capture_output=True, text=True):
+            if argv[4] == "get" and "--json" in argv:
+                key = argv[5]
+                stored = json.dumps(["小鲸鱼", "鲸鱼"])
+                return _completed(json.dumps(stored, ensure_ascii=False))
+            return run(argv)
+
+        with patch.object(qq_bind.subprocess, "run", run_quoted):
+            failed = qq_bind.configure("p", allow_all=True, wake_words=["小鲸鱼", "鲸鱼"])
+        self.assertEqual([line for line in failed if "wake_words" in line], [])
+
     def test_silent_noop_is_reported(self):
         run, _ = self._fake_cli("silent-noop")
         with patch.object(qq_bind.subprocess, "run", run):

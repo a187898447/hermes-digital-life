@@ -141,8 +141,22 @@ def _parse_value(text: str):
         return text
 
 
+def _canon(value):
+    """Unwrap JSON-in-JSON strings: some hosts store a list as the string '[\"a\",\"b\"]'."""
+    for _ in range(3):
+        if not isinstance(value, str):
+            break
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return value.strip()
+    if isinstance(value, list):
+        return sorted(str(item) for item in value)
+    return value
+
+
 def _same_value(written: str, read_back: str) -> bool:
-    return _parse_value(written) == _parse_value(read_back)
+    return _canon(_parse_value(written)) == _canon(_parse_value(read_back))
 
 
 def cmd_start(profile: str, allow_all: bool = False, show_qr: bool = False,
