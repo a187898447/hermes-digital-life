@@ -107,7 +107,11 @@ def record_turn(now_ms: float, *, success: bool, user_message: str = "") -> None
 
 
 def _apply_event_impulse(state: dict[str, Any], category: str | None, now_ms: float) -> None:
-    """Apply at most one capped, cooldown-guarded chemistry nudge for this turn."""
+    """Apply at most one capped, cooldown-guarded chemistry nudge for this turn.
+
+    Chemistry is profile-level, so the cooldown is per category per profile rather
+    than per chat: two groups praising in the same 10 minutes still count once.
+    """
     if not category:
         return
     book = state.setdefault("affect_events", {"day": "", "total": 0.0, "cooldowns": {}})
@@ -125,8 +129,10 @@ def _apply_event_impulse(state: dict[str, Any], category: str | None, now_ms: fl
     if not deltas:
         return
     chemicals = state["chemistry"]
+    sensitivity = float_or((state.get("temperament") or {}).get("sensitivity"), 1.0)
     for key, value in deltas.items():
-        chemicals[key] = clamp(float(chemicals.get(key, 50.0)) + value)
+        current = float(chemicals.get(key, 50.0))
+        chemicals[key] = POOL.clamp_chemical(key, current + value * sensitivity)
     cooldowns[category] = float(now_ms)
     book["total"] = float(book.get("total", 0.0)) + sum(abs(value) for value in deltas.values())
 

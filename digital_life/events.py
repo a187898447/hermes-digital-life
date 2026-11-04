@@ -19,20 +19,30 @@ DELTAS = {
     "insult": {"cortisol": 8.0, "dopamine": -3.0},
 }
 
-_INSULT = re.compile(
-    r"(傻[逼比]?|蠢|滚|废物|垃圾|闭嘴|破程序|有病|智障|脑残|蠢货|去死|妈[的比]|他妈的)"
+# Unambiguous abuse anywhere in the line.
+_HARD_INSULT = re.compile(r"(傻[逼比]?|废物|闭嘴|破程序|智障|脑残|去死|他妈的|妈的)")
+# Everyday words that are only abuse when they stand alone: 「垃圾回收器」和「滚轮」不是骂人。
+_BOUNDARY = r"(?:^|[\s，。！？,.!?、…~])"
+_SOFT_INSULT = re.compile(
+    _BOUNDARY + r"(滚|垃圾|有病|蠢货|蠢)" + r"(?:$|[\s，。！？,.!?、…~])"
 )
+# Praise words are specific enough to match as substrings.
 _PRAISE = re.compile(
     r"(厉害|牛逼|牛啊|真牛|好强|太强|真棒|靠谱|可爱|喜欢你|辛苦|谢谢你|真聪明|高手|绝了)"
 )
 
 
 def classify(text: str) -> str | None:
-    """Return ``praise``/``insult`` for a clear signal, else ``None``."""
+    """Return ``praise``/``insult`` for a clear signal, else ``None``.
+
+    Messages longer than :data:`MAX_LEN` are never classified: this project's chats
+    carry long logs and error dumps, and a whole paragraph of complaint should not
+    read as abuse.
+    """
     message = (text or "").strip()
     if not message or len(message) > MAX_LEN:
         return None
-    if _INSULT.search(message):
+    if _HARD_INSULT.search(message) or _SOFT_INSULT.search(message):
         return "insult"
     if _PRAISE.search(message):
         return "praise"

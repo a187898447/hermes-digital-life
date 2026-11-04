@@ -126,19 +126,25 @@ class IntegrationTests(unittest.TestCase):
         self.assertTrue(snap["affect"]["hint"])
 
 
-if __name__ == "__main__":
-    unittest.main()
+
+def setUpModule():
+    """Install one host stub for the whole module.
+
+    ``patch.dict`` cannot be used here: restoring ``sys.modules`` would drop the
+    modules imported inside the block, so ``digital_life.storage`` would be
+    re-imported per test and ``patch.object`` would target a stale module.
+    """
+    if "plugins.plugin_storage" not in sys.modules:
+        stub = types.ModuleType("plugins.plugin_storage")
+        stub.plugin_db = lambda *args, **kwargs: None
+        sys.modules.setdefault("plugins", types.ModuleType("plugins"))
+        sys.modules["plugins.plugin_storage"] = stub
 
 
 class EventImpulseTests(unittest.TestCase):
     """What the user did moves the chemistry, but only within the caps."""
 
     def _run(self, state, message, now_ms=1_000_000):
-        if "plugins.plugin_storage" not in sys.modules:
-            stub = types.ModuleType("plugins.plugin_storage")
-            stub.plugin_db = lambda *args, **kwargs: None
-            sys.modules.setdefault("plugins", types.ModuleType("plugins"))
-            sys.modules["plugins.plugin_storage"] = stub
         from digital_life import runtime
         from digital_life import storage
 
@@ -190,3 +196,13 @@ class EventImpulseTests(unittest.TestCase):
         self._run(state, "你真厉害")
         self.assertEqual(state["affect_events"]["cooldowns"], {})
         self.assertAlmostEqual(state["chemistry"]["cortisol"], before["cortisol"], delta=0.01)
+
+
+    def test_code_words_are_not_insults(self):
+        for message in ("这个垃圾回收器有问题", "滚轮事件没触发", "页面滚不动"):
+            self.assertIsNone(events.classify(message))
+        self.assertEqual(events.classify("滚"), "insult")
+
+
+if __name__ == "__main__":
+    unittest.main()
