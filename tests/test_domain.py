@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-import math
-import sys
+import importlib.util
 import json
+import math
+import os
+import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 from pathlib import Path
@@ -308,6 +311,41 @@ class HostMetricsTests(unittest.TestCase):
         self.assertLessEqual(len(line), 160)
         self.assertNotIn("\n", line)
         self.assertEqual(self.host.body_line({}), "")
+
+
+class BillionContextDetectionTests(unittest.TestCase):
+    """P5: the optional compressor is detected, never installed, never fatal."""
+
+    def _load(self):
+        path = Path(__file__).resolve().parents[1] / "scripts" / "detect-billion-context.py"
+        spec = importlib.util.spec_from_file_location("detect_billion_context", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_absent_plugin_reports_false(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.dict(os.environ, {"HERMES_HOME": tmp}):
+            self.assertEqual(self._load().detect(), {"installed": False, "version": None})
+
+    def test_plugin_manifest_is_detected(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.dict(os.environ, {"HERMES_HOME": tmp}):
+            plugin = Path(tmp) / "plugins" / "billion-context"
+            plugin.mkdir(parents=True)
+            (plugin / "plugin.yaml").write_text('name: billion-context\nversion: "1.2.3"\n',
+                                                encoding="utf-8")
+            self.assertEqual(self._load().detect(), {"installed": True, "version": "1.2.3"})
+
+    def test_cli_always_prints_json(self):
+        import contextlib
+        import io
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.dict(os.environ, {"HERMES_HOME": tmp}):
+            buffer = io.StringIO()
+            with contextlib.redirect_stdout(buffer):
+                self.assertEqual(self._load().main([]), 0)
+            self.assertEqual(json.loads(buffer.getvalue()), {"installed": False, "version": None})
 
 
 if __name__ == "__main__":

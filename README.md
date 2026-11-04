@@ -81,6 +81,20 @@ hermes-web-ui restart
 
 If a Studio upgrade overwrites the bundle, re-run the installer or the script above.
 
+## Optional: billion-context (bili)
+
+The plugin works without [billion-context](https://github.com/ranxianglei/billion-context);
+Hermes then uses its built-in context compaction. bili is only a drop-in
+compressor, and nothing here installs it.
+
+- Detect: `python3 scripts/detect-billion-context.py` → `{"installed": bool, "version": str|null}`.
+- Install: follow the billion-context README, then enable it for the profile
+  (`hermes plugins enable billion-context`) and start a new session.
+- Disable: `hermes plugins disable billion-context` (or remove its directory under
+  `~/.hermes/plugins/billion-context`). Life state is untouched either way.
+- Failure is silent by design: a missing or broken bili never blocks a turn, and
+  `status`/`/core` keep working on the plugin's own state.
+
 ## Validate
 
 From this repository root:

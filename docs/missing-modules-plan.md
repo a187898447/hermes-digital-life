@@ -104,3 +104,19 @@ P4 依赖 P1（需要 gap 匹配）与 P2（需要压力指令）；P3 可随时
 2. 按 P0→P5 顺序实现，每阶段一个 commit；每阶段结束按 §4 自查并贴出命令输出。
 3. 遇到宿主能力缺失（M11.3 injection、M12 bili）**不要伪造**：记录 `BLOCKED` 与需要用户做的动作，继续下一阶段。
 4. 所有新增行为必须有测试；不删现有测试；不改测试 runner。
+
+## 7. 实现记录与偏差（本轮 P0–P5）
+
+- 上游 `digital-life-core` 的 TS 源码不在本机，未做逐位对拍；P0/P1 用 PRD 语义 + 属性测试覆盖
+  （衰减参考向量、事件规则、张力增长、同义复兴 id 稳定性）。
+- 偏差 1：`resilience` 下限保留 0.5。PRD 写作 0.1，但现有测试
+  `test_temperament_normalization_matches_default_ranges` 断言 0.5–2.0；改下限会破坏既有契约，
+  故沿用 0.5 并在 `tests/test_chemistry.py` 注明。
+- M11.3 `inject_message`：宿主存在该能力，但需要
+  `plugins.entries.hermes-lover.allow_gateway_injection: true` 且当前有活跃网关；已按"opt-in +
+  不可用即静默跳过"实现，未改宿主配置。因此**不是 BLOCKED**，默认关闭。
+- M12 bili：本机未安装（`import bili` → ModuleNotFoundError）。按计划只做探测
+  `scripts/detect-billion-context.py`，不安装、不启用，返回 `{"installed": false, "version": null}`。
+- `hermes plugins doctor` 的 `⚠ install out of sync (venv: out of sync with uv.lock)` 是宿主
+  `~/.hermes/hermes-agent` 在更新中途的既有状态，与插件无关；未运行 `hermes pm install`
+  （不改宿主）。
