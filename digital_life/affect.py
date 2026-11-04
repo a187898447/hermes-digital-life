@@ -12,6 +12,7 @@ from typing import Any
 
 HISTORY_CAP = 8
 FIELDS = ("dopamine", "cortisol", "serotonin", "energy")
+STALE_AFTER_MS = 24 * 60 * 60 * 1000
 
 
 def _clamp(value: float, low: float = -1.0, high: float = 1.0) -> float:
@@ -100,14 +101,16 @@ def deltas(state: dict[str, Any]) -> dict[str, float]:
 def trend(state: dict[str, Any], field: str = "energy", points: int = 3) -> list[float]:
     history = _history(state)
     now = readings(state)
-    values = [_num(item.get(field), now[field]) for item in history[-points:]]
+    tail = history[-(points - 1):] if points > 1 else []
+    values = [_num(item.get(field), now[field]) for item in tail]
     values.append(now[field])
     return [round(value, 1) for value in values[-points:]]
 
 
 def record(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
     """Append the current readings to the bounded history (call before an impulse)."""
-    entry = readings(state)
+    entry = dict(readings(state))
+    entry["at"] = float(now_ms)
     history = _history(state) + [entry]
     state["affect_history"] = history[-HISTORY_CAP:]
     return state
@@ -120,15 +123,7 @@ def _signed(value: float) -> str:
     return text.replace("-", "−")
 
 
-def _arrow(value: float) -> str:
-    if value > 0.05:
-        return "↑"
-    if value < -0.05:
-        return "↓"
-    return "→"
-
-
-def render(state: dict[str, Any]) -> str:
+def render(state: dict[str, Any], now_ms: float | None = None) -> str:
     r = readings(state)
     change = deltas(state)
     mood = label(state)
@@ -139,10 +134,18 @@ def render(state: dict[str, Any]) -> str:
         rising = all(a < b for a, b in zip(values, values[1:]))
         shape = "连续下降" if falling else ("连续回升" if rising else "有起伏")
     trend_text = "→".join(f"{value:.0f}" for value in values) + f"（{shape}）"
-    return "\n".join([
+
+    lines = [
         f"[hermes-lover · 此刻] 心情：{mood}｜愉悦 {valence(state):+.2f} / 紧张 {arousal(state):.2f}",
         f"多巴胺 {r['dopamine']:.1f}（{_signed(change['dopamine'])}）｜皮质醇 {r['cortisol']:.1f}（{_signed(change['cortisol'])}）"
         f"｜血清素 {r['serotonin']:.1f}（{_signed(change['serotonin'])}）｜能量 {r['energy']:.1f}（{_signed(change['energy'])}）",
         f"近三轮能量 {trend_text}",
         f"倾向：{hint(state)}",
-    ])
+    ]
+    history = _history(state)
+    if now_ms and history:
+        last_at = _num(history[-1].get("at"), 0.0)
+        if last_at and now_ms - last_at > STALE_AFTER_MS:
+            hours = (now_ms - last_at) / 3_600_000
+            lines.append(f"（上次对话是 {hours:.0f} 小时前，上面的变化不代表刚才发生了什么）")
+    return "\n".join(lines)

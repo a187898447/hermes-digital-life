@@ -68,13 +68,59 @@ class RecordAndMigrationTests(unittest.TestCase):
             affect.record(state, 1_000_000)
         self.assertEqual(len(state["affect_history"]), affect.HISTORY_CAP)
 
-    def test_normalize_state_drops_junk_history(self):
+    def test_normalize_state_keeps_only_complete_entries(self):
         raw = default_state(1_000_000)
-        raw["affect_history"] = [{"energy": "x"}, "junk", {"energy": 42}]
+        raw["affect_history"] = [
+            {"dopamine": 50, "cortisol": 20, "serotonin": 50, "energy": 42, "at": 1},
+            {"energy": 42},
+            "junk",
+        ]
         state = normalize_state(raw, 1_000_000)
-        self.assertEqual(len(state["affect_history"]), 2)
-        self.assertEqual(state["affect_history"][-1]["energy"], 42.0)
+        self.assertEqual(len(state["affect_history"]), 1)
+        self.assertEqual(state["affect_history"][0]["energy"], 42.0)
+        self.assertEqual(state["affect_history"][0]["at"], 1.0)
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IntegrationTests(unittest.TestCase):
+    """The frame must survive the real runtime transitions."""
+
+    def _fake_update(self, state):
+        def update_state(now_ms, mutate):
+            result = mutate(state)
+            return state if result is None else result
+        return update_state
+
+    def test_record_turn_snapshots_before_the_reward(self):
+        from digital_life import runtime
+        import sys, types
+        sys.modules.setdefault("plugins", types.ModuleType("plugins"))
+        stub = types.ModuleType("plugins.plugin_storage")
+        stub.plugin_db = lambda *a, **k: None
+        sys.modules.setdefault("plugins.plugin_storage", stub)
+        from digital_life import storage
+
+        state = state_with(energy=50)
+        before = state["chemistry"]["dopamine"]
+        with patch.object(storage, "update_state", self._fake_update(state)):
+            runtime.record_turn(1_000_000, success=True)
+        self.assertEqual(len(state["affect_history"]), 1)
+        self.assertEqual(state["affect_history"][0]["dopamine"], before)
+        self.assertGreater(state["chemistry"]["dopamine"], before)
+        self.assertGreater(affect.deltas(state)["dopamine"], 0)
+
+    def test_status_snapshot_exposes_the_affect_frame(self):
+        from digital_life import runtime
+
+        state = state_with(energy=10)
+        with patch.object(runtime, "settle_state", return_value=state):
+            snap = runtime.status_snapshot(1_000_000)
+        self.assertEqual(snap["affect"]["mood"], "疲惫")
+        self.assertIn("energy", snap["affect"]["deltas"])
+        self.assertTrue(snap["affect"]["hint"])
+
+
+from unittest.mock import patch  # noqa: E402 - kept at the bottom so earlier tests stay readable

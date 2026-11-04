@@ -148,11 +148,16 @@ def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
     state["last_epiphany_at"] = max(0.0, float_or(raw.get("last_epiphany_at"), 0.0))
     history = raw.get("affect_history")
     if isinstance(history, list):
+        from .affect import FIELDS, HISTORY_CAP  # noqa: PLC0415 - avoid an import cycle at module load
+
         cleaned = []
-        for item in history[-8:]:
-            if not isinstance(item, dict):
+        for item in history[-HISTORY_CAP:]:
+            if not isinstance(item, dict) or any(key not in item for key in FIELDS):
                 continue
-            cleaned.append({key: float_or(item.get(key), 0.0) for key in ("dopamine", "cortisol", "serotonin", "energy")})
+            entry = {key: float_or(item.get(key), 0.0) for key in FIELDS}
+            if isinstance(item.get("at"), (int, float)):
+                entry["at"] = float(item["at"])
+            cleaned.append(entry)
         state["affect_history"] = cleaned
     from . import wake as wake_module  # noqa: PLC0415 - lazy to keep domain import-light
 

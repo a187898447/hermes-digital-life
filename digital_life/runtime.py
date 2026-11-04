@@ -93,8 +93,8 @@ def record_turn(now_ms: float, *, success: bool) -> None:
         if state["emergency_stop"]:
             return None
         state = settle_before_transition(state, now_ms)
-        POOL.apply("turn_complete", state)
         affect.record(state, now_ms)
+        POOL.apply("turn_complete", state)
         state["last_interaction_at"] = now_ms
         state["last_settled_at"] = now_ms
         return state
@@ -267,7 +267,7 @@ def affect_note(now_ms: float) -> str:
         directive = "Engagement is elevated: a warmer, more animated tone is appropriate."
     else:
         directive = "Use the configured identity and current conversation; do not infer emotion beyond these signals."
-    mood = affect.render(state)
+    mood = affect.render(state, now_ms)
     note = f"{mood}\n（以上是你此刻的身体状态；按它调整语气，但不覆盖安全与事实规则。）\n{directive}"
     body = body_line()
     return f"{note}\n{body}" if body else note
