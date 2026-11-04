@@ -114,21 +114,35 @@ def configure(profile: str, allow_all: bool = False, wake_words: list[str] | Non
             failed.append(f"{key}: {detail[-1][:120] if detail else 'exit ' + str(proc.returncode)}")
             continue
         # Managed profiles can accept `config set` as a silent no-op and still exit 0.
-        read = subprocess.run(["hermes", "-p", profile, "config", "get", key],
+        read = subprocess.run(["hermes", "-p", profile, "config", "get", key, "--json"],
                               capture_output=True, text=True)
         actual = (read.stdout or "").strip()
+        if read.returncode != 0:
+            # Older hosts lack --json; plain `config get` prints YAML for lists.
+            read = subprocess.run(["hermes", "-p", profile, "config", "get", key],
+                                  capture_output=True, text=True)
+            actual = (read.stdout or "").strip()
         if read.returncode != 0 or not _same_value(value, actual):
             failed.append(f"{key}: set did not stick (wrote {value}, read {actual[:80] or 'nothing'})")
     return failed
 
 
+def _parse_value(text: str):
+    text = (text or "").strip()
+    try:
+        return json.loads(text)
+    except ValueError:
+        pass
+    try:
+        import yaml  # noqa: PLC0415 - only needed for the plain-text fallback
+
+        return yaml.safe_load(text)
+    except Exception:
+        return text
+
+
 def _same_value(written: str, read_back: str) -> bool:
-    def parse(text: str):
-        try:
-            return json.loads(text)
-        except ValueError:
-            return text.strip()
-    return parse(written) == parse(read_back)
+    return _parse_value(written) == _parse_value(read_back)
 
 
 def cmd_start(profile: str, allow_all: bool = False, show_qr: bool = False,
