@@ -28,22 +28,25 @@ from .domain import float_or
 WAKE_TEXT = "..."
 WAKE_DEDUPE_MS = 1_000.0
 WAKE_COOLDOWN_MS = 30 * 60_000.0
+# A turn that never reports completion must not block waking forever.
+WAKE_RUNNING_TTL_MS = 15 * 60_000.0
 WAKE_MIN_TENSION = 80.0
 WAKE_ECHO_MINUTES = 10.0
 WAKE_PENALTY = 10.0
 WAKE_SECTION_LIMIT = 400
 
-_RUNNING = False
+_RUNNING_AT = 0.0
 
 
 def set_agent_running(running: bool) -> None:
     """Hooks mark a live turn so a wake cannot be queued mid-turn (lock 4)."""
-    global _RUNNING
-    _RUNNING = bool(running)
+    global _RUNNING_AT
+    _RUNNING_AT = time.time() * 1000 if running else 0.0
 
 
 def agent_running() -> bool:
-    return _RUNNING
+    """True only while a turn is plausibly live; a lost post-hook expires."""
+    return _RUNNING_AT > 0 and time.time() * 1000 - _RUNNING_AT < WAKE_RUNNING_TTL_MS
 
 
 def new_wake_state() -> dict[str, Any]:
@@ -100,7 +103,10 @@ def plan_wake(state: dict[str, Any], now_ms: float, *, min_tension: float = WAKE
         return None
     if wake.get("active") or wake.get("queue"):
         return None
-    if now_ms - float_or(wake.get("last_wake_at"), 0.0) < WAKE_DEDUPE_MS:
+    since_last = now_ms - float_or(wake.get("last_wake_at"), 0.0)
+    if since_last < WAKE_DEDUPE_MS:
+        return None
+    if since_last < max(0.0, float_or(cooldown_ms, WAKE_COOLDOWN_MS)):
         return None
     if not isinstance(state.get("gaps"), list):
         return None

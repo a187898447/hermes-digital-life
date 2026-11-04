@@ -237,5 +237,18 @@ class StateNormalizationTests(unittest.TestCase):
         self.assertEqual(state["last_epiphany_at"], NOW)
 
 
+class SiblingWindowTests(unittest.TestCase):
+    def test_resolved_gap_without_timestamps_is_not_a_recent_sibling(self):
+        resolved = {"id": "gap-old", "summary": "火星营业时间", "status": "resolved"}
+        fresh = {"id": "gap-new", "summary": "火星营业时间", "status": "open", "created_at": NOW}
+        self.assertIsNone(gaps.sibling_of_recent_close([resolved, fresh], fresh, NOW))
+
+    def test_resolved_gap_within_the_window_is_a_sibling(self):
+        resolved = {"id": "gap-old", "summary": "火星营业时间", "status": "resolved",
+                    "closed_at": NOW - 5 * 60_000}
+        fresh = {"id": "gap-new", "summary": "火星营业时间", "status": "open", "created_at": NOW}
+        self.assertIs(gaps.sibling_of_recent_close([resolved, fresh], fresh, NOW), resolved)
+
+
 if __name__ == "__main__":
     unittest.main()

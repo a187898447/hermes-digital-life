@@ -163,7 +163,10 @@ def parse_genome(raw: Any) -> tuple[dict[str, Any], list[str]]:
             parsed_rule = _parse_rule(rule, "energy", problems)
             if parsed_rule:
                 parsed_energy.append(parsed_rule)
-        genome["energy_rules"] = parsed_energy
+        if parsed_energy:
+            genome["energy_rules"] = parsed_energy
+        else:
+            problems.append("every energy rule was invalid; defaults kept")
     elif energy_rules is not None:
         problems.append("energy_rules must be a list")
 

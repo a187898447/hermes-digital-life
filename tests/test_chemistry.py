@@ -187,5 +187,12 @@ class ChemicalPoolTests(unittest.TestCase):
         self.assertEqual(default_genome()["version"], 1)
 
 
+class GenomeFallbackTests(unittest.TestCase):
+    def test_unparsable_energy_rules_keep_the_defaults(self):
+        genome, problems = parse_genome({"energy_rules": [{"event": ""}, 7, "nope"]})
+        self.assertEqual(genome["energy_rules"], default_genome()["energy_rules"])
+        self.assertTrue(any("defaults kept" in problem for problem in problems))
+
+
 if __name__ == "__main__":
     unittest.main()

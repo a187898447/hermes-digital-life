@@ -121,5 +121,26 @@ class WakeCommitmentTests(unittest.TestCase):
         self.assertEqual(state["active"]["gap_id"], "g")
 
 
+class WakeCooldownTests(unittest.TestCase):
+    def tearDown(self):
+        wake.set_agent_running(False)
+
+    def test_cooldown_blocks_a_second_wake_inside_30_minutes(self):
+        state = state_with_gap()
+        item = wake.plan_wake(state, NOW)
+        self.assertTrue(wake.mark_delivered(state, item["id"], NOW + 5))
+        state["wake"]["active"] = None
+        self.assertIsNone(wake.plan_wake(state, NOW + 60_000))
+        later = wake.plan_wake(state, NOW + 31 * 60_000)
+        self.assertIsNotNone(later)
+
+    def test_running_lock_expires_when_the_post_hook_is_lost(self):
+        wake.set_agent_running(True)
+        self.assertTrue(wake.agent_running())
+        wake._RUNNING_AT = NOW - wake.WAKE_RUNNING_TTL_MS - 1
+        self.assertFalse(wake.agent_running())
+        self.assertIsNotNone(wake.plan_wake(state_with_gap(), NOW))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -181,7 +181,7 @@ def sibling_of_recent_close(gaps: list[dict[str, Any]], gap: dict[str, Any], now
         if not isinstance(candidate, dict) or candidate.get("status") != "resolved":
             continue
         closed_at = float_or(candidate.get("closed_at"), float_or(candidate.get("resolved_at"), 0.0))
-        if closed_at and now_ms - closed_at > window:
+        if not closed_at or now_ms - closed_at > window:
             continue
         if gap_similarity(own, normalize_gap_text(str(candidate.get("summary", "")))) >= GAP_SIMILARITY:
             return candidate
