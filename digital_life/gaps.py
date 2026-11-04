@@ -114,6 +114,9 @@ def propose_gap(state: dict[str, Any], summary: str, source: str, now_ms: float,
             continue
         if gap_similarity(norm, normalize_gap_text(str(gap.get("summary", "")))) < GAP_SIMILARITY:
             continue
+        # A gap raised in one conversation must not be adopted by another one.
+        if str(gap.get("chat") or "") != str(chat or ""):
+            continue
         if gap.get("status") == "resolved":
             gap["revived_from"] = gap.pop("closed_by", None)
             gap["revive_count"] = int(float_or(gap.get("revive_count"), 0.0)) + 1
@@ -122,7 +125,6 @@ def propose_gap(state: dict[str, Any], summary: str, source: str, now_ms: float,
             gap["status"] = "open"
             gap["relief"] = max(0.0, float_or(gap.get("relief"), 0.0) - 10.0)
         gap["source"] = source
-        gap["chat"] = chat
         if query:
             gap["query"] = query
         gap["tension"] = gap_tension(gap, now_ms)

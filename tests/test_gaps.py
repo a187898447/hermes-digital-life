@@ -46,6 +46,16 @@ class ProposeTests(unittest.TestCase):
         self.assertIs(first, second)
         self.assertEqual(len(state["gaps"]), 1)
 
+    def test_same_summary_in_another_chat_opens_its_own_gap(self):
+        state = fresh_state()
+        first = propose(state, "what is the DSH boot protocol", chat="g1")
+        second = propose(state, "what is the DSH boot protocol", chat="g2")
+        self.assertIsNot(first, second)
+        self.assertEqual((first["chat"], second["chat"]), ("g1", "g2"))
+        self.assertEqual(len(state["gaps"]), 2)
+        again = propose(state, "DSH boot protocol?", chat="g1")
+        self.assertIs(again, first)
+
     def test_resolved_synonym_revives_the_original_id(self):
         state = fresh_state()
         gap = propose(state, "what is the DSH boot protocol")

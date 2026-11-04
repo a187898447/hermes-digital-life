@@ -315,6 +315,25 @@ class RegistrationTests(unittest.TestCase):
         group = handler("", source=SimpleNamespace(chat_type="group", user_id="u1"), platform="qqbot")
         self.assertIn("私聊", group)
 
+    def test_beat_tools_refuse_qq_sessions_and_recall_rejects_chat_ids(self):
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        plugin.register(ctx)
+        handlers = {entry["name"]: entry["handler"] for entry in ctx.tools}
+        with patch.object(plugin, "_session_source", return_value="qqbot"):
+            for name, args in (("beat_targets", {}),
+                               ("beat_send", {"chat_id": "c1", "text": "hi"})):
+                result = json.loads(handlers[name](args, session_id="s-qq"))
+                self.assertFalse(result["ok"])
+                self.assertIn("scheduled", result["error"])
+        with patch.object(plugin, "_session_scope", return_value=("", "")):
+            result = json.loads(handlers["memory_recall"]({"chat_id": "other-chat"},
+                                                          session_id="s-cli"))
+            self.assertFalse(result["ok"])
+            self.assertIn("session", result["error"])
+        schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
+        self.assertNotIn("chat_id", schemas["memory_recall"])
+
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)

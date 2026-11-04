@@ -51,6 +51,33 @@ def _session_scope(session_id: str) -> tuple[str, str]:
     return chat_id, chat_type
 
 
+_SOURCE_CACHE: dict[str, str] = {}
+
+
+def _session_source(session_id: str) -> str:
+    """Host session source ("qqbot", "cron", "cli", ...), best effort and cached per session."""
+    if not session_id:
+        return ""
+    cached = _SOURCE_CACHE.get(session_id)
+    if cached is not None:
+        return cached
+    source = ""
+    try:
+        home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+        connection = sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True, timeout=1)
+        try:
+            row = connection.execute(
+                "SELECT source FROM sessions WHERE id=?", (session_id,)).fetchone()
+        finally:
+            connection.close()
+        if row:
+            source = str(row[0] or "")
+            _SOURCE_CACHE[session_id] = source
+    except (sqlite3.Error, OSError, TypeError, ValueError):
+        pass
+    return source
+
+
 def _status(args: dict[str, Any], session_id: str = "", **kwargs) -> str:
     scope, _chat_type = _session_scope(session_id)
     return json.dumps(digital_life.runtime.status_snapshot(time.time() * 1000, scope=scope or None),
@@ -680,9 +707,8 @@ def register(ctx) -> None:
     def memory_recall(args, session_id="", **kwargs):
         try:
             chat_id, _chat_type = _session_scope(session_id)
-            explicit = str(args.get("chat_id") or "").strip()
-            if explicit:
-                chat_id = explicit
+            if not chat_id and args.get("chat_id"):
+                raise ValueError("chat_id is resolved from the calling session, not from arguments")
             result = memory_store().recall(args.get("query", ""), k=args.get("k", 8),
                                            include_cold=args.get("include_cold", False),
                                            chat_id=chat_id or None,
@@ -692,7 +718,9 @@ def register(ctx) -> None:
             result = {"ok": False, "error": str(exc)}
         return json.dumps(result, ensure_ascii=False)
 
-    def beat_targets(args, **kwargs):
+    def beat_targets(args, session_id="", **kwargs):
+        if _session_source(session_id) == "qqbot":
+            return json.dumps({"ok": False, "error": "beat tools are only available to scheduled runs"})
         import os
         from pathlib import Path as _Path
         home = os.environ.get("HERMES_HOME") or str(_Path.home() / ".hermes")
@@ -743,7 +771,9 @@ def register(ctx) -> None:
         ]
         return json.dumps({"targets": targets}, ensure_ascii=False)
 
-    def beat_send(args, **kwargs):
+    def beat_send(args, session_id="", **kwargs):
+        if _session_source(session_id) == "qqbot":
+            return json.dumps({"ok": False, "error": "beat tools are only available to scheduled runs"})
         chat_id = str(args.get("chat_id") or "").strip()
         text = str(args.get("text") or "").strip()
         if not chat_id or not text:
@@ -815,8 +845,6 @@ def register(ctx) -> None:
                     "description": "Return that day's journal first, then its raw entries."},
             "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal", "turn"],
                      "description": "Return only entries of this kind."},
-            "chat_id": {"type": "string",
-                       "description": "Recall only this QQ chat's entries (used by per-chat proactive jobs)."},
         }, "additionalProperties": False}},
         handler=memory_recall,
         description="Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries. Displayed memories refresh their access history except during emergency stop. Does not change life state.",

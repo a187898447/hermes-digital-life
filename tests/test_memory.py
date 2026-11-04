@@ -127,14 +127,26 @@ class MemoryTests(unittest.TestCase):
     def recall(self, query="", **kwargs):
         return self.store.recall(query, now_ms=NOW, **kwargs)
 
-    def test_clear_archives_only_the_requested_chat(self):
+    def test_clear_purges_only_the_requested_chat(self):
         mine = self.store.write("群里有人吵架", session_id="s1", chat_id="g1", chat_type="group")
         other = self.store.write("另一个群的记录", session_id="s2", chat_id="g2", chat_type="group")
         self.assertEqual(self.store.clear("g1"), 1)
         entries = self.store.read_entries()
-        self.assertTrue(entries[mine["id"]]["archived"])
+        self.assertNotIn(mine["id"], entries)
         self.assertFalse(entries[other["id"]]["archived"])
         self.assertEqual([row["id"] for row in self.store.recall(chat_id="g1").get("entries", [])], [])
+
+    def test_clear_cannot_be_resurrected_by_cold_recall_or_compaction(self):
+        old = self.store.write("清空前的事", kind="turn", session_id="s1", chat_id="g1",
+                               now_ms=NOW)
+        self.assertEqual(self.store.clear("g1", now_ms=NOW + DAY), 1)
+        cold = self.store.recall("", include_cold=True, chat_id="g1", now_ms=NOW + DAY)
+        self.assertNotIn(old["id"], [row["id"] for row in cold["shown"]])
+        self.assertEqual(self.store.compact(days=30, now_ms=NOW + 90 * DAY)["summaries"], 0)
+        new = self.store.write("清空后的事", kind="turn", session_id="s1", chat_id="g1",
+                               now_ms=NOW + 2 * DAY)
+        live = self.store.recall("", chat_id="g1", now_ms=NOW + 2 * DAY)["shown"]
+        self.assertEqual([row["id"] for row in live], [new["id"]])
 
     def test_journal_write_can_be_anchored_to_its_day(self):
         result = self.store.write("【日记 2026-10-31】那天很累。", kind="journal", day="2026-10-31")
@@ -180,7 +192,10 @@ class MemoryTests(unittest.TestCase):
 
     def test_get_reads_archived_entry_without_touching_it(self):
         result = self.write("会被归档")
-        self.store.clear()
+        self.store._append([{"version": 1, "id": result["id"], "op": "forget",
+                             "archived_at": NOW}], NOW)
+        entries, digest = self.store._replay()
+        self.store._save_index(entries, digest)
         entry = self.store.get(result["id"])
         self.assertTrue(entry["archived"])
         self.assertEqual(entry["hits"], 0)
@@ -479,6 +494,14 @@ class CompactTests(unittest.TestCase):
         self.store = memory.MemoryStore(self.root, embedder=False)
         self.later = NOW + 60 * DAY
 
+    def archive_all(self, stamp=NOW):
+        ids = [entry["id"] for entry in self.store.read_entries().values() if not entry["archived"]]
+        if ids:
+            self.store._append([{"version": 1, "id": identifier, "op": "forget",
+                                 "archived_at": stamp} for identifier in ids], stamp)
+            entries, digest = self.store._replay()
+            self.store._save_index(entries, digest)
+
     def seed(self, *texts, day="2026-10-01", chat_id="", now_ms=NOW):
         return [self.store.write(text, day=day, chat_id=chat_id, now_ms=now_ms)["id"] for text in texts]
 
@@ -486,7 +509,7 @@ class CompactTests(unittest.TestCase):
         first, second = self.seed("十月一日群聊一件事", "十月一日群聊另一件事", chat_id="qq:1")
         other = self.seed("十月一日私聊", chat_id="qq:2")[0]
         third = self.seed("十月二日群聊", day="2026-10-02")[0]
-        self.store.clear(now_ms=NOW)
+        self.archive_all()
         live = self.store.write("今天的新事", now_ms=NOW + 10 * DAY)["id"]
         result = self.store.compact(days=30, now_ms=self.later)
         self.assertEqual(result, {"ok": True, "groups": 3, "summaries": 3, "compacted": 4})
@@ -510,7 +533,7 @@ class CompactTests(unittest.TestCase):
         ids = [self.store.write(f"十月的旧事第{index}条", day="2026-10-01",
                                 session_id=f"s-{index}", now_ms=NOW)["id"]
                for index in range(25)]
-        self.store.clear(now_ms=NOW)
+        self.archive_all()
         self.store.compact(days=30, now_ms=self.later)
         summary = next(e for e in self.store.read_entries().values() if e["kind"] == "summary")
         self.assertEqual(sorted(summary["sources"]), sorted(ids))
@@ -518,7 +541,7 @@ class CompactTests(unittest.TestCase):
 
     def test_second_compact_is_idempotent(self):
         self.seed("旧事一", "旧事二")
-        self.store.clear(now_ms=NOW)
+        self.archive_all()
         self.store.compact(days=30, now_ms=self.later)
         again = self.store.compact(days=30, now_ms=self.later)
         self.assertEqual(again, {"ok": True, "groups": 0, "summaries": 0, "compacted": 0})
@@ -527,7 +550,7 @@ class CompactTests(unittest.TestCase):
 
     def test_include_cold_shows_the_summary_instead_of_the_originals(self):
         first, second = self.seed("旧事一", "旧事二")
-        self.store.clear(now_ms=NOW)
+        self.archive_all()
         before = self.store.recall(include_cold=True, now_ms=NOW)
         self.assertEqual(before["matched"], 2)
         self.assertEqual(before["total"], 0)
@@ -545,7 +568,7 @@ class CompactTests(unittest.TestCase):
 
     def test_recently_accessed_entries_are_left_alone(self):
         identifier = self.seed("旧事")[0]
-        self.store.clear(now_ms=NOW)
+        self.archive_all()
         self.store.recall(include_cold=True, now_ms=NOW + 40 * DAY)
         self.assertEqual(self.store.compact(days=30, now_ms=self.later)["summaries"], 0)
         self.assertEqual(self.store.get(identifier)["compacted_into"], "")
@@ -570,7 +593,7 @@ class CompactTests(unittest.TestCase):
         from digital_life import cli, storage
         old = time.time() * 1000 - 40 * DAY
         self.store.write("旧事", now_ms=old)
-        self.store.clear(now_ms=old)
+        self.archive_all(stamp=old)
         with (
             patch.object(storage, "data_root", return_value=self.root),
             patch.object(storage, "plugin_db", side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),

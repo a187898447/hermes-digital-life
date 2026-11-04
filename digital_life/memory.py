@@ -143,6 +143,7 @@ class MemoryStore:
 
     def _replay(self):
         entries = {}
+        purged: set[str] = set()
         digest = hashlib.sha256()
         for path in self._paths():
             data = path.read_bytes()
@@ -155,8 +156,14 @@ class MemoryStore:
                 try:
                     event = json.loads(line)
                     self._fold(entries, event)
+                    if isinstance(event, dict) and event.get("op") == "purge":
+                        purged.add(str(event.get("id")))
                 except (ValueError, TypeError, KeyError, OverflowError):
                     logger.warning("Ignoring invalid memory event in %s", path)
+        # A purge wins no matter which day file it landed in; /new must not be undone
+        # by a later-dated add line replayed after it.
+        for identifier in purged:
+            entries.pop(identifier, None)
         return entries, digest.hexdigest()
 
     @staticmethod
@@ -211,6 +218,9 @@ class MemoryStore:
         elif op == "forget":
             if not _number(event["archived_at"]): raise ValueError("invalid archive time")
             entries[identifier].update(archived=True, archived_at=event["archived_at"])
+        elif op == "purge":
+            if not _number(event.get("purged_at")): raise ValueError("invalid purge time")
+            entries.pop(identifier, None)
         elif op == "compact":
             # Cold entries keep their text but point at the summary that now represents them.
             target = event["into"]
@@ -482,7 +492,9 @@ class MemoryStore:
                        if not e.get("archived") and (chat_id is None or e.get("chat_id", "") == chat_id)]
             if not targets:
                 return 0
-            self._append([{"version": 1, "id": e["id"], "op": "forget", "archived_at": stamp}
+            # /new means gone: a purge event drops the entry from every replay, so neither
+            # include_cold nor a later compaction can resurrect it.
+            self._append([{"version": 1, "id": e["id"], "op": "purge", "purged_at": stamp}
                           for e in targets], stamp)
             try:
                 entries, digest = self._replay()

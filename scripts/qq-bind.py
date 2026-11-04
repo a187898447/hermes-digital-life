@@ -92,7 +92,7 @@ def load_wake_words(profile: str, explicit: str = "") -> list[str]:
     return seen[:12]
 
 
-def configure(profile: str, allow_all: bool = False, wake_words: list[str] | None = None) -> None:
+def configure(profile: str, allow_all: bool = False, wake_words: list[str] | None = None) -> list[str]:
     pairs = [
         ("platforms.qqbot.enabled", "true"),
         ("platforms.qqbot.extra.group_policy", "open" if allow_all else "allowlist"),
@@ -105,9 +105,14 @@ def configure(profile: str, allow_all: bool = False, wake_words: list[str] | Non
     if wake_words:
         pairs.append(("platforms.qqbot.extra.group_wake_words",
                       json.dumps(wake_words, ensure_ascii=False)))
+    failed = []
     for key, value in pairs:
-        subprocess.run(["hermes", "-p", profile, "config", "set", key, value],
-                       capture_output=True, text=True)
+        proc = subprocess.run(["hermes", "-p", profile, "config", "set", key, value],
+                              capture_output=True, text=True)
+        if proc.returncode != 0:
+            detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+            failed.append(f"{key}: {detail[-1][:120] if detail else 'exit ' + str(proc.returncode)}")
+    return failed
 
 
 def cmd_start(profile: str, allow_all: bool = False, show_qr: bool = False,
@@ -156,7 +161,14 @@ def cmd_wait(profile: str, timeout: int, allow_all: bool = False) -> int:
             secret = decrypt(enc, state["key"])
             env = write_env(profile, app_id, secret, openid, allow_all=allow_all)
             words = load_wake_words(profile, str(state.get("wake_words", "")))
-            configure(profile, allow_all=allow_all, wake_words=words)
+            failed = configure(profile, allow_all=allow_all, wake_words=words)
+            if failed:
+                path.unlink(missing_ok=True)
+                print("\n绑定失败：以下配置没有写入成功，已停止（未重启网关，避免退回全量工具集）：")
+                for line in failed:
+                    print(f"  - {line}")
+                print("处理后重新运行 start 出新的二维码。")
+                return 5
             subprocess.run(["hermes", "gateway", "restart"], capture_output=True, text=True)
             path.unlink(missing_ok=True)
             print(f"\n绑定完成：App ID {app_id}")
