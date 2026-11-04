@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from . import affect
+from . import events
 from . import gaps as gap_pool
 from .chemical_pool import ChemicalPool
-from .domain import decay_chemistry, float_or, reorder_formatted_memory_blocks, settle_rest
+from .domain import clamp, decay_chemistry, float_or, reorder_formatted_memory_blocks, settle_rest
 
 POOL = ChemicalPool()
 
@@ -85,21 +87,48 @@ def record_request(now_ms: float) -> None:
     update_state(now_ms, mutate)
 
 
-def record_turn(now_ms: float, *, success: bool) -> None:
-    """Reward an observed completed turn using the adopted default rule."""
+def record_turn(now_ms: float, *, success: bool, user_message: str = "") -> None:
+    """Reward an observed completed turn and fold in what the user just did."""
     if not success:
         return
+    category = events.classify(user_message)
     def mutate(state):
         if state["emergency_stop"]:
             return None
         state = settle_before_transition(state, now_ms)
         affect.record(state, now_ms)
         POOL.apply("turn_complete", state)
+        _apply_event_impulse(state, category, now_ms)
         state["last_interaction_at"] = now_ms
         state["last_settled_at"] = now_ms
         return state
     from .storage import update_state
     update_state(now_ms, mutate)
+
+
+def _apply_event_impulse(state: dict[str, Any], category: str | None, now_ms: float) -> None:
+    """Apply at most one capped, cooldown-guarded chemistry nudge for this turn."""
+    if not category:
+        return
+    book = state.setdefault("affect_events", {"day": "", "total": 0.0, "cooldowns": {}})
+    day = time.strftime("%Y-%m-%d", time.localtime(now_ms / 1000))
+    if book.get("day") != day:
+        book["day"] = day
+        book["total"] = 0.0
+        book["cooldowns"] = {}
+    cooldowns = book.setdefault("cooldowns", {})
+    last = float(cooldowns.get(category, 0.0))
+    if last and now_ms - last < events.COOLDOWN_MS:
+        return
+    remaining = max(0.0, events.DAILY_CAP - float(book.get("total", 0.0)))
+    deltas = events.scaled_deltas(category, remaining)
+    if not deltas:
+        return
+    chemicals = state["chemistry"]
+    for key, value in deltas.items():
+        chemicals[key] = clamp(float(chemicals.get(key, 50.0)) + value)
+    cooldowns[category] = float(now_ms)
+    book["total"] = float(book.get("total", 0.0)) + sum(abs(value) for value in deltas.values())
 
 
 def record_api_error(now_ms: float, *, error_type: str, retryable: bool | None) -> None:

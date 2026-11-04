@@ -126,7 +126,8 @@ def default_state(now_ms: float) -> dict[str, Any]:
             "last_interaction_at": now_ms, "last_settled_at": now_ms, "gaps": [],
             "emergency_stop": False, "tools_succeeded": [], "last_epiphany_at": 0.0,
             "wake": {"queue": [], "last_wake_at": 0.0, "last_gap_id": "", "active": None},
-            "affect_history": []}
+            "affect_history": [],
+            "affect_events": {"day": "", "total": 0.0, "cooldowns": {}}}
 
 
 def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
@@ -159,6 +160,15 @@ def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
                 entry["at"] = float(item["at"])
             cleaned.append(entry)
         state["affect_history"] = cleaned
+    book = raw.get("affect_events")
+    if not isinstance(book, dict):
+        book = {}
+    state["affect_events"] = {
+        "day": str(book.get("day") or ""),
+        "total": max(0.0, float_or(book.get("total"), 0.0)),
+        "cooldowns": {str(k): float_or(v, 0.0) for k, v in (book.get("cooldowns") or {}).items()
+                      if isinstance(v, (int, float))} if isinstance(book.get("cooldowns"), dict) else {},
+    }
     from . import wake as wake_module  # noqa: PLC0415 - lazy to keep domain import-light
 
     state["wake"] = wake_module.normalize_wake(raw.get("wake"))

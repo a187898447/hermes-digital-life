@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import sys
+import time
 import types
 import unittest
 from unittest.mock import patch
 
 from digital_life import affect
+from digital_life import events
 from digital_life.domain import default_state, normalize_state
 
 
@@ -126,3 +128,65 @@ class IntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EventImpulseTests(unittest.TestCase):
+    """What the user did moves the chemistry, but only within the caps."""
+
+    def _run(self, state, message, now_ms=1_000_000):
+        if "plugins.plugin_storage" not in sys.modules:
+            stub = types.ModuleType("plugins.plugin_storage")
+            stub.plugin_db = lambda *args, **kwargs: None
+            sys.modules.setdefault("plugins", types.ModuleType("plugins"))
+            sys.modules["plugins.plugin_storage"] = stub
+        from digital_life import runtime
+        from digital_life import storage
+
+        with patch.object(storage, "update_state", self._fake_update(state)):
+            runtime.record_turn(now_ms, success=True, user_message=message)
+
+    def _fake_update(self, state):
+        def update_state(now_ms, mutate):
+            result = mutate(state)
+            return state if result is None else result
+        return update_state
+
+    def test_praise_moves_dopamine_up_and_cortisol_down(self):
+        state = state_with(energy=50)
+        before = affect.readings(state)
+        self._run(state, "你真厉害")
+        self.assertGreater(state["chemistry"]["dopamine"], before["dopamine"])
+        self.assertLess(state["chemistry"]["cortisol"], before["cortisol"])
+        self.assertEqual(state["affect_events"]["cooldowns"]["praise"], 1_000_000)
+
+    def test_same_category_is_on_cooldown(self):
+        state = state_with(energy=50)
+        self._run(state, "你真厉害")
+        total_after_first = state["affect_events"]["total"]
+        self._run(state, "好强啊", now_ms=1_060_000)
+        self.assertEqual(state["affect_events"]["total"], total_after_first)
+
+    def test_one_insult_cannot_jump_the_cap(self):
+        state = state_with(energy=50)
+        baseline = affect.readings(state)
+        self._run(state, "你个破程序，闭嘴")
+        gained = state["chemistry"]["cortisol"] - baseline["cortisol"]
+        self.assertLessEqual(gained, events.TURN_CAP + 0.001)
+        self.assertGreater(gained, 0)
+
+    def test_emergency_stop_skips_the_impulse(self):
+        state = state_with(energy=50)
+        state["emergency_stop"] = True
+        before = affect.readings(state)
+        self._run(state, "你个破程序")
+        self.assertEqual(affect.readings(state), before)
+        self.assertEqual(state["affect_events"]["total"], 0.0)
+
+    def test_daily_cap_blocks_further_impulses(self):
+        state = state_with(energy=50)
+        today = time.strftime("%Y-%m-%d", time.localtime(1_000_000 / 1000))
+        state["affect_events"] = {"day": today, "total": events.DAILY_CAP, "cooldowns": {}}
+        before = affect.readings(state)
+        self._run(state, "你真厉害")
+        self.assertEqual(state["affect_events"]["cooldowns"], {})
+        self.assertAlmostEqual(state["chemistry"]["cortisol"], before["cortisol"], delta=0.01)

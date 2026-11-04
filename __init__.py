@@ -180,7 +180,7 @@ def _post_llm_call(assistant_response: str = "", session_id: str = "", platform:
     except Exception:
         logger.warning("hermes-lover wake reconciliation failed", exc_info=True)
     if assistant_response:
-        record_turn(time.time() * 1000, success=True)
+        record_turn(time.time() * 1000, success=True, user_message=user_message or "")
         try:
             if _CAPTURE is not None:
                 _CAPTURE(assistant_response, session_id=session_id or "", platform=platform or "",
