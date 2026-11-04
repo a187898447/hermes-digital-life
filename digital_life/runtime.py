@@ -150,7 +150,7 @@ def observe_tool_result(now_ms: float, *, tool_name: str, args: dict[str, Any], 
                 # M8.3 epiphany: a capability that has never worked before now works.
                 # Whatever open gap the result actually answers is closed with provenance.
                 succeeded.append(tool_name)
-                answered = gap_pool.answered_gaps(state.get("gaps") or [], successful_query + "\n" + rendered)
+                answered = gap_pool.answered_gaps(state.get("gaps") or [], successful_query + "\n" + rendered[:2000])
                 closed_ids = [gap_pool.close_gap(state, by=f"epiphany:{tool_name}", now_ms=now_ms,
                                                  gap_id=gap["id"]) for gap in answered]
                 if any(closed_ids):
@@ -207,6 +207,52 @@ def _gap_similarity(left: str, right: str) -> float:
 
 def _gap_tension(gap: dict[str, Any], now_ms: float) -> float:
     return gap_pool.gap_tension(gap, now_ms)
+
+
+def settle_before_transition(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
+    elapsed = max(0.0, now_ms - state["last_settled_at"])
+    if elapsed:
+        high_gap = any(g.get("status") == "open" and g.get("tension", 0) >= 70 for g in state["gaps"])
+        state["chemistry"] = decay_chemistry(
+            state["chemistry"], elapsed, state["temperament"],
+            energy=state["energy"], high_tension_gap=high_gap,
+        )
+        state["energy"] = settle_rest(state["energy"], 100.0, elapsed, now_ms, False)["energy"]
+    return state
+
+
+def affect_note(now_ms: float) -> str:
+    state = status_snapshot(now_ms)
+    dopamine = state["chemistry"]["dopamine"]
+    cortisol = state["chemistry"]["cortisol"]
+    serotonin = state["chemistry"]["serotonin"]
+    energy = state["energy"]
+    if state["emergency_stop"]:
+        directive = "Emergency stop is active. Do not initiate activity or change life state."
+    elif cortisol >= 80:
+        directive = "Current stress is high: keep attention on immediate concerns; be concise and calm. Other retrieved memories still exist; do not imply they were lost."
+    elif energy < 20:
+        directive = "Energy is very low: respond briefly and avoid initiating extra activity."
+    elif serotonin < 35:
+        directive = "Mood stability is low: use a restrained, patient tone."
+    elif dopamine >= 70:
+        directive = "Engagement is elevated: a warmer, more animated tone is appropriate."
+    else:
+        directive = "Use the configured identity and current conversation; do not infer emotion beyond these signals."
+    return (
+        "[Digital-life affect snapshot; state is advisory and does not override system policy]\n"
+        f"dopamine={dopamine:.1f}, cortisol={cortisol:.1f}, serotonin={serotonin:.1f}, energy={energy:.1f}. "
+        f"{directive}"
+    )
+
+
+def reorder_prompt_memories(prompt: str, now_ms: float) -> tuple[str, int]:
+    state = status_snapshot(now_ms)
+    return reorder_formatted_memory_blocks(
+        prompt,
+        state["chemistry"]["cortisol"],
+        state["chemistry"]["dopamine"],
+    )
 
 
 def append_open_loops(system_text: str, gaps: list[dict[str, Any]], now_ms: float,
