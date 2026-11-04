@@ -87,8 +87,13 @@ def _targets_lock():
     from plugins.plugin_storage import plugin_data_dir  # noqa: PLC0415
 
     path = plugin_data_dir(PLUGIN_NAME) / "proactive.lock"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "a+", encoding="utf-8") as handle:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "a+", encoding="utf-8")
+    except OSError:
+        yield
+        return
+    with handle:
         fcntl.flock(handle, fcntl.LOCK_EX)
         try:
             yield

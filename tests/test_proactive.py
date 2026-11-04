@@ -71,5 +71,46 @@ class SubscriptionFileTests(unittest.TestCase):
                 self.assertEqual(proactive.subscribed_chats(), set())
 
 
+class LockTests(unittest.TestCase):
+    def _with_fake_storage(self, root):
+        import sys
+        import types
+
+        plugins = sys.modules.setdefault("plugins", types.ModuleType("plugins"))
+        storage = types.ModuleType("plugins.plugin_storage")
+        storage.plugin_data_dir = lambda name: root
+        old = getattr(plugins, "plugin_storage", None)
+        plugins.plugin_storage = storage
+        sys.modules["plugins.plugin_storage"] = storage
+        self.addCleanup(self._restore, plugins, old)
+
+    @staticmethod
+    def _restore(plugins, old):
+        import sys
+
+        if old is None:
+            plugins.__dict__.pop("plugin_storage", None)
+            sys.modules.pop("plugins.plugin_storage", None)
+        else:
+            plugins.plugin_storage = old
+            sys.modules["plugins.plugin_storage"] = old
+
+    def test_lock_creates_its_file(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._with_fake_storage(root)
+            with proactive._targets_lock():
+                self.assertTrue((root / "proactive.lock").exists())
+
+    def test_lock_degrades_when_the_lock_file_cannot_be_opened(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            self._with_fake_storage(Path(tmp))
+            reached = []
+            with patch("builtins.open", side_effect=OSError("read-only")):
+                with proactive._targets_lock():
+                    reached.append(True)
+            self.assertEqual(reached, [True])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -179,7 +179,7 @@ hermes gateway list       # default 与 <角色名> 都应显示 ✓
 
 ## 子流程 D：主动消息
 
-安装时创建 `hermes-lover-beat` 任务，但**默认暂停**。启用后每天 10/14/16/18/20 前后 ±60 分钟内随机触发一次；一次触发里调 `beat_targets` 取所有订阅会话，对每个会话 `memory_recall(chat_id=…)` 看它自己的记忆、各写一句，再用 `beat_send(chat_id, text, delay_seconds=随机)` 错开发出去。任务本身的 Deliver 是 `local`（不再靠它投递）。私聊和每个说过话的群都会自动订阅；退订只去掉该会话。没接通 QQ 就什么都不发。
+安装时创建 `hermes-lover-beat` 任务，但**默认暂停**。启用后每天 10/14/16/18/20 前后 ±60 分钟内随机触发一次；一次触发里调 `beat_targets` 取所有订阅会话，对每个会话 `memory_recall(chat_id=…)` 看它自己的记忆、各写一句，再用 `beat_send(chat_id, text, delay_seconds=随机)` 错开发出去。任务本身的 Deliver 是 `local`（不再靠它投递）。只有说过「主动一点」这类关键词的会话才会订阅；删除订阅文件等于关闭主动消息，不会退回给所有会话。没接通 QQ 就什么都不发。
 
 - **不是技能触发**：定时靠 cron，会话关掉也会运行；monitor 门控保证只有到点那次才唤醒模型。
 - **查看 / 暂停 / 删除**：
