@@ -4,7 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from .chemical_pool import ChemicalPool
 from .domain import decay_chemistry, float_or, reorder_formatted_memory_blocks, settle_rest
+
+POOL = ChemicalPool()
 
 
 def settle_state(now_ms: float) -> dict[str, Any]:
@@ -64,7 +67,7 @@ def record_request(now_ms: float) -> None:
         if state["emergency_stop"]:
             return None
         state = settle_before_transition(state, now_ms)
-        state["energy"] = max(0.0, state["energy"] - 0.05 * state["temperament"]["metabolism"])
+        POOL.apply("request", state)
         state["last_interaction_at"] = now_ms
         state["last_settled_at"] = now_ms
         return state
@@ -80,7 +83,7 @@ def record_turn(now_ms: float, *, success: bool) -> None:
         if state["emergency_stop"]:
             return None
         state = settle_before_transition(state, now_ms)
-        state["chemistry"]["dopamine"] = min(100.0, state["chemistry"]["dopamine"] + 5.0)
+        POOL.apply("turn_complete", state)
         state["last_interaction_at"] = now_ms
         state["last_settled_at"] = now_ms
         return state
@@ -99,8 +102,7 @@ def record_api_error(now_ms: float, *, error_type: str, retryable: bool | None) 
         if state["emergency_stop"]:
             return None
         state = settle_before_transition(state, now_ms)
-        sensitivity = state["temperament"]["sensitivity"]
-        state["chemistry"]["cortisol"] = min(100.0, state["chemistry"]["cortisol"] + 20.0 * sensitivity)
+        POOL.apply("provider_error", state)
         _open_or_reactivate_gap(state, f"Observed transient provider error: {error[:120]}", "api_request_error", now_ms)
         state["last_settled_at"] = now_ms
         return state

@@ -9,94 +9,23 @@ from __future__ import annotations
 
 import math
 import re
-import json
 from datetime import datetime
 from typing import Any
 
-DEFAULT_TEMPERAMENT = {"sensitivity": 1.0, "resilience": 1.0, "enthusiasm": 50.0, "metabolism": 1.0}
-TEMPERAMENT_RANGES = {"sensitivity": (0.5, 2.0), "resilience": (0.5, 2.0), "enthusiasm": (20.0, 80.0), "metabolism": (0.5, 2.0)}
-DEFAULT_CHEMICALS = {
-    "dopamine": {"baseline": 50.0, "initial": 50.0, "half_life_minutes": 45.0},
-    "cortisol": {"baseline": 20.0, "initial": 20.0, "half_life_minutes": 30.0},
-    "serotonin": {"baseline": 50.0, "initial": 50.0, "half_life_minutes": 120.0},
-}
+from .chemical_pool import ChemicalPool
+from .chemistry import (  # re-exported: the public pure-math surface stays importable from domain
+    DEFAULT_TEMPERAMENT,
+    MINUTE_MS,
+    TEMPERAMENT_RANGES,
+    clamp,
+    decay_toward,
+    float_or,
+    normalize_temperament,
+)
+from .genome import DEFAULT_CHEMICALS, parse_genome
+
 DEFAULT_SLEEP_CONFIG = {"recover_per_minute": 0.2, "sleep_recover_per_minute": 1.0, "sleep_energy_threshold": 20.0, "natural_cap": 60.0, "overshoot_decay_per_minute": 0.1, "quiet_hours": (0, 6), "step_minutes": 5}
 MAX_SLEEP_STEPS = 2000
-MINUTE_MS = 60_000.0
-
-
-def clamp(value: float, minimum: float = 0.0, maximum: float = 100.0) -> float:
-    if not math.isfinite(value):
-        return minimum
-    return min(maximum, max(minimum, value))
-
-
-def decay_toward(current: float, baseline: float, elapsed_ms: float, half_life_ms: float) -> float:
-    if not math.isfinite(current):
-        return baseline
-    if elapsed_ms <= 0 or half_life_ms <= 0:
-        return clamp(current)
-    return clamp(baseline + (current - baseline) * 0.5 ** (elapsed_ms / half_life_ms))
-
-
-def normalize_temperament(raw: Any) -> dict[str, float]:
-    source = raw if isinstance(raw, dict) else {}
-    result = {}
-    for key, (minimum, maximum) in TEMPERAMENT_RANGES.items():
-        try:
-            value = float(source.get(key))
-        except (TypeError, ValueError):
-            value = DEFAULT_TEMPERAMENT[key]
-        if not math.isfinite(value):
-            value = DEFAULT_TEMPERAMENT[key]
-        result[key] = clamp(value, minimum, maximum)
-    result["resilience"] = max(0.1, result["resilience"])
-    return result
-
-
-def parse_genome(text: str) -> tuple[dict[str, Any], list[str]]:
-    """Parse adopted DLC genome fields without allowing malformed input to disable defaults."""
-    problems: list[str] = []
-    try:
-        raw = json.loads(text)
-    except (TypeError, ValueError) as exc:
-        return {"version": 1, "chemicals": dict(DEFAULT_CHEMICALS), "temperament": dict(DEFAULT_TEMPERAMENT)}, [f"invalid JSON: {exc}"]
-    if not isinstance(raw, dict):
-        return {"version": 1, "chemicals": dict(DEFAULT_CHEMICALS), "temperament": dict(DEFAULT_TEMPERAMENT)}, ["genome root must be an object"]
-    chemicals = raw.get("chemicals")
-    parsed = {}
-    if isinstance(chemicals, list):
-        for item in chemicals:
-            if not isinstance(item, dict) or item.get("id") not in DEFAULT_CHEMICALS:
-                continue
-            key = item["id"]
-            base = DEFAULT_CHEMICALS[key]
-            parsed[key] = {
-                **base,
-                "baseline": clamp(float_or(item.get("baseline"), base["baseline"])),
-                "initial": clamp(float_or(item.get("initial"), item.get("baseline", base["initial"]))),
-                "half_life_minutes": max(0.1, float_or(item.get("halfLifeMinutes"), base["half_life_minutes"])),
-            }
-    else:
-        problems.append("chemicals must be a list")
-    missing = set(DEFAULT_CHEMICALS) - set(parsed)
-    if missing:
-        problems.append("missing core chemicals; defaults restored: " + ", ".join(sorted(missing)))
-        for key in missing:
-            parsed[key] = dict(DEFAULT_CHEMICALS[key])
-    return {
-        "version": int(float_or(raw.get("version"), 1)),
-        "chemicals": parsed,
-        "temperament": normalize_temperament(raw.get("temperament")),
-    }, problems
-
-
-def float_or(value: Any, fallback: float) -> float:
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return fallback
-    return number if math.isfinite(number) else fallback
 
 
 def pick_temperature(chemistry: dict[str, Any], energy: float) -> float:
@@ -177,8 +106,7 @@ def find_gap_sentence(text: str, max_len: int = 100) -> str | None:
 
 def default_state(now_ms: float) -> dict[str, Any]:
     temperament = dict(DEFAULT_TEMPERAMENT)
-    chemistry = {key: value["initial"] for key, value in DEFAULT_CHEMICALS.items()}
-    chemistry["dopamine"] = temperament["enthusiasm"]
+    chemistry = ChemicalPool().initial_chemistry(temperament)
     return {"schema_version": 1, "chemistry": chemistry, "energy": 100.0, "temperament": temperament,
             "last_interaction_at": now_ms, "last_settled_at": now_ms, "gaps": [],
             "emergency_stop": False}
@@ -189,12 +117,7 @@ def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
     if not isinstance(raw, dict):
         return state
     state["temperament"] = normalize_temperament(raw.get("temperament"))
-    chemistry = raw.get("chemistry")
-    state["chemistry"]["dopamine"] = state["temperament"]["enthusiasm"]
-    if isinstance(chemistry, dict):
-        for key, spec in DEFAULT_CHEMICALS.items():
-            baseline = state["temperament"]["enthusiasm"] if key == "dopamine" else spec["initial"]
-            state["chemistry"][key] = clamp(float_or(chemistry.get(key), baseline))
+    state["chemistry"] = ChemicalPool().normalize_chemistry(raw.get("chemistry"), state["temperament"])
     state["energy"] = clamp(float_or(raw.get("energy"), 100.0))
     state["last_interaction_at"] = max(0.0, float_or(raw.get("last_interaction_at"), now_ms))
     state["last_settled_at"] = max(0.0, float_or(raw.get("last_settled_at"), now_ms))
@@ -207,20 +130,11 @@ def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
 
 def decay_chemistry(chemistry: dict[str, float], elapsed_ms: float, temperament: dict[str, float],
                     *, energy: float, high_tension_gap: bool) -> dict[str, float]:
-    if elapsed_ms <= 0:
-        return {key: clamp(value) for key, value in chemistry.items()}
-    resilience = max(0.1, float_or(temperament.get("resilience"), 1.0))
-    relaxed = {}
-    for key, spec in DEFAULT_CHEMICALS.items():
-        half_life = max(0.1, spec["half_life_minutes"] / resilience) * MINUTE_MS
-        baseline = temperament.get("enthusiasm", spec["baseline"]) if key == "dopamine" else spec["baseline"]
-        relaxed[key] = decay_toward(float_or(chemistry.get(key), spec["initial"]), baseline, elapsed_ms, half_life)
-    minutes = elapsed_ms / MINUTE_MS
-    if relaxed["cortisol"] >= 70:
-        relaxed["serotonin"] = clamp(relaxed["serotonin"] - 1.5 * minutes)
-    elif energy > 80 and not high_tension_gap and chemistry.get("serotonin", 50.0) < 100:
-        relaxed["serotonin"] = clamp(min(100.0, relaxed["serotonin"] + 0.8 * minutes))
-    return relaxed
+    """Thin compatibility wrapper; the rule engine lives in ``ChemicalPool.decay``."""
+    return ChemicalPool().decay(
+        {"chemistry": chemistry, "temperament": temperament, "energy": energy},
+        0.0, elapsed_ms=elapsed_ms, energy=energy, high_tension_gap=high_tension_gap,
+    )
 
 
 def is_quiet_hour(timestamp_ms: float, quiet_hours: tuple[int, int] | None) -> bool:
