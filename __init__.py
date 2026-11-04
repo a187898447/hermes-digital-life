@@ -520,8 +520,9 @@ def register(ctx) -> None:
                 conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
                 try:
                     rows = conn.execute(
-                        "SELECT chat_id, chat_type, MAX(last_active) AS seen FROM sessions "
-                        "WHERE platform = 'qqbot' AND chat_id IS NOT NULL AND chat_id != '' "
+                        "SELECT chat_id, chat_type, MAX(started_at) AS seen FROM sessions "
+                        "WHERE source = 'qqbot' AND chat_id IS NOT NULL AND chat_id != '' "
+                        "AND chat_id NOT LIKE 'local-%' "
                         "GROUP BY chat_id ORDER BY seen DESC"
                     ).fetchall()
                 finally:
