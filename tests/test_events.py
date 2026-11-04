@@ -58,6 +58,10 @@ class RecordingContext:
     def register_middleware(self, name, callback):
         self.middleware.append((name, callback))
 
+    def register_command(self, name, handler, **kwargs):
+        self.commands = getattr(self, "commands", {})
+        self.commands[name] = handler
+
     def register_cli_command(self, **kwargs):
         self.cli.append(kwargs)
 
@@ -287,6 +291,19 @@ class RegistrationTests(unittest.TestCase):
             self.assertEqual(event["kind"], "turn")
             self.assertIn("我叫阿远", event["text"])
             self.assertIn("行，记下了", event["text"])
+
+    def test_core_chat_command_answers_only_in_dm_or_for_an_owner(self):
+        from types import SimpleNamespace
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        commands = {}
+        ctx.register_command = lambda name, handler, **kw: commands.setdefault(name, handler)
+        plugin.register(ctx)
+        handler = commands["core"]
+        text = handler("", source=SimpleNamespace(chat_type="dm", user_id="u1"), platform="qqbot")
+        self.assertIn("digital-life-core", text)
+        group = handler("", source=SimpleNamespace(chat_type="group", user_id="u1"), platform="qqbot")
+        self.assertIn("私聊", group)
 
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()

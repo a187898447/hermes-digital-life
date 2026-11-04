@@ -663,6 +663,17 @@ def register(ctx) -> None:
     ctx.register_hook("api_request_error", _api_error)
     ctx.register_hook("post_tool_call", _post_tool_call)
     ctx.register_middleware("llm_request", _affect_request)
+    def core_command(raw_args, *, source=None, platform=""):
+        from .digital_life.cli import format_core
+        from .digital_life.runtime import status_snapshot
+        chat_type = getattr(source, "chat_type", "dm")
+        user_id = str(getattr(source, "user_id", "") or "")
+        if chat_type != "dm" and user_id not in _reset_admins():
+            return "这个只在私聊里看。"
+        return format_core(status_snapshot(time.time() * 1000))
+
+    ctx.register_command("core", core_command,
+                         description="Show the digital-life-core state values")
     ctx.register_cli_command(
         name="hermes-lover",
         help="Inspect and control hermes-lover digital-life state",

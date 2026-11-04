@@ -10,6 +10,23 @@ import time
 from .runtime import resolve_gap, status_snapshot, stop_state
 
 
+def format_core(snap: dict) -> str:
+    """Plain-text view of the life state, shared by the CLI and the /core chat command."""
+    chem = snap.get("chemistry") or {}
+    gaps = snap.get("gaps") or []
+    updated = time.strftime("%Y-%m-%d %H:%M",
+                            time.localtime((snap.get("updated_at") or time.time() * 1000) / 1000))
+    tail = f"（最近：{str(gaps[-1].get('summary', ''))[:40]}）" if gaps else ""
+    return "\n".join([
+        "digital-life-core 状态",
+        f"  情绪   多巴胺 {float(chem.get('dopamine', 0)):.1f}  皮质醇 {float(chem.get('cortisol', 0)):.1f}  血清素 {float(chem.get('serotonin', 0)):.1f}",
+        f"  能量   {float(snap.get('energy', 0)):.1f}/100",
+        f"  未解问题 {len(gaps)}{tail}",
+        f"  紧急停止 {'是' if snap.get('emergency_stop') else '否'}",
+        f"  最近更新 {updated}",
+    ])
+
+
 def setup_parser(subparser: argparse.ArgumentParser) -> None:
     actions = subparser.add_subparsers(dest="digital_life_action", required=True)
     actions.add_parser("core", help="Show the current life-state values in plain text")
@@ -47,16 +64,7 @@ def run_command(args: argparse.Namespace) -> int:
         print(f"{'Enabled' if args.beats_action == 'enable' else 'Paused'} {changed} beat job(s).")
         return 0
     if action == "core":
-        snap = status_snapshot(now_ms)
-        chem = snap.get("chemistry") or {}
-        updated = time.strftime("%Y-%m-%d %H:%M", time.localtime((snap.get("updated_at") or now_ms) / 1000))
-        gaps = snap.get("gaps") or []
-        print("digital-life-core 状态")
-        print(f"  情绪   多巴胺 {float(chem.get('dopamine', 0)):.1f}  皮质醇 {float(chem.get('cortisol', 0)):.1f}  血清素 {float(chem.get('serotonin', 0)):.1f}")
-        print(f"  能量   {float(snap.get('energy', 0)):.1f}/100")
-        print(f"  未解问题 {len(gaps)}" + (f"（最近：{gaps[-1].get('summary', '')[:40]}）" if gaps else ""))
-        print(f"  紧急停止 {'是' if snap.get('emergency_stop') else '否'}")
-        print(f"  最近更新 {updated}")
+        print(format_core(status_snapshot(now_ms)))
         return 0
     if action == "status":
         print(json.dumps(status_snapshot(now_ms), ensure_ascii=False, indent=2))
