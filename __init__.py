@@ -509,12 +509,27 @@ def register(ctx) -> None:
         return json.dumps(result, ensure_ascii=False)
 
     def beat_targets(args, **kwargs):
-        from .digital_life import proactive
-        targets = proactive.load_targets()
-        return json.dumps({"targets": [
-            {"chat_id": str(t.get("chat_id")), "chat_type": str(t.get("chat_type") or "")}
-            for t in targets if str(t.get("chat_id") or "").startswith(("F", "9"))
-        ]}, ensure_ascii=False)
+        import os
+        from pathlib import Path as _Path
+        home = os.environ.get("HERMES_HOME") or str(_Path.home() / ".hermes")
+        db = _Path(home) / "state.db"
+        rows = []
+        if db.exists():
+            import sqlite3
+            try:
+                conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+                try:
+                    rows = conn.execute(
+                        "SELECT chat_id, chat_type, MAX(last_active) AS seen FROM sessions "
+                        "WHERE platform = 'qqbot' AND chat_id IS NOT NULL AND chat_id != '' "
+                        "GROUP BY chat_id ORDER BY seen DESC"
+                    ).fetchall()
+                finally:
+                    conn.close()
+            except sqlite3.Error:
+                rows = []
+        targets = [{"chat_id": str(r[0]), "chat_type": str(r[1] or "")} for r in rows]
+        return json.dumps({"targets": targets}, ensure_ascii=False)
 
     def beat_send(args, **kwargs):
         chat_id = str(args.get("chat_id") or "").strip()
