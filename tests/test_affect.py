@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import sys
+import types
 import unittest
+from unittest.mock import patch
 
 from digital_life import affect
 from digital_life.domain import default_state, normalize_state
@@ -81,10 +84,6 @@ class RecordAndMigrationTests(unittest.TestCase):
         self.assertEqual(state["affect_history"][0]["at"], 1.0)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class IntegrationTests(unittest.TestCase):
     """The frame must survive the real runtime transitions."""
 
@@ -94,19 +93,21 @@ class IntegrationTests(unittest.TestCase):
             return state if result is None else result
         return update_state
 
-    def test_record_turn_snapshots_before_the_reward(self):
-        from digital_life import runtime
-        import sys, types
-        sys.modules.setdefault("plugins", types.ModuleType("plugins"))
+    def _fake_plugins(self):
         stub = types.ModuleType("plugins.plugin_storage")
         stub.plugin_db = lambda *a, **k: None
-        sys.modules.setdefault("plugins.plugin_storage", stub)
-        from digital_life import storage
+        return {"plugins": types.ModuleType("plugins"), "plugins.plugin_storage": stub}
+
+    def test_record_turn_snapshots_before_the_reward(self):
+        from digital_life import runtime
 
         state = state_with(energy=50)
         before = state["chemistry"]["dopamine"]
-        with patch.object(storage, "update_state", self._fake_update(state)):
-            runtime.record_turn(1_000_000, success=True)
+        with patch.dict(sys.modules, self._fake_plugins()):
+            from digital_life import storage
+
+            with patch.object(storage, "update_state", self._fake_update(state)):
+                runtime.record_turn(1_000_000, success=True)
         self.assertEqual(len(state["affect_history"]), 1)
         self.assertEqual(state["affect_history"][0]["dopamine"], before)
         self.assertGreater(state["chemistry"]["dopamine"], before)
@@ -123,4 +124,5 @@ class IntegrationTests(unittest.TestCase):
         self.assertTrue(snap["affect"]["hint"])
 
 
-from unittest.mock import patch  # noqa: E402 - kept at the bottom so earlier tests stay readable
+if __name__ == "__main__":
+    unittest.main()
