@@ -24,7 +24,7 @@ For upgrades, back up the target profile's `plugin-data/hermes-lover/` directory
 - Chinese assistant uncertainty/inquiry detection with existing gap deduplication and reactivation.
 - Task-defined chemistry/energy temperature mapping, only when request temperature is omitted or null.
 - Lossless memory affinity ranking helpers.
-- Operator CLI: `hermes hermes-lover status|stop|resume|resolve-gap <id>`.
+- Operator CLI: `hermes hermes-lover core|status|stop|resume|resolve-gap <id>`.
 - Bundled profile skills: `hermes-lover-guide` (onboarding, 女娲→SOUL.md translation, QQ binding, beat enablement).
 - Bundled personas: `SOUL.template.md` plus the worked example `personas/001-deepseek-xiaojingyu/` (persona card + finished `SOUL.md`), copied into every new profile's `personas/`.
 

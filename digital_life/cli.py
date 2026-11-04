@@ -12,7 +12,8 @@ from .runtime import resolve_gap, status_snapshot, stop_state
 
 def setup_parser(subparser: argparse.ArgumentParser) -> None:
     actions = subparser.add_subparsers(dest="digital_life_action", required=True)
-    actions.add_parser("status", help="Read current life state")
+    actions.add_parser("core", help="Show the current life-state values in plain text")
+    actions.add_parser("status", help="Read current life state as JSON")
     actions.add_parser("stop", help="Freeze life-state transitions")
     actions.add_parser("resume", help="Resume life-state transitions")
     actions.add_parser("memory-rebuild", help="Rebuild the event-memory index from daily logs")
@@ -44,6 +45,18 @@ def run_command(args: argparse.Namespace) -> int:
         from . import proactive
         changed = proactive.set_beats_enabled(args.beats_action == "enable")
         print(f"{'Enabled' if args.beats_action == 'enable' else 'Paused'} {changed} beat job(s).")
+        return 0
+    if action == "core":
+        snap = status_snapshot(now_ms)
+        chem = snap.get("chemistry") or {}
+        updated = time.strftime("%Y-%m-%d %H:%M", time.localtime((snap.get("updated_at") or now_ms) / 1000))
+        gaps = snap.get("gaps") or []
+        print("digital-life-core 状态")
+        print(f"  情绪   多巴胺 {float(chem.get('dopamine', 0)):.1f}  皮质醇 {float(chem.get('cortisol', 0)):.1f}  血清素 {float(chem.get('serotonin', 0)):.1f}")
+        print(f"  能量   {float(snap.get('energy', 0)):.1f}/100")
+        print(f"  未解问题 {len(gaps)}" + (f"（最近：{gaps[-1].get('summary', '')[:40]}）" if gaps else ""))
+        print(f"  紧急停止 {'是' if snap.get('emergency_stop') else '否'}")
+        print(f"  最近更新 {updated}")
         return 0
     if action == "status":
         print(json.dumps(status_snapshot(now_ms), ensure_ascii=False, indent=2))
