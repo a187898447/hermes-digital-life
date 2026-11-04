@@ -16,12 +16,12 @@
 | 维度 | 本地记忆宫殿 | 腾讯云 Agent Memory | 评价 |
 |---|---|---|---|
 | 形态 | 本地 JSONL 事件日志 + SQLite FTS5 索引 | 托管服务：向量库 + 文件存储 + Memory Hub | 我们胜在零成本/隐私；它胜在规模与多人 |
-| 记忆分层 | 原始 turn、journal 两类；无原子事实层、无核心记忆层 | 四层金字塔：原始对话 → 原子记忆 → 场景记忆 → 核心记忆 | 我们缺中间两层，日记是「场景+核心」的混合体 |
+| 记忆分层 | 原始 turn、原子 fact、journal、冷层 summary；无核心记忆层 | 四层金字塔：原始对话 → 原子记忆 → 场景记忆 → 核心记忆 | 我们缺中间两层，日记是「场景+核心」的混合体 |
 | 写入 | 每轮自动捕获 + 模型显式 memory_write；去重、按会话计配额 | 短期记忆窗口 → 任务结束自动提炼入长期层 | 我们捕获密度高；它提炼质量高 |
-| 检索 | FTS5 字面（中文 bigram/英文 token）+ LIKE 回退 + BM25；打分=相关度/权重/新近/注意力 | 关键词 + 向量语义 + RRF 融合 | 我们同意异、跨表述召回弱；它语义召回强 |
+| 检索 | FTS5 字面 + 可选向量（本地 bge-small / API）+ RRF；无 embedding 自动降级 FTS | 关键词 + 向量语义 + RRF 融合 | 我们同意异、跨表述召回弱；它语义召回强 |
 | 排序 | 0.40 相关 + 0.20 权重 + 0.15 新近 + 0.25 相关×注意力；空查询用权重/新近/注意力 | RRF 融合 + 分层权重 | 接近，但缺语义向 |
-| 遗忘 | archived 归档（不删文件）+ 衰减 effective_weight；P2 才做冷层摘要 | 冷数据卸载到持久层 + 分层提炼（原始层保留） | 我们「归档不压缩」，长期会越积越多 |
-| 溯源 | 每条有 id、source_session_id；journal 无向下链接 | 每条结论保留原始来源链接，可逐层下钻 | 我们做得浅，这是最值得补的一项 |
+| 遗忘 | archived 归档（不删文件）+ 衰减 + `memory-compact` 冷层摘要 | 冷数据卸载到持久层 + 分层提炼（原始层保留） | 我们「归档不压缩」，长期会越积越多 |
+| 溯源 | journal → fact → turn 三级链接，recall 返回 sources | 每条结论保留原始来源链接，可逐层下钻 | 我们做得浅，这是最值得补的一项 |
 | 隔离 | profile 级 + chat_id 级（QQ 私聊/群） | 团队/成员/Agent 多级，Owner + 显式共享 | 我们够用但不支持团队复用 |
 | 部署/成本 | 本地文件，免费，离线可用，随 profile 备份 | 云服务，按量计费，需网络与账号 | 场景不同，不可直接替代 |
 | 隐私 | 数据不出本机 | 数据上传云端（企业可私有化） | 对 QQ 私人聊天，本地是硬优势 |
@@ -47,6 +47,12 @@
 
 ## 建议路线
 
-- P0（低成本、收益最大）：原子事实抽取（每晚一次）+ journal 引用事实 + recall 返回 sources。
-- P1：向量检索与 RRF 融合（可先只对 fact/journal 建向量，turn 不建）。
-- P2：冷层摘要与 include_cold 的默认收敛。
+- ✅ P0（低成本、收益最大）：原子事实抽取（每晚一次）+ journal 引用事实 + recall 返回 sources。
+  已完成：`kind="fact"` 带 `sources`（turn id）、`journal` 带 `refs`（fact id），未知 id 自动丢弃；
+  `memory_recall` 支持 `kind` 且每条结果返回 `sources`。
+- ✅ P1：向量检索与 RRF 融合（可先只对 fact/journal 建向量，turn 不建）。
+  已完成：本地 `bge-small-zh` / `.env` embedding API 可选接入，FTS top20 与向量 top20 做 RRF
+  （k=60），无依赖/key 或向量损坏时自动降级 FTS，`mode` 字段标明实际路径。
+- ✅ P2：冷层摘要与 include_cold 的默认收敛。
+  已完成：`hermes-lover memory-compact --days 30` 按 `(date, chat_id)` 折叠归档条目为
+  `kind="summary"`，原文保留并标记 `compacted_into`；`include_cold=true` 只返回摘要，重复执行幂等。

@@ -126,3 +126,13 @@ Selected domain rules are derived from `digital-life-core` by mashangshui (温�
   `journal` 条目，没有就让模型读昨天的宫殿记录和当前 digital-life 状态，写一篇 120–400 字的
   第一人称日记（`memory_write(kind="journal", day="YYYY-MM-DD")`，权重 2.5，锚定在被总结的那天）。
   问到某一天时先命中日记，日记没写到的细节再用 `memory_recall(day="YYYY-MM-DD")` 查当天原始条目。
+- 日记之前先提炼原子事实：同样在每天第一条 QQ 消息时，插件检查前一天有没有 `fact`，没有就让
+  模型读当天的 turn，写 1–3 条 `memory_write(kind="fact", day=..., sources=["hp-…"])`；日记再用
+  `refs` 引用这些事实。`memory_recall` 返回的每条结果都带 `sources`，可以顺着
+  日记 → 事实 → 原始对话往下查。
+- 检索默认混合：装了 `sentence-transformers` 且本地有 `BAAI/bge-small-zh-v1.5`，或在 profile 的
+  `.env` 里配了 embedding API 时，FTS5 与向量结果用 RRF（k=60）融合；没有依赖/key、向量损坏或
+  维度变化时自动退回 FTS，不会报错，结果里的 `mode` 会写明 `hybrid` 还是 `fts`。
+- `hermes-lover memory-compact --days 30` 是手动命令（不是模型工具）：把 30 天未访问的归档条目
+  按 `(date, chat_id)` 折叠成一条 ≤200 字的 `summary`，原文保留、仍可按 id 读回；`include_cold=true`
+  时只返回摘要，不展开原文。重复执行不会产生重复摘要。

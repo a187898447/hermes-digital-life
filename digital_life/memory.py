@@ -26,7 +26,7 @@ RRF_K = 60
 VECTOR_TOP = 20
 DAY_MS = 86_400_000
 DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8, "turn": 0.4,
-                   "journal": 2.5}
+                   "journal": 2.5, "summary": 1.4}
 _WRITE_LOCK = threading.RLock()
 _WORDS = re.compile(r"[\u3400-\u9fff\U00020000-\U0002fa1f]+|[a-zA-Z0-9]+")
 _ID = re.compile(r"hp-(\d{8})-(\d{4,})\Z")
@@ -51,7 +51,7 @@ def decay(weight: float, last_access_at: float, now_ms: float) -> float:
 def attention(cortisol: float) -> dict[str, float]:
     crisis, daily = (3.0, 0.1) if cortisol >= 80 else (1.8, 0.4) if cortisol >= 55 else (1.0, 1.0)
     return {"crisis": crisis, "daily": daily, "fact": 1.0, "decision": 1.0, "note": 1.0, "turn": 0.5,
-            "journal": 1.2}
+            "journal": 1.2, "summary": 1.0}
 
 
 def relevance(bm25: float) -> float:
@@ -210,6 +210,12 @@ class MemoryStore:
         elif op == "forget":
             if not _number(event["archived_at"]): raise ValueError("invalid archive time")
             entries[identifier].update(archived=True, archived_at=event["archived_at"])
+        elif op == "compact":
+            # Cold entries keep their text but point at the summary that now represents them.
+            target = event["into"]
+            if not isinstance(target, str) or not _ID.fullmatch(target) or target not in entries:
+                raise ValueError("invalid summary id")
+            entries[identifier]["compacted_into"] = target
         else:
             raise ValueError("unknown operation")
 
@@ -222,7 +228,7 @@ class MemoryStore:
         db.execute("DROP TABLE IF EXISTS entries_fts")
         db.execute("DROP TABLE IF EXISTS entries")
         db.execute("DROP TABLE IF EXISTS cache_meta")
-        db.execute("CREATE TABLE entries(id TEXT PRIMARY KEY, text TEXT, archived INTEGER, payload TEXT)")
+        db.execute("CREATE TABLE entries(id TEXT PRIMARY KEY, text TEXT, archived INTEGER, compacted_into TEXT, payload TEXT)")
         try:
             db.execute("CREATE VIRTUAL TABLE entries_fts USING fts5(id UNINDEXED, grams, tokenize='unicode61')")
         except sqlite3.OperationalError as exc:
@@ -231,8 +237,9 @@ class MemoryStore:
         # Vectors survive a rebuild by id; entries are immutable, so only missing ids are embedded.
         db.execute("CREATE TABLE IF NOT EXISTS vectors(id TEXT PRIMARY KEY, dim INTEGER NOT NULL, blob BLOB NOT NULL)")
         for row in entries.values():
-            db.execute("INSERT INTO entries VALUES(?,?,?,?)", (
-                row["id"], row["text"], int(row["archived"]), json.dumps(row, ensure_ascii=False)))
+            db.execute("INSERT INTO entries VALUES(?,?,?,?,?)", (
+                row["id"], row["text"], int(row["archived"]), row.get("compacted_into") or "",
+                json.dumps(row, ensure_ascii=False)))
             db.execute("INSERT INTO entries_fts VALUES(?,?)", (row["id"], " ".join(tokens(row["text"]))))
 
     def _ensure_vectors(self, db, entries):
@@ -484,8 +491,90 @@ class MemoryStore:
             return len(targets)
 
     @staticmethod
+    def _summary_text(rows, date, chat_id):
+        """A deterministic digest: date, chat, a taste of each entry, and the ids it covers."""
+        head = f"{date} {chat_id or '私聊'} 共 {len(rows)} 条："
+        ids = [row["id"] for row in rows]
+        tail = ""
+        for count in range(len(ids), 0, -1):
+            suffix = f"（来源 {' '.join(ids[:count])}"
+            if count < len(ids):
+                suffix += f" 等 {len(ids)} 条"
+            suffix += "）"
+            if len(head) + len(suffix) <= 200:
+                tail = suffix
+                break
+        if not tail:
+            head = f"{date} 共 {len(rows)} 条："
+            tail = f"（来源 {ids[0]}）"[:(200 - len(head))]
+        room = max(1, 200 - len(head) - len(tail))
+        body = "；".join(row["text"].replace("\n", " ") for row in rows)
+        if len(body) > room:
+            body = body[:room - 1] + "…"
+        return (head + body + tail)[:200]
+
+    def compact(self, days=30, *, now_ms=None):
+        """Fold archived entries untouched for `days` into one cold summary per (date, chat).
+
+        Summaries are archived too, so normal recall stays unchanged and include_cold shows
+        the summary instead of expanding the originals, which remain readable by id.
+        """
+        if type(days) is not int or not 1 <= days <= 3650:
+            raise ValueError("days must be an integer between 1 and 3650")
+        now_ms = _now(now_ms)
+        cutoff = now_ms - days * DAY_MS
+        with self._locked():
+            self._require_running()
+            self._append([], now_ms)
+            entries, digest = self._replay()
+            try:
+                self._sync(entries, digest)
+            except (sqlite3.Error, RuntimeError, OSError):
+                logger.warning("Memory index unavailable before compact", exc_info=True)
+            groups: dict[tuple[str, str], list[dict]] = {}
+            for entry in entries.values():
+                if entry.get("kind") == "summary" or not entry.get("archived"):
+                    continue
+                if entry.get("compacted_into") or entry.get("last_access_at", 0) >= cutoff:
+                    continue
+                groups.setdefault((entry["date"], entry.get("chat_id", "")), []).append(entry)
+            if not groups:
+                return {"ok": True, "groups": 0, "summaries": 0, "compacted": 0}
+            seqs: dict[str, int] = {}
+            events = []
+            for date, chat_id in sorted(groups):
+                rows = sorted(groups[(date, chat_id)], key=lambda row: (row["created_at"], row["id"]))
+                seq = seqs.get(date)
+                if seq is None:
+                    seq = max((int(e["id"].rsplit("-", 1)[1]) for e in entries.values() if e["date"] == date),
+                              default=0) + 1
+                seqs[date] = seq + 1
+                summary_id = f"hp-{date.replace('-', '')}-{seq:04d}"
+                ids = [row["id"] for row in rows]
+                events.append({
+                    "op": "add", "id": summary_id, "text": self._summary_text(rows, date, chat_id),
+                    "kind": "summary", "weight": DEFAULT_WEIGHTS["summary"],
+                    "cortisol": self._state().get("chemistry", {}).get("cortisol", 20),
+                    "created_at": now_ms, "last_access_at": now_ms, "hits": 0,
+                    "source_session_id": "memory-compact", "chat_id": chat_id,
+                    "chat_type": rows[0].get("chat_type", ""), "speaker": "",
+                    "sources": ids[:20], "refs": []})
+                events.append({"op": "forget", "id": summary_id, "archived_at": now_ms})
+                events.extend({"op": "compact", "id": identifier, "into": summary_id, "at": now_ms}
+                              for identifier in ids)
+            self._append(events, now_ms)
+            try:
+                entries, digest = self._replay()
+                self._save_index(entries, digest)
+            except (sqlite3.Error, RuntimeError, OSError):
+                logger.warning("Memory summaries persisted but index update failed", exc_info=True)
+            return {"ok": True, "groups": len(groups), "summaries": len(groups),
+                    "compacted": sum(len(rows) for rows in groups.values())}
+
+    @staticmethod
     def _query(db, query, include_cold):
-        condition = "1" if include_cold else "e.archived=0"
+        # Cold recall shows summaries and never expands the entries they already cover.
+        condition = "e.archived=1 AND e.compacted_into=''" if include_cold else "e.archived=0"
         if not query:
             rows = db.execute(f"SELECT e.payload, 0 FROM entries e WHERE {condition}").fetchall()
             return [(json.loads(row), 0.0) for row, _ in rows]
@@ -529,6 +618,8 @@ class MemoryStore:
                 raise ValueError("corrupt embedding")
             entry = entries.get(identifier)
             if entry is None or (not include_cold and entry.get("archived")):
+                continue
+            if include_cold and entry.get("compacted_into"):
                 continue
             if chat_id and entry.get("chat_id", "") not in ("", chat_id):
                 continue

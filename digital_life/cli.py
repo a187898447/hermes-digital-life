@@ -34,6 +34,9 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
     actions.add_parser("stop", help="Freeze life-state transitions")
     actions.add_parser("resume", help="Resume life-state transitions")
     actions.add_parser("memory-rebuild", help="Rebuild the event-memory index from daily logs")
+    compact = actions.add_parser("memory-compact", help="Fold old archived memories into cold summaries")
+    compact.add_argument("--days", type=int, default=30,
+                         help="Only compact entries unused for this many days (default: 30)")
     beats = actions.add_parser("beats", help="Enable or pause every proactive beat job")
     beats.add_argument("beats_action", choices=["enable", "disable"])
     resolve = actions.add_parser("resolve-gap", help="Close one observed gap by identifier")
@@ -59,6 +62,20 @@ def run_command(args: argparse.Namespace) -> int:
             return 0
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
             print(f"Memory rebuild failed: {exc}")
+            return 1
+    if action == "memory-compact":
+        from . import storage
+        from .memory import MemoryStore
+        store = MemoryStore(
+            storage.data_root(),
+            connect=lambda: storage.plugin_db(storage.PLUGIN_NAME, filename="memory-index.db"),
+            life_state=lambda: storage.read_state(time.time() * 1000),
+        )
+        try:
+            print(json.dumps(store.compact(args.days), ensure_ascii=False))
+            return 0
+        except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
+            print(f"Memory compaction failed: {exc}")
             return 1
     if action == "beats":
         from . import proactive

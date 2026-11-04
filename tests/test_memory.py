@@ -9,6 +9,7 @@ import os
 import sqlite3
 import struct
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -452,6 +453,106 @@ class HybridRecallTests(unittest.TestCase):
         second = [row["id"] for row in self.recall("熬夜")["shown"]]
         self.assertEqual(first, second)
         self.assertEqual(len(first), 2)
+
+
+class CompactTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.store = memory.MemoryStore(self.root, embedder=False)
+        self.later = NOW + 60 * DAY
+
+    def seed(self, *texts, day="2026-10-01", chat_id="", now_ms=NOW):
+        return [self.store.write(text, day=day, chat_id=chat_id, now_ms=now_ms)["id"] for text in texts]
+
+    def test_compact_groups_archived_entries_by_date_and_chat(self):
+        first, second = self.seed("十月一日群聊一件事", "十月一日群聊另一件事", chat_id="qq:1")
+        other = self.seed("十月一日私聊", chat_id="qq:2")[0]
+        third = self.seed("十月二日群聊", day="2026-10-02")[0]
+        self.store.clear(now_ms=NOW)
+        live = self.store.write("今天的新事", now_ms=NOW + 10 * DAY)["id"]
+        result = self.store.compact(days=30, now_ms=self.later)
+        self.assertEqual(result, {"ok": True, "groups": 3, "summaries": 3, "compacted": 4})
+        entries = self.store.read_entries()
+        summaries = [entry for entry in entries.values() if entry["kind"] == "summary"]
+        self.assertEqual(len(summaries), 3)
+        for summary in summaries:
+            self.assertTrue(summary["archived"])
+            self.assertLessEqual(len(summary["text"]), 200)
+            self.assertIn("来源", summary["text"])
+        for group in ([first, second], [other], [third]):
+            target = entries[group[0]]["compacted_into"]
+            self.assertTrue(target)
+            for identifier in group:
+                self.assertEqual(entries[identifier]["compacted_into"], target)
+                self.assertIn(identifier, entries[target]["text"])
+            self.assertEqual(sorted(entries[target]["sources"]), sorted(group))
+        self.assertEqual(entries[live]["compacted_into"], "")
+
+    def test_second_compact_is_idempotent(self):
+        self.seed("旧事一", "旧事二")
+        self.store.clear(now_ms=NOW)
+        self.store.compact(days=30, now_ms=self.later)
+        again = self.store.compact(days=30, now_ms=self.later)
+        self.assertEqual(again, {"ok": True, "groups": 0, "summaries": 0, "compacted": 0})
+        summaries = [e for e in self.store.read_entries().values() if e["kind"] == "summary"]
+        self.assertEqual(len(summaries), 1)
+
+    def test_include_cold_shows_the_summary_instead_of_the_originals(self):
+        first, second = self.seed("旧事一", "旧事二")
+        self.store.clear(now_ms=NOW)
+        before = self.store.recall(include_cold=True, now_ms=NOW)
+        self.assertEqual(before["matched"], 2)
+        self.assertEqual(before["total"], 0)
+        self.store.compact(days=30, now_ms=self.later)
+        cold = self.store.recall(include_cold=True, now_ms=self.later)
+        self.assertEqual([row["kind"] for row in cold["shown"]], ["summary"])
+        self.assertEqual(cold["matched"], 1)
+        self.assertEqual(cold["total"], 0)
+        self.assertIn(first, cold["shown"][0]["text"])
+        self.assertEqual(sorted(cold["shown"][0]["sources"]), sorted([first, second]))
+        self.assertEqual(self.store.recall(now_ms=self.later)["matched"], 0)
+        original = self.store.get(first)
+        self.assertEqual(original["text"], "旧事一")
+        self.assertEqual(original["compacted_into"], cold["shown"][0]["id"])
+
+    def test_recently_accessed_entries_are_left_alone(self):
+        identifier = self.seed("旧事")[0]
+        self.store.clear(now_ms=NOW)
+        self.store.recall(include_cold=True, now_ms=NOW + 40 * DAY)
+        self.assertEqual(self.store.compact(days=30, now_ms=self.later)["summaries"], 0)
+        self.assertEqual(self.store.get(identifier)["compacted_into"], "")
+
+    def test_compact_validates_days(self):
+        with self.assertRaises(ValueError):
+            self.store.compact(days=0)
+        with self.assertRaises(ValueError):
+            self.store.compact(days="30")
+
+    def test_parser_exposes_memory_compact(self):
+        from argparse import ArgumentParser
+        from digital_life import cli
+        parser = ArgumentParser()
+        cli.setup_parser(parser)
+        args = parser.parse_args(["memory-compact", "--days", "7"])
+        self.assertEqual(args.days, 7)
+        self.assertEqual(parser.parse_args(["memory-compact"]).days, 30)
+
+    def test_compact_cli_runs_against_plugin_storage(self):
+        from argparse import Namespace
+        from digital_life import cli, storage
+        old = time.time() * 1000 - 40 * DAY
+        self.store.write("旧事", now_ms=old)
+        self.store.clear(now_ms=old)
+        with (
+            patch.object(storage, "data_root", return_value=self.root),
+            patch.object(storage, "plugin_db", side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+            patch.object(storage, "read_state", return_value={}),
+            patch("builtins.print") as printed,
+        ):
+            self.assertEqual(cli.run_command(Namespace(digital_life_action="memory-compact", days=30)), 0)
+        self.assertEqual(json.loads(printed.call_args[0][0])["summaries"], 1)
 
 
 class ScoringTests(unittest.TestCase):
