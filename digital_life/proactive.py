@@ -70,6 +70,13 @@ def load_targets() -> list[dict[str, Any]]:
     return [item for item in data if isinstance(item, dict) and item.get("chat_id")]
 
 
+def subscribed_chats() -> set[str] | None:
+    """Chat ids that opted in, or None when the file does not exist yet (legacy: everyone)."""
+    if not _targets_path().exists():
+        return None
+    return {str(item["chat_id"]) for item in load_targets()}
+
+
 def _save_targets(targets: list[dict[str, Any]]) -> None:
     path = _targets_path()
     tmp = path.with_suffix(".tmp")

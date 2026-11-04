@@ -761,6 +761,9 @@ def register(ctx) -> None:
                     conn.close()
             except sqlite3.Error:
                 rows = []
+        opted_in = digital_life.proactive.subscribed_chats()
+        if opted_in is not None:
+            rows = [row for row in rows if str(row[0]) in opted_in]
         now_ms = time.time() * 1000
         targets = [
             {"chat_id": str(r[0]), "chat_type": str(r[1] or ""),
