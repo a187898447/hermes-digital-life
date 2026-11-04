@@ -112,6 +112,32 @@ class MemoryTests(unittest.TestCase):
             self.assertEqual(json.loads(handlers["memory_recall"]({}))["returned"], 1)
             self.assertEqual(files(self.root), before)
 
+    def test_journal_gate_is_per_chat_and_speaker_is_per_session(self):
+        from test_events import plugin, RecordingContext
+        import importlib
+        host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default: True
+        plugin.register(ctx)
+        handlers = {tool["name"]: tool["handler"] for tool in ctx.tools}
+        plugin._JOURNAL_PROMPTED.clear()
+        plugin._FACT_PROMPTED.clear()
+        self.store.write("那天聊过一件旧事", kind="turn", day="2026-11-01")
+        with (
+            patch.object(host_storage, "data_root", return_value=self.root),
+            patch.object(host_storage, "plugin_db",
+                         side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+            patch.object(plugin, "_TURN_META", {"s-a": {"sender": "u-a"}}),
+        ):
+            first = plugin._JOURNAL_CHECK("qqbot", "chat-a")
+            second = plugin._JOURNAL_CHECK("qqbot", "chat-b")
+            self.assertIn("2026-11-01", first)
+            self.assertIn("2026-11-01", second)
+            self.assertEqual(plugin._JOURNAL_CHECK("qqbot", "chat-a") or "", "")
+            handlers["memory_write"]({"text": "无归属的一条"}, session_id="s-b")
+        entry = next(iter(e for e in self.store.read_entries().values() if e["text"] == "无归属的一条"))
+        self.assertEqual(entry.get("speaker"), "")
+
     def test_scheduled_runs_may_recall_a_named_chat(self):
         from test_events import plugin, RecordingContext
         import importlib

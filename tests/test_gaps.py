@@ -260,6 +260,18 @@ class StateNormalizationTests(unittest.TestCase):
 
 
 class SiblingWindowTests(unittest.TestCase):
+    def test_close_gap_only_touches_the_given_chat(self):
+        state = domain.default_state(NOW)
+        base = {"summary": "DeepSeek 有 app 吗", "query": "DeepSeek 有 app 吗", "status": "open",
+                "tension": 0.5, "created_at": NOW}
+        state["gaps"] = [{"id": "g-a", **base, "chat": "chat-a"},
+                         {"id": "g-b", **base, "chat": "chat-b"}]
+        closed = gaps.close_gap(state, by="observed_search_success", now_ms=NOW + MINUTE,
+                                match_text="DeepSeek 有 app 吗", chat="chat-a")
+        self.assertEqual([gap["id"] for gap in closed], ["g-a"])
+        self.assertEqual(state["gaps"][0]["status"], "resolved")
+        self.assertEqual(state["gaps"][1]["status"], "open")
+
     def test_resolved_gap_without_timestamps_is_not_a_recent_sibling(self):
         resolved = {"id": "gap-old", "summary": "火星营业时间", "status": "resolved"}
         fresh = {"id": "gap-new", "summary": "火星营业时间", "status": "open", "created_at": NOW}

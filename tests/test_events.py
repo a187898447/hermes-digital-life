@@ -337,6 +337,13 @@ class RegistrationTests(unittest.TestCase):
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertIn("chat_id", schemas["memory_recall"])
 
+    def test_unreadable_session_store_fails_closed(self):
+        import os
+        plugin._SOURCE_CACHE.clear()
+        with patch.dict(os.environ, {"HERMES_HOME": "/nonexistent-home-for-a-test"}):
+            self.assertIsNone(plugin._session_source("s-1"))
+        plugin._SOURCE_CACHE.clear()
+
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)

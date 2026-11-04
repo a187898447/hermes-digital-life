@@ -173,15 +173,24 @@ def prune_gaps(state: dict[str, Any], now_ms: float) -> int:
 
 
 def close_gap(state: dict[str, Any], *, by: str, now_ms: float, match_text: str | None = None,
-              gap_id: str | None = None, threshold: float = GAP_SIMILARITY) -> list[dict[str, Any]]:
-    """Close ``gap_id`` exactly, or every open gap matching ``match_text`` and its synonyms."""
+              gap_id: str | None = None, chat: str | None = None,
+              threshold: float = GAP_SIMILARITY) -> list[dict[str, Any]]:
+    """Close ``gap_id`` exactly, or the open gaps matching ``match_text`` in ``chat``.
+
+    ``chat`` restricts the match to that conversation plus gaps that have no chat;
+    ``None`` keeps the old profile-wide behaviour for operator commands.
+    """
     if match_text is None and gap_id is None:
         return []
+
+    def in_chat(gap: dict[str, Any]) -> bool:
+        return chat is None or str(gap.get("chat") or "") in (chat, "")
+
     targets: list[dict[str, Any]] = []
     norm = normalize_gap_text(match_text or "")
     for gap in open_gaps(state.get("gaps") or []):
         if gap_id is not None:
-            if gap.get("id") == gap_id:
+            if gap.get("id") == gap_id and in_chat(gap):
                 targets.append(gap)
             continue
         if (str(gap.get("query") or "") == str(match_text)
@@ -194,6 +203,8 @@ def close_gap(state: dict[str, Any], *, by: str, now_ms: float, match_text: str 
     for gap in open_gaps(state.get("gaps") or []):
         own = normalize_gap_text(str(gap.get("summary", "")))
         if gap not in targets and not any(gap_similarity(own, summary) >= threshold for summary in summaries):
+            continue
+        if not in_chat(gap):
             continue
         gap["status"] = "resolved"
         gap["tension"] = 0.0

@@ -17,13 +17,13 @@ from .digital_life.runtime import record_api_error, record_request, record_turn
 
 logger = logging.getLogger(__name__)
 
-_LAST_TURN: dict[str, str] = {}
+_TURN_META: dict[str, dict[str, str]] = {}
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
 _CAPTURE = None
 _JOURNAL_CHECK = None
 _CTX = None
-_JOURNAL_PROMPTED: set[str] = set()
-_FACT_PROMPTED: set[str] = set()
+_JOURNAL_PROMPTED: set[tuple[str, str]] = set()
+_FACT_PROMPTED: set[tuple[str, str]] = set()
 _MEMORY_STORE: dict[str, object] = {}
 
 
@@ -54,14 +54,14 @@ def _session_scope(session_id: str) -> tuple[str, str]:
 _SOURCE_CACHE: dict[str, str] = {}
 
 
-def _session_source(session_id: str) -> str:
-    """Host session source ("qqbot", "cron", "cli", ...), best effort and cached per session."""
+def _session_source(session_id: str) -> str | None:
+    """Host session source ("qqbot", "cron", "cli", ...) or None when it cannot be read."""
     if not session_id:
         return ""
     cached = _SOURCE_CACHE.get(session_id)
     if cached is not None:
         return cached
-    source = ""
+    source: str | None = ""
     try:
         home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
         connection = sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True, timeout=1)
@@ -74,7 +74,7 @@ def _session_source(session_id: str) -> str:
             source = str(row[0] or "")
             _SOURCE_CACHE[session_id] = source
     except (sqlite3.Error, OSError, TypeError, ValueError):
-        pass
+        source = None
     return source
 
 
@@ -199,7 +199,7 @@ def _api_error(error: dict[str, Any] | None = None, retryable: bool | None = Non
 
 
 def _post_tool_call(tool_name: str = "", args: dict[str, Any] | None = None, result: str = "", **kwargs) -> None:
-    chat_id, _chat_type = _session_scope(str(_LAST_TURN.get("session", "")))
+    chat_id, _chat_type = _session_scope(str(kwargs.get("session_id") or ""))
     digital_life.runtime.observe_tool_result(time.time() * 1000, tool_name=tool_name, args=args or {},
                                              result=result, chat=chat_id)
 
@@ -291,14 +291,17 @@ def _on_user_message(
     from .digital_life import wake as _wake  # noqa: PLC0415
 
     _wake.set_agent_running(True)
-    _LAST_TURN["user"] = user_message[:1500]
-    _LAST_TURN["session"] = session_id or "unknown"
-    _LAST_TURN["sender"] = sender_id or ""
-    _LAST_TURN["platform"] = platform or ""
-    _LAST_TURN["chat_id"], _LAST_TURN["chat_type"] = _session_scope(_LAST_TURN["session"])
-    if (_LAST_TURN["platform"] or "") == "qqbot" and _LAST_TURN["chat_id"]:
+    meta = {
+        "user": user_message[:1500],
+        "session": session_id or "unknown",
+        "sender": sender_id or "",
+        "platform": platform or "",
+    }
+    meta["chat_id"], meta["chat_type"] = _session_scope(meta["session"])
+    _TURN_META[meta["session"]] = meta
+    if (meta["platform"] or "") == "qqbot" and meta["chat_id"]:
         try:
-            _proactive.track_chat({"chat_id": _LAST_TURN["chat_id"], "chat_type": _LAST_TURN["chat_type"]})
+            _proactive.track_chat({"chat_id": meta["chat_id"], "chat_type": meta["chat_type"]})
         except Exception:
             logger.warning("hermes-lover could not add chat to the beat rotation", exc_info=True)
     notes = []
@@ -307,7 +310,7 @@ def _on_user_message(
         notes.append(note)
     if _JOURNAL_CHECK is not None:
         try:
-            journal_note = _JOURNAL_CHECK(platform)
+            journal_note = _JOURNAL_CHECK(platform, meta["chat_id"])
         except Exception:
             journal_note = None
         if journal_note:
@@ -378,7 +381,7 @@ def _stamp_directive(message: dict[str, Any], directive: str, text_type: str = "
 def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     now_ms = time.time() * 1000
     record_request(now_ms)
-    scope, _chat_type = _session_scope(str(_LAST_TURN.get("session", "")))
+    scope, _chat_type = _session_scope(str(kwargs.get("session_id") or ""))
     state = digital_life.runtime.status_snapshot(now_ms, scope=scope or None)
     temperature = request.get("temperature")
     # B-class Hermes policy: an explicit caller temperature always wins.
@@ -619,25 +622,25 @@ def register(ctx) -> None:
                      user_message: str = "") -> None:
         if not ctx.get_config("memory.capture", True):
             return
-        if (platform or _LAST_TURN.get("platform", "")) != "qqbot":
+        session = session_id or "unknown"
+        meta = _TURN_META.get(session) or {}
+        if (platform or meta.get("platform", "")) != "qqbot":
             # CLI and Studio keep the host's native memory; only QQ turns enter the palace.
             return
-        session = session_id or _LAST_TURN.get("session", "unknown")
-        same_turn = session == _LAST_TURN.get("session")
-        user = user_message or (_LAST_TURN.get("user", "") if same_turn else "")
+        user = user_message or meta.get("user", "")
         if not user:
             return
         chat_id, chat_type = _session_scope(session)
         store = memory_store()
         store.capture(f"用户：{user}\n助手：{assistant_response[:1500]}",
                       session_id=session, chat_id=chat_id, chat_type=chat_type,
-                      speaker=_LAST_TURN.get("sender", "") if same_turn else "")
+                      speaker=meta.get("sender", ""))
 
     global _CAPTURE, _JOURNAL_CHECK
     _CAPTURE = capture_turn
     _MEMORY_STORE["factory"] = memory_store
 
-    def journal_check(platform: str) -> str | None:
+    def journal_check(platform: str, chat_id: str = "") -> str | None:
         """First QQ message of a day: distill the newest recorded day, then diary it.
 
         The turn log stays raw; the model writes 1-3 atomic facts that cite their
@@ -663,9 +666,10 @@ def register(ctx) -> None:
         owed_facts = sorted((day for day, rows in by_day.items()
                              if any(row.get("kind") == "turn" for row in rows) and day not in fact_days),
                             reverse=True)
-        if owed_facts and owed_facts[0] not in _FACT_PROMPTED:
+        gate = chat_id or "-"
+        if owed_facts and (owed_facts[0], gate) not in _FACT_PROMPTED:
             day = owed_facts[0]
-            _FACT_PROMPTED.add(day)
+            _FACT_PROMPTED.add((day, gate))
             notes.append(
                 f"{day} 的原始对话还没提炼成原子事实。先用 memory_recall(day=\"{day}\", kind=\"turn\") 读出那些 turn 的 id，"
                 f"再挑 1–3 条真正重要的事，逐条调用 memory_write(kind=\"fact\", day=\"{day}\", "
@@ -674,9 +678,9 @@ def register(ctx) -> None:
         owed = sorted((day for day, rows in by_day.items()
                        if rows and not any(row.get("kind") == "journal" for row in rows)),
                       reverse=True)
-        if owed and owed[0] not in _JOURNAL_PROMPTED:
+        if owed and (owed[0], gate) not in _JOURNAL_PROMPTED:
             day = owed[0]
-            _JOURNAL_PROMPTED.add(day)
+            _JOURNAL_PROMPTED.add((day, gate))
             older = f" 更早还有 {len(owed) - 1} 天没写，这次只写 {day}。" if len(owed) > 1 else ""
             notes.append(
                 f"{day} 的日记还没写。回答用户前先补上：用 memory_recall(day=\"{day}\") 读那天的记录、"
@@ -698,8 +702,7 @@ def register(ctx) -> None:
                                           sources=args.get("sources"),
                                           refs=args.get("refs"),
                                           chat_id=chat_id, chat_type=chat_type,
-                                          speaker=_LAST_TURN.get("sender", "")
-                                          if session_id and session_id == _LAST_TURN.get("session") else "")
+                                          speaker=_TURN_META.get(session_id, {}).get("sender", ""))
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
             result = {"ok": False, "error": str(exc)}
         return json.dumps(result, ensure_ascii=False)

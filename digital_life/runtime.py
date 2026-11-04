@@ -142,7 +142,7 @@ def observe_tool_result(now_ms: float, *, tool_name: str, args: dict[str, Any], 
                 return None
             state = settle_before_transition(state, now_ms)
             gap_pool.close_gap(state, by="observed_search_success", now_ms=now_ms,
-                               match_text=successful_query)
+                               match_text=successful_query, chat=chat)
             succeeded = state.get("tools_succeeded")
             if not isinstance(succeeded, list):
                 succeeded = state["tools_succeeded"] = []
@@ -152,7 +152,7 @@ def observe_tool_result(now_ms: float, *, tool_name: str, args: dict[str, Any], 
                 succeeded.append(tool_name)
                 answered = gap_pool.answered_gaps(state.get("gaps") or [], successful_query + "\n" + rendered[:2000])
                 closed_ids = [gap_pool.close_gap(state, by=f"epiphany:{tool_name}", now_ms=now_ms,
-                                                 gap_id=gap["id"]) for gap in answered]
+                                                 gap_id=gap["id"], chat=chat) for gap in answered]
                 if any(closed_ids):
                     gap_pool.note_epiphany(state, now_ms)
             state["last_interaction_at"] = now_ms
