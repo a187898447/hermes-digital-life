@@ -125,7 +125,8 @@ def default_state(now_ms: float) -> dict[str, Any]:
     return {"schema_version": 1, "chemistry": chemistry, "energy": 100.0, "temperament": temperament,
             "last_interaction_at": now_ms, "last_settled_at": now_ms, "gaps": [],
             "emergency_stop": False, "tools_succeeded": [], "last_epiphany_at": 0.0,
-            "wake": {"queue": [], "last_wake_at": 0.0, "last_gap_id": "", "active": None}}
+            "wake": {"queue": [], "last_wake_at": 0.0, "last_gap_id": "", "active": None},
+            "affect_history": []}
 
 
 def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
@@ -145,6 +146,14 @@ def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
     if isinstance(succeeded, list):
         state["tools_succeeded"] = [str(name)[:60] for name in succeeded[-32:] if isinstance(name, str)]
     state["last_epiphany_at"] = max(0.0, float_or(raw.get("last_epiphany_at"), 0.0))
+    history = raw.get("affect_history")
+    if isinstance(history, list):
+        cleaned = []
+        for item in history[-8:]:
+            if not isinstance(item, dict):
+                continue
+            cleaned.append({key: float_or(item.get(key), 0.0) for key in ("dopamine", "cortisol", "serotonin", "energy")})
+        state["affect_history"] = cleaned
     from . import wake as wake_module  # noqa: PLC0415 - lazy to keep domain import-light
 
     state["wake"] = wake_module.normalize_wake(raw.get("wake"))

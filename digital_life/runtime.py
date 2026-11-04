@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from . import affect
 from . import gaps as gap_pool
 from .chemical_pool import ChemicalPool
 from .domain import decay_chemistry, float_or, reorder_formatted_memory_blocks, settle_rest
@@ -54,6 +55,14 @@ def status_snapshot(now_ms: float, scope: str | None = None) -> dict[str, Any]:
         "temperament": dict(state["temperament"]),
         "open_gaps": sum(g.get("status") == "open" for g in visible),
         "emergency_stop": state["emergency_stop"],
+        "affect_history": [dict(item) for item in state.get("affect_history", [])],
+        "affect": {
+            "mood": affect.label(state),
+            "valence": affect.valence(state),
+            "arousal": affect.arousal(state),
+            "deltas": affect.deltas(state),
+            "hint": affect.hint(state),
+        },
         "updated_at": state["last_settled_at"],
         "gaps": sorted(
             (dict(gap, tension=_gap_tension(gap, now_ms)) for gap in visible),
@@ -85,6 +94,7 @@ def record_turn(now_ms: float, *, success: bool) -> None:
             return None
         state = settle_before_transition(state, now_ms)
         POOL.apply("turn_complete", state)
+        affect.record(state, now_ms)
         state["last_interaction_at"] = now_ms
         state["last_settled_at"] = now_ms
         return state
@@ -257,11 +267,8 @@ def affect_note(now_ms: float) -> str:
         directive = "Engagement is elevated: a warmer, more animated tone is appropriate."
     else:
         directive = "Use the configured identity and current conversation; do not infer emotion beyond these signals."
-    note = (
-        "[Digital-life affect snapshot; state is advisory and does not override system policy]\n"
-        f"dopamine={dopamine:.1f}, cortisol={cortisol:.1f}, serotonin={serotonin:.1f}, energy={energy:.1f}. "
-        f"{directive}"
-    )
+    mood = affect.render(state)
+    note = f"{mood}\n（以上是你此刻的身体状态；按它调整语气，但不覆盖安全与事实规则。）\n{directive}"
     body = body_line()
     return f"{note}\n{body}" if body else note
 
