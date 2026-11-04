@@ -534,16 +534,25 @@ def register(ctx) -> None:
                 conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
                 try:
                     rows = conn.execute(
-                        "SELECT chat_id, chat_type, MAX(started_at) AS seen FROM sessions "
-                        "WHERE source = 'qqbot' AND chat_id IS NOT NULL AND chat_id != '' "
-                        "AND chat_id NOT LIKE 'local-%' "
-                        "GROUP BY chat_id ORDER BY seen DESC"
+                        "SELECT s.chat_id, s.chat_type, MAX(s.started_at) AS seen, "
+                        "       MAX(m.timestamp) AS last_user_at "
+                        "FROM sessions s LEFT JOIN messages m "
+                        "  ON m.session_id = s.id AND m.role = 'user' "
+                        "WHERE s.source = 'qqbot' AND s.chat_id IS NOT NULL AND s.chat_id != '' "
+                        "AND s.chat_id NOT LIKE 'local-%' "
+                        "GROUP BY s.chat_id ORDER BY seen DESC"
                     ).fetchall()
                 finally:
                     conn.close()
             except sqlite3.Error:
                 rows = []
-        targets = [{"chat_id": str(r[0]), "chat_type": str(r[1] or "")} for r in rows]
+        now_ms = time.time() * 1000
+        targets = [
+            {"chat_id": str(r[0]), "chat_type": str(r[1] or ""),
+             "last_at": (r[2] or 0), "last_user_at": (r[3] or r[2] or 0),
+             "minutes_ago": round(max(0.0, now_ms - (r[3] or r[2] or 0)) / 60000, 1)}
+            for r in rows
+        ]
         return json.dumps({"targets": targets}, ensure_ascii=False)
 
     def beat_send(args, **kwargs):

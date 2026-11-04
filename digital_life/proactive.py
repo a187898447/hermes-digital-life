@@ -126,7 +126,7 @@ def _desired_deliver(current: list[str], targets: list[dict[str, Any]],
 
 
 def sync_beat_delivery(targets: list[dict[str, Any]], dropped: set[str] | None = None) -> bool:
-    """Point the installed beat job at operator targets plus chat subscriptions."""
+    """Keep the beat job on local delivery: one agent run fans out to every chat."""
     from cron.jobs import load_jobs, update_job, use_cron_store
 
     changed = False
@@ -134,12 +134,8 @@ def sync_beat_delivery(targets: list[dict[str, Any]], dropped: set[str] | None =
         for job in load_jobs():
             if job.get("name") != BEAT_JOB_NAME:
                 continue
-            current = job.get("deliver")
-            if not isinstance(current, list):
-                current = [current] if isinstance(current, str) else []
-            deliver = _desired_deliver(current, targets, dropped)
-            if job.get("deliver") != deliver:
-                update_job(job["id"], {"deliver": deliver})
+            if job.get("deliver") != ["local"]:
+                update_job(job["id"], {"deliver": ["local"]})
                 changed = True
     return changed
 

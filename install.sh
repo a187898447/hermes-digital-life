@@ -161,7 +161,7 @@ elif [[ -f "$BEAT_SCRIPT" ]]; then
   mkdir -p "$PROFILE_HOME/scripts"
   cp "$BEAT_SCRIPT" "$PROFILE_HOME/scripts/hermes-lover-beat.py"
   chmod +x "$PROFILE_HOME/scripts/hermes-lover-beat.py"
-  BEAT_PROMPT='这是 hermes-lover 的主动消息触发点，监控输出里的 FIRE 标记表示刚刚到点（MORNING 上午 / MIDDAY 午后 / AFTERNOON 傍晚前 / NIGHT 夜里）。按顺序做：1) 调 beat_targets 取所有订阅会话；2) 对每个会话调 memory_recall(chat_id=该会话) 看它最近聊过什么、对方是谁；3) 用当前 profile 的 SOUL.md 人格，写一句不超过 40 字、接得上那个会话的话（不报状态数字，不客套，不复读）；4) 调 beat_send(chat_id=该会话, text=这句话, delay_seconds=15 到 120 之间的随机数)，每个会话用不同的延迟，这样不会同一秒发出去；5) 所有会话发完就结束，不要输出正文——这条任务的 Deliver 是 local，不需要再投递。'
+  BEAT_PROMPT='这是 hermes-lover 的主动消息触发点，监控输出里的 FIRE 标记表示刚刚到点（MORNING 上午 / MIDDAY 午后 / AFTERNOON 傍晚前 / EVENING 晚间 / NIGHT 夜里）。按顺序做：1) 调 beat_targets 取会话列表，每项带 minutes_ago 与 chat_type。2) 逐个会话判断：如果 minutes_ago 小于 15，说明对方正在聊，跳过这个会话，绝不插话。3) 对要发的会话调 memory_recall(day=今天, chat_id=该会话) 取今天的最近几条，以最后 1-3 条对话为上下文；不要拿昨天的日记或更早的话题当主线。4) 每个会话单独想一句不超过 40 字、接得上它最近话题的话；不同会话的内容必须不同，禁止把同一句复制给多个人。5) 调 beat_send(chat_id, text, delay_seconds=15~120 的随机数)，各会话延迟错开。6) 全部发完就结束，不要输出正文——这条任务的 Deliver 是 local，由 beat_send 自己投递。'
   if hermes -p "$PROFILE" cron create "*/5 9-21 * * *" "$BEAT_PROMPT" \
       --name hermes-lover-beat \
       --monitor-script "hermes-lover-beat.py" \
