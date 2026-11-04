@@ -221,6 +221,15 @@ def settle_before_transition(state: dict[str, Any], now_ms: float) -> dict[str, 
     return state
 
 
+def wake_section(state: dict[str, Any], now_ms: float) -> str:
+    """The opt-in ``digital-life:wake`` block; empty when no wake is active."""
+    try:
+        from . import wake as wake_module
+        return wake_module.section_text(state, now_ms)
+    except Exception:  # noqa: BLE001 - wake context must never break a request
+        return ""
+
+
 def body_line() -> str:
     """One host-vitals line for the affect section; empty when telemetry is unavailable."""
     try:

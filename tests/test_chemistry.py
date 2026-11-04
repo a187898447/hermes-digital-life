@@ -176,11 +176,14 @@ class ChemicalPoolTests(unittest.TestCase):
         self.assertIsNone(self.pool.inflict(state, "oxytocin", 10.0))
 
     def test_normalize_state_keeps_old_documents_and_adds_nothing(self):
-        old = {"chemistry": {"dopamine": 20.0}, "energy": 50.0, "commitment": {"x": 1}, "wake": {"queued": True}}
+        old = {"chemistry": {"dopamine": 20.0}, "energy": 50.0, "commitment": {"x": 1},
+               "wake": {"queued": True}}
         state = normalize_state(old, 5_000)
         self.assertEqual(set(state["chemistry"]), set(DEFAULT_CHEMICALS))
         self.assertNotIn("commitment", state)
-        self.assertNotIn("wake", state)
+        # The P4 wake queue is a new, purpose-built shape; an old ad-hoc "wake" key
+        # is dropped rather than trusted.
+        self.assertEqual(state["wake"], {"queue": [], "last_wake_at": 0.0, "last_gap_id": "", "active": None})
         self.assertEqual(default_genome()["version"], 1)
 
 

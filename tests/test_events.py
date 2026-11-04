@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import importlib.util
 import json
 import sys
@@ -9,6 +10,7 @@ import types
 import unittest
 import sqlite3
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
@@ -70,6 +72,14 @@ class RecordingContext:
 
     def register_system_prompt_section(self, *args, **kwargs):
         self.sections.append((args, kwargs))
+
+    def get_config(self, key, default=None):
+        return getattr(self, "config", {}).get(key, default)
+
+    def inject_message(self, content, role="user", *, session_key=None, origin=None):
+        self.injected = getattr(self, "injected", [])
+        self.injected.append({"content": content, "role": role, "session_key": session_key})
+        return getattr(self, "inject_result", True)
 
 
 class ObservedTransitionTests(unittest.TestCase):
@@ -561,6 +571,79 @@ class QqBubbleTransformTests(unittest.TestCase):
         with patch.object(runtime, "status_snapshot", return_value=default_state(1_000_000)), \
              patch.object(host, "snapshot", return_value={}):
             self.assertNotIn("Body (host vitals)", runtime.affect_note(1_000_000))
+
+
+class WakeHookTests(unittest.TestCase):
+    """Opt-in self-wake: silent when disabled, one bubble when allowed, four locks honoured."""
+
+    def setUp(self):
+        self.now = time.time() * 1000
+        self.state = default_state(self.now)
+        self.state["gaps"] = [{"id": "gap-1", "summary": "火星营业时间", "status": "open",
+                               "tension": 80.0, "relief": 0.0,
+                               "created_at": self.now - 3_600_000, "source": "assistant_unknown"}]
+        self.ctx = RecordingContext()
+        plugin.register(self.ctx)
+        self.patchers = [
+            patch.object(plugin.digital_life.storage, "update_state", self._update),
+            patch.object(plugin.digital_life.storage, "read_state", lambda now_ms: self.state),
+            patch.object(plugin.digital_life.runtime, "status_snapshot", lambda now_ms, scope=None: self.state),
+        ]
+        for patcher in self.patchers:
+            patcher.start()
+        self.addCleanup(lambda: [patcher.stop() for patcher in self.patchers])
+        from hermes_plugins.digital_life.digital_life import wake as plugin_wake
+
+        self.addCleanup(plugin_wake.set_agent_running, False)
+
+    def _update(self, now_ms, mutate):
+        next_state = mutate(self.state)
+        if next_state is not None:
+            self.state = next_state
+        return self.state
+
+    def test_disabled_by_default_has_zero_side_effects(self):
+        plugin._post_llm_call(assistant_response="好的", session_id="s1")
+        self.assertFalse(getattr(self.ctx, "injected", []))
+        self.assertEqual(self.state["wake"]["queue"], [])
+        self.assertIsNone(self.state["wake"]["active"])
+
+    def test_enabled_wake_injects_dots_and_the_next_prompt_carries_details(self):
+        self.ctx.config = {"wake.enabled": True}
+        plugin._post_llm_call(assistant_response="好的", session_id="s1")
+        self.assertEqual(len(self.ctx.injected), 1)
+        self.assertEqual(self.ctx.injected[0]["content"], "...")
+        self.assertEqual(self.ctx.injected[0]["role"], "user")
+        self.assertEqual(self.state["wake"]["active"]["gap_id"], "gap-1")
+        request = {"system": "base prompt", "messages": [{"role": "user", "content": "嗯"}]}
+        result = plugin._affect_request(request)["request"]
+        self.assertTrue(result["system"].startswith("[digital-life:wake]"))
+        self.assertIn("火星营业时间", result["system"])
+
+    def test_rejected_injection_leaves_no_queued_wake(self):
+        self.ctx.config = {"wake.enabled": True}
+        self.ctx.inject_result = False
+        plugin._post_llm_call(assistant_response="好的", session_id="s1")
+        self.assertEqual(self.state["wake"]["queue"], [])
+        self.assertIsNone(self.state["wake"]["active"])
+
+
+    def test_cli_wake_marks_an_active_wake_and_prints_the_section(self):
+        from hermes_plugins.digital_life.digital_life import cli
+        with patch("builtins.print") as out:
+            code = cli.run_command(argparse.Namespace(digital_life_action="wake", gap=""))
+        self.assertEqual(code, 0)
+        self.assertEqual(self.state["wake"]["active"]["gap_id"], "gap-1")
+        printed = "\n".join(str(call.args[0]) for call in out.call_args_list)
+        self.assertIn("digital-life:wake", printed)
+        self.assertIn("火星营业时间", printed)
+
+    def test_running_turn_drops_the_wake(self):
+        self.ctx.config = {"wake.enabled": True}
+        plugin._on_user_message(user_message="在吗", session_id="s1")
+        plugin._maybe_wake("s1")
+        self.assertFalse(getattr(self.ctx, "injected", []))
+        self.assertEqual(self.state["wake"]["queue"], [])
 
 
 if __name__ == "__main__":

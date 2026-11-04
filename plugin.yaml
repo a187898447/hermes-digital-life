@@ -8,6 +8,10 @@ kind: standalone
 python_dependencies:
   - "psutil>=5.9,<8"
 config_schema:
+  wake:
+    type: dict
+    default: {enabled: false}
+    description: "Opt-in self-wake queue. enabled must be a boolean; delivery also needs plugins.entries.hermes-lover.allow_gateway_injection: true in the profile config."
   memory:
     type: dict
     default: {writes_enabled: true, capture: true}

@@ -38,6 +38,8 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
     beats.add_argument("beats_action", choices=["enable", "disable"])
     resolve = actions.add_parser("resolve-gap", help="Close one observed gap by identifier")
     resolve.add_argument("gap_id")
+    wake = actions.add_parser("wake", help="Manually wake for one open gap (opt-in self-wake demo)")
+    wake.add_argument("--gap", default="", help="Gap identifier; defaults to the highest tension")
     subparser.set_defaults(func=run_command)
 
 
@@ -68,6 +70,23 @@ def run_command(args: argparse.Namespace) -> int:
         return 0
     if action == "status":
         print(json.dumps(status_snapshot(now_ms), ensure_ascii=False, indent=2))
+        return 0
+    if action == "wake":
+        from . import storage, wake as wake_module
+        triggered: dict[str, object] = {}
+
+        def mutate(state):
+            triggered["active"] = wake_module.force_active(state, now_ms, gap_id=args.gap or None)
+
+        storage.update_state(now_ms, mutate)
+        active = triggered.get("active")
+        if not isinstance(active, dict):
+            print("No open gap to wake for.")
+            return 1
+        fresh = storage.read_state(now_ms)
+        print(json.dumps({"active": active,
+                          "section": wake_module.section_text(fresh, now_ms)}, ensure_ascii=False, indent=2))
+        print("The digital-life:wake block is now part of the next turn's system prompt.")
         return 0
     if action == "resolve-gap":
         confirmation = input(f"Type RESOLVE to close gap {args.gap_id}: ").strip()

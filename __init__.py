@@ -21,6 +21,7 @@ _LAST_TURN: dict[str, str] = {}
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
 _CAPTURE = None
 _JOURNAL_CHECK = None
+_CTX = None
 _JOURNAL_PROMPTED: set[str] = set()
 _MEMORY_STORE: dict[str, object] = {}
 
@@ -55,8 +56,91 @@ def _status(args: dict[str, Any], session_id: str = "", **kwargs) -> str:
                       ensure_ascii=False)
 
 
+def _wake_enabled() -> bool:
+    ctx = _CTX
+    if ctx is None:
+        return False
+    try:
+        return bool(ctx.get_config("wake.enabled", False))
+    except Exception:
+        return False
+
+
+def _reconcile_wake() -> None:
+    """M11.6: a resolved loop clears; a still-open one presses harder by 10."""
+    from .digital_life import storage, wake as _wake  # noqa: PLC0415
+
+    now_ms = time.time() * 1000
+    outcome: dict[str, str] = {}
+
+    def mutate(state):
+        outcome["result"] = _wake.reconcile(state, now_ms)
+        return None
+
+    storage.update_state(now_ms, mutate)
+    if outcome.get("result") == "unmet":
+        logger.info("hermes-lover wake commitment unmet: gap tension pressed harder")
+
+
+def _maybe_wake(session_id: str = "") -> None:
+    """Queue and deliver one self-wake; every host failure is silent by design."""
+    from .digital_life import storage, wake as _wake  # noqa: PLC0415
+
+    ctx = _CTX
+    if ctx is None or not _wake_enabled():
+        return
+    now_ms = time.time() * 1000
+    plan: dict[str, object] = {}
+
+    def mutate(state):
+        plan["wake"] = _wake.plan_wake(state, now_ms)
+
+    storage.update_state(now_ms, mutate)
+    item = plan.get("wake")
+    if not isinstance(item, dict):
+        return
+    wake_id = str(item.get("id") or "")
+
+    def drop(state):
+        _wake.cancel(state, wake_id)
+        return None
+
+    def deliver(state):
+        _wake.mark_delivered(state, wake_id, now_ms)
+        return None
+
+    fresh = storage.read_state(now_ms)
+    if not _wake.verify_queued(fresh, wake_id):
+        storage.update_state(now_ms, drop)
+        logger.info("hermes-lover wake dropped: gap closed or queue rewritten before delivery")
+        return
+    inject = getattr(ctx, "inject_message", None)
+    if not callable(inject):
+        storage.update_state(now_ms, drop)
+        logger.info("hermes-lover wake skipped: host has no inject_message")
+        return
+    try:
+        accepted = inject(_wake.WAKE_TEXT, role="user", session_key=session_id or None)
+    except Exception:
+        accepted = False
+        logger.warning("hermes-lover wake injection failed", exc_info=True)
+    if accepted:
+        storage.update_state(now_ms, deliver)
+        logger.info("hermes-lover wake delivered for gap %s", item.get("gap_id"))
+    else:
+        storage.update_state(now_ms, drop)
+        logger.info("hermes-lover wake skipped: gateway injection unavailable or disabled")
+
+
 def _post_llm_call(assistant_response: str = "", session_id: str = "", platform: str = "",
                    user_message: str = "", **kwargs) -> None:
+    from .digital_life import wake as _wake  # noqa: PLC0415
+
+    _wake.set_agent_running(False)
+    try:
+        _reconcile_wake()
+    except Exception:
+        logger.warning("hermes-lover wake reconciliation failed", exc_info=True)
     if assistant_response:
         record_turn(time.time() * 1000, success=True)
         try:
@@ -74,6 +158,10 @@ def _post_llm_call(assistant_response: str = "", session_id: str = "", platform:
                 digital_life.runtime.observe_assistant_unknown(time.time() * 1000, unknown, chat=chat_id)
         except Exception:
             pass
+    try:
+        _maybe_wake(session_id)
+    except Exception:
+        logger.warning("hermes-lover wake hook failed", exc_info=True)
 
 
 def _api_error(error: dict[str, Any] | None = None, retryable: bool | None = None, **kwargs) -> None:
@@ -172,6 +260,9 @@ def _on_gateway_dispatch(event=None, **kwargs):
 def _on_user_message(
     user_message: str = "", session_id: str = "", platform: str = "", sender_id: str = "", **kwargs
 ) -> dict[str, Any] | None:
+    from .digital_life import wake as _wake  # noqa: PLC0415
+
+    _wake.set_agent_running(True)
     _LAST_TURN["user"] = user_message[:1500]
     _LAST_TURN["session"] = session_id or "unknown"
     _LAST_TURN["sender"] = sender_id or ""
@@ -270,13 +361,15 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     note = digital_life.runtime.affect_note(now_ms)
     # PRD M7.2 order: stress directive, then affect snapshot, then reordered memory.
     directive = digital_life.domain.stress_directive(state["chemistry"]["cortisol"])
+    wake_text = digital_life.runtime.wake_section(state, now_ms)
+    header = "\n\n".join(part for part in (wake_text, directive) if part)
     changed = result_temperature is not None
     result = dict(request)
     system = result.get("system")
     if isinstance(system, str):
         rewritten, blocks = digital_life.runtime.reorder_prompt_memories(system, now_ms)
         appended = digital_life.runtime.append_open_loops(rewritten, state["gaps"], now_ms, scope=scope or None)
-        final = _with_directive(appended, directive)
+        final = _with_directive(appended, header)
         if blocks or final != system:
             result["system"] = final
             changed = True
@@ -291,10 +384,10 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
         system_items, appended = _append_open_loops_once(system_items, state["gaps"], now_ms, scope=scope or None)
         if appended:
             changed = True
-        if directive:
+        if header:
             for index, item in enumerate(system_items):
                 if isinstance(item, dict) and isinstance(item.get("text"), str):
-                    stamped = _stamp_directive(item, directive)
+                    stamped = _stamp_directive(item, header)
                     if stamped is not None:
                         system_items[index] = stamped
                         changed = True
@@ -313,10 +406,10 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
             if reordered:
                 rewritten[index] = {**message, "content": content}
                 changed = True
-        if directive and rewritten:
+        if header and rewritten:
             for index, message in enumerate(rewritten):
                 if isinstance(message, dict) and message.get("role") == "system":
-                    stamped = _stamp_directive(message, directive)
+                    stamped = _stamp_directive(message, header)
                     if stamped is not None:
                         rewritten[index] = stamped
                         changed = True
@@ -475,6 +568,8 @@ def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs)
 
 
 def register(ctx) -> None:
+    global _CTX
+    _CTX = ctx
     from .digital_life.cli import run_command, setup_parser
     from .digital_life.memory import MemoryStore
     from .digital_life import storage

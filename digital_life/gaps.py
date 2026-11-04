@@ -168,6 +168,7 @@ def close_gap(state: dict[str, Any], *, by: str, now_ms: float, match_text: str 
         gap["closed_at"] = now_ms
         gap["closed_by"] = by
         closed.append(gap)
+        retire_wake(state, str(gap.get("id") or ""))
     return closed
 
 
@@ -206,3 +207,6 @@ def retire_wake(state: dict[str, Any], gap_id: str) -> None:
     queue = wake.get("queue")
     if isinstance(queue, list):
         wake["queue"] = [item for item in queue if not isinstance(item, dict) or item.get("gap_id") != gap_id]
+    active = wake.get("active")
+    if isinstance(active, dict) and active.get("gap_id") == gap_id:
+        wake["active"] = None
