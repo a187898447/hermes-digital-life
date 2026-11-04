@@ -2,21 +2,27 @@
 
 Adapted from digital-life-core's ``gaps`` semantics in ``index.ts`` plus ``epiphany.ts``.
 Every function is a pure operation on the ``state["gaps"]`` list; persistence and
-host observation stay in ``runtime``. A gap is never deleted: closing keeps the id
+host observation stay in ``runtime``. Open gaps are never deleted: closing keeps the id
 and records ``closed_by``/``closed_at`` so a later synonym revives the original row
-instead of creating a resolved/open twin (PRD M8.5).
+instead of creating a resolved/open twin (PRD M8.5). Resolved gaps older than
+``GAP_RESOLVED_TTL_DAYS`` expire; open gaps only raise a warning past the soft cap.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+import logging
+
 from .chemistry import float_or
+
+logger = logging.getLogger(__name__)
 
 GAP_TENSION_BASE = 80.0
 GAP_TENSION_PER_HOUR = 5.0
 GAP_SIMILARITY = 0.6
-GAP_LIMIT = 200
+GAP_RESOLVED_TTL_DAYS = 30
+GAP_OPEN_WARN = 1000
 EPIPHANY_ECHO_MINUTES = 10.0
 SIBLING_WINDOW_MINUTES = 30.0
 MINUTE_MS = 60_000.0
@@ -134,8 +140,34 @@ def propose_gap(state: dict[str, Any], summary: str, source: str, now_ms: float,
     if query:
         gap["query"] = query
     gaps.append(gap)
-    del gaps[:-GAP_LIMIT]
+    prune_gaps(state, now_ms)
     return gap
+
+
+def prune_gaps(state: dict[str, Any], now_ms: float) -> int:
+    """Expire old resolved gaps; never drop an open one. Returns how many left."""
+    gaps = state.get("gaps")
+    if not isinstance(gaps, list):
+        return 0
+    ttl = GAP_RESOLVED_TTL_DAYS * 24 * 60.0 * MINUTE_MS
+    kept = []
+    expired = 0
+    for gap in gaps:
+        if not isinstance(gap, dict):
+            continue
+        if gap.get("status") == "open":
+            kept.append(gap)
+            continue
+        closed_at = float_or(gap.get("closed_at"), float_or(gap.get("resolved_at"), 0.0))
+        if closed_at and now_ms - closed_at > ttl:
+            expired += 1
+            continue
+        kept.append(gap)
+    state["gaps"] = kept
+    open_count = sum(1 for gap in kept if gap.get("status") == "open")
+    if open_count > GAP_OPEN_WARN:
+        logger.warning("hermes-lover gap pool has %s open loops (soft cap %s)", open_count, GAP_OPEN_WARN)
+    return len(kept)
 
 
 def close_gap(state: dict[str, Any], *, by: str, now_ms: float, match_text: str | None = None,

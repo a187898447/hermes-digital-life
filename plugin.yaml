@@ -16,6 +16,14 @@ config_schema:
     type: dict
     default: {writes_enabled: true, capture: true}
     description: "Event-memory settings: writes_enabled and capture must be booleans (default true)."
+  temperament:
+    type: dict
+    default: {sensitivity: 1.0, resilience: 1.0, enthusiasm: 50.0, metabolism: 1.0}
+    description: "Four operator knobs, clamped: sensitivity 0.5-2.0, resilience 0.5-2.0, enthusiasm 20-80, metabolism 0.5-2.0."
+  stress_cortisol:
+    type: number
+    default: 80
+    description: "Cortisol level (0-100) at which the stress directive and narrow attention engage; 0-100."
 provides_tools:
   - memory_write
   - memory_recall

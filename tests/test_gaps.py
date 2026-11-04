@@ -58,11 +58,23 @@ class ProposeTests(unittest.TestCase):
         self.assertIsNone(revived["closed_at"])
         self.assertEqual(len(state["gaps"]), 1)
 
-    def test_gap_list_is_bounded(self):
+    def test_open_gaps_are_never_dropped_by_the_soft_cap(self):
         state = fresh_state()
-        for index in range(gaps.GAP_LIMIT + 20):
-            propose(state, f"q-{index:04d}-{index * 7919:08x}-{index * 104729:08x}")
-        self.assertEqual(len(state["gaps"]), gaps.GAP_LIMIT)
+        for index in range(gaps.GAP_OPEN_WARN + 5):
+            gap = {"id": f"gap-{index}", "summary": f"q-{index}-{index * 7919:08x}",
+                   "status": "open", "created_at": NOW, "tension": 82.0}
+            state["gaps"].append(gap)
+        with self.assertLogs("digital_life.gaps", level="WARNING"):
+            propose(state, "one more open loop")
+        self.assertEqual(len(state["gaps"]), gaps.GAP_OPEN_WARN + 6)
+
+    def test_resolved_gaps_expire_but_recent_ones_stay(self):
+        state = fresh_state()
+        old = {"id": "gap-old", "summary": "old", "status": "resolved", "closed_at": NOW - 31 * 24 * HOUR}
+        recent = {"id": "gap-recent", "summary": "recent", "status": "resolved", "closed_at": NOW - HOUR}
+        state["gaps"] = [old, recent]
+        gaps.prune_gaps(state, NOW)
+        self.assertEqual([gap["id"] for gap in state["gaps"]], ["gap-recent"])
 
 
 class TensionTests(unittest.TestCase):

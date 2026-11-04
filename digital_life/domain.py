@@ -104,8 +104,23 @@ def find_gap_sentence(text: str, max_len: int = 100) -> str | None:
     return result.rstrip(" \t，,、；;:：。.!！?？") or None
 
 
+_CONFIG_TEMPERAMENT: dict[str, float] | None = None
+_CONFIG_STRESS = 80.0
+
+
+def configure(*, temperament: Any = None, stress_cortisol: Any = None) -> None:
+    """Apply operator knobs; both are clamped and fall back to the defaults."""
+    global _CONFIG_TEMPERAMENT, _CONFIG_STRESS
+    _CONFIG_TEMPERAMENT = normalize_temperament(temperament) if isinstance(temperament, dict) else None
+    _CONFIG_STRESS = clamp(float_or(stress_cortisol, 80.0), 0.0, 100.0)
+
+
+def stress_threshold() -> float:
+    return _CONFIG_STRESS
+
+
 def default_state(now_ms: float) -> dict[str, Any]:
-    temperament = dict(DEFAULT_TEMPERAMENT)
+    temperament = dict(_CONFIG_TEMPERAMENT or DEFAULT_TEMPERAMENT)
     chemistry = ChemicalPool().initial_chemistry(temperament)
     return {"schema_version": 1, "chemistry": chemistry, "energy": 100.0, "temperament": temperament,
             "last_interaction_at": now_ms, "last_settled_at": now_ms, "gaps": [],
@@ -205,7 +220,7 @@ def stress_directive(cortisol: float) -> str:
     memories, so the directive states both limits explicitly.
     """
     value = float_or(cortisol, 0.0)
-    if value < STRESS_CORTISOL:
+    if value < stress_threshold():
         return ""
     text = (
         "Current stress is high. Keep attention on the immediate problem: answer what was asked, "
@@ -236,7 +251,7 @@ def classify_attention(entry: str, tags: list[str], anchor_cortisol: float | Non
     haystack = f"{entry} {' '.join(tags)}".lower()
     if any(_has_tag(haystack, tag) for tag in CRISIS_TAGS):
         return "crisis"
-    if anchor_cortisol is not None and anchor_cortisol >= STRESS_CORTISOL:
+    if anchor_cortisol is not None and anchor_cortisol >= stress_threshold():
         return "crisis"
     if any(_has_tag(haystack, tag) for tag in DAILY_TAGS):
         return "daily"
@@ -244,11 +259,12 @@ def classify_attention(entry: str, tags: list[str], anchor_cortisol: float | Non
 
 
 def attention_weights(cortisol: float) -> dict[str, float]:
-    if cortisol >= STRESS_CORTISOL:
+    if cortisol >= stress_threshold():
         return {"crisis": CRISIS_WEIGHT, "daily": DAILY_WEIGHT}
     if cortisol <= CALM_CORTISOL:
         return {"crisis": 1.0, "daily": 1.0}
-    t = max(0.0, min(1.0, (cortisol - CALM_CORTISOL) / (STRESS_CORTISOL - CALM_CORTISOL)))
+    span = max(1.0, stress_threshold() - CALM_CORTISOL)
+    t = max(0.0, min(1.0, (cortisol - CALM_CORTISOL) / span))
     return {"crisis": 1.0 + (CRISIS_WEIGHT - 1.0) * t, "daily": 1.0 + (DAILY_WEIGHT - 1.0) * t}
 
 
