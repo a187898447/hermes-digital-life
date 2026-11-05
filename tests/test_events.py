@@ -902,3 +902,18 @@ class SearchLaterTests(unittest.TestCase):
         research.spawn("a", "chat-8", lambda c, t: None, runner=lambda q: (gate.wait(1), "")[1])
         self.assertFalse(research.spawn("b", "chat-8", lambda c, t: None, runner=lambda q: ""))
         gate.set()
+
+
+class ClockInjectionTests(unittest.TestCase):
+    def test_clock_is_only_injected_when_asked(self):
+        ask = {"messages": [{"role": "user", "content": "现在几点了"}]}
+        chat = {"messages": [{"role": "user", "content": "今天好累"}]}
+        self.assertTrue(plugin._asks_time(ask))
+        self.assertFalse(plugin._asks_time(chat))
+
+    def test_affect_note_omits_the_clock_by_default(self):
+        from digital_life import runtime
+        note = runtime.affect_note(1_760_000_000_000.0)
+        self.assertNotIn("现在的时间", note)
+        with_clock = runtime.affect_note(1_760_000_000_000.0, include_time=True)
+        self.assertIn("现在的时间", with_clock)

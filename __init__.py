@@ -438,6 +438,28 @@ def _stamp_directive(message: dict[str, Any], directive: str, text_type: str = "
     return None
 
 
+_TIME_ASK = re.compile(r"(几点|现在.{0,3}时间|什么时间|几号|星期|周几|多久|什么时候|上午|下午|晚上|中午|早上)")
+
+
+def _asks_time(request: dict) -> bool:
+    """Only put the clock in the prompt when the user actually asks about time."""
+    messages = request.get("messages")
+    if not isinstance(messages, list):
+        return False
+    for message in reversed(messages):
+        if not isinstance(message, dict) or message.get("role") != "user":
+            continue
+        content = message.get("content")
+        text = ""
+        if isinstance(content, str):
+            text = content
+        elif isinstance(content, list):
+            text = " ".join(str(part.get("text") or "") for part in content
+                            if isinstance(part, dict) and part.get("type") == "text")
+        return bool(text) and bool(_TIME_ASK.search(text))
+    return False
+
+
 def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     now_ms = time.time() * 1000
     record_request(now_ms)
@@ -449,7 +471,7 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
         digital_life.domain.pick_temperature(state["chemistry"], state["energy"])
         if "temperature" not in request or temperature is None else None
     )
-    note = digital_life.runtime.affect_note(now_ms)
+    note = digital_life.runtime.affect_note(now_ms, include_time=_asks_time(request))
     # PRD M7.2 order: stress directive, then affect snapshot, then reordered memory.
     directive = digital_life.domain.stress_directive(state["chemistry"]["cortisol"])
     wake_text = digital_life.runtime.wake_section(state, now_ms)

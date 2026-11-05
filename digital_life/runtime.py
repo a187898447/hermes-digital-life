@@ -284,7 +284,7 @@ def body_line() -> str:
         return ""
 
 
-def affect_note(now_ms: float) -> str:
+def affect_note(now_ms: float, *, include_time: bool = False) -> str:
     state = status_snapshot(now_ms)
     dopamine = state["chemistry"]["dopamine"]
     cortisol = state["chemistry"]["cortisol"]
@@ -305,7 +305,8 @@ def affect_note(now_ms: float) -> str:
     mood = affect.render(state, now_ms)
     stamp = time.localtime(now_ms / 1000.0)
     clock = time.strftime("%Y-%m-%d %H:%M", stamp) + "（周" + "一二三四五六日"[stamp.tm_wday] + "）"
-    note = f"现在的时间：{clock}。有人问时间就按这个答。\n{mood}\n（以上是你此刻的身体状态；按它调整语气，但不覆盖安全与事实规则。\n不要把数字念给用户，也不要用「参数」「调试」「重置」这类工程说法；用感觉词说。）\n{directive}"
+    when = f"现在的时间：{clock}。有人问时间就按这个答。\n" if include_time else ""
+    note = f"{when}{mood}\n（以上是你此刻的身体状态；按它调整语气，但不覆盖安全与事实规则。\n不要把数字念给用户，也不要用「参数」「调试」「重置」这类工程说法；用感觉词说。）\n{directive}"
     body = body_line()
     return f"{note}\n{body}" if body else note
 
