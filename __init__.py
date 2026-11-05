@@ -25,6 +25,12 @@ from .digital_life.runtime import record_api_error, record_request, record_turn
 logger = logging.getLogger(__name__)
 
 _TURN_META: dict[str, dict[str, str]] = {}
+
+# Hard tool budget per user turn (QQ only): the model tends to page its way
+# through the whole zone instead of answering.
+_TOOL_TURNS: dict[str, dict[str, int]] = {}
+TOOL_CALL_LIMIT = 8
+ZONE_PAGE_LIMIT = 2
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
 _CACHE_LIMIT = 512
 
@@ -174,6 +180,27 @@ def _maybe_wake(session_id: str = "") -> None:
     else:
         storage.update_state(now_ms, drop)
         logger.info("hermes-lover wake skipped: gateway injection unavailable or disabled")
+
+
+
+def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict[str, Any] | None:
+    """Veto runaway tool loops inside one QQ turn (hard limit, not a prompt hint)."""
+    if not tool_name or not session_id:
+        return None
+    meta = _TURN_META.get(session_id) or {}
+    if (meta.get("platform") or _session_source(session_id) or "") != "qqbot":
+        return None
+    counts = _TOOL_TURNS.setdefault(session_id, {"total": 0, "zone": 0})
+    if tool_name == "qzone_feed" and counts["zone"] >= ZONE_PAGE_LIMIT:
+        return {"action": "block",
+                "message": "本轮空间最多翻 2 页，已经到上限。用手上的内容回答，或者把后续交给 background_task。"}
+    if counts["total"] >= TOOL_CALL_LIMIT:
+        return {"action": "block",
+                "message": "本轮工具调用已达 8 次。先回话，把剩下的工作交给 background_task。"}
+    counts["total"] += 1
+    if tool_name == "qzone_feed":
+        counts["zone"] += 1
+    return None
 
 
 def _post_llm_call(assistant_response: str = "", session_id: str = "", platform: str = "",
@@ -389,6 +416,7 @@ def _on_user_message(
         "sender": sender_id or "",
         "platform": platform or "",
     }
+    _TOOL_TURNS.pop(meta["session"], None)
     meta["chat_id"], meta["chat_type"] = _session_scope(meta["session"])
     _remember(_TURN_META, meta["session"], meta)
     if (meta["platform"] or "") == "qqbot" and meta["chat_id"]:
@@ -1224,6 +1252,7 @@ def register(ctx) -> None:
     ctx.register_hook("post_llm_call", _post_llm_call)
     ctx.register_hook("api_request_error", _api_error)
     ctx.register_hook("post_tool_call", _post_tool_call)
+    ctx.register_hook("pre_tool_call", _gate_tool_call)
     ctx.register_middleware("llm_request", _affect_request)
     def core_command(raw_args, *, source=None, platform=""):
         from .digital_life.cli import format_core

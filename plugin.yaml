@@ -34,6 +34,7 @@ provides_tools:
   - qzone_bridge
 provides_hooks:
   - pre_llm_call
+  - pre_tool_call
   - pre_gateway_dispatch
   - transform_llm_output
   - post_tool_call

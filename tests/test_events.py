@@ -877,6 +877,43 @@ class HostSendFallbackTests(unittest.TestCase):
         self.assertEqual(calls, [{"action": "send", "target": "qqbot:c1", "message": "hello"}])
 
 
+
+class ToolBudgetTests(unittest.TestCase):
+    def setUp(self):
+        hl = sys.modules["hermes_plugins.digital_life"]
+        self.hl = hl
+        hl._TURN_META["s-budget"] = {"platform": "qqbot", "chat_id": "c1"}
+        hl._TOOL_TURNS.pop("s-budget", None)
+
+    def tearDown(self):
+        self.hl._TURN_META.pop("s-budget", None)
+        self.hl._TOOL_TURNS.pop("s-budget", None)
+
+    def test_third_zone_page_is_blocked(self):
+        hook = self.hl._gate_tool_call
+        self.assertIsNone(hook(tool_name="qzone_feed", session_id="s-budget"))
+        self.assertIsNone(hook(tool_name="qzone_feed", session_id="s-budget"))
+        blocked = hook(tool_name="qzone_feed", session_id="s-budget")
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("2 页", blocked["message"])
+
+    def test_runaway_tool_loop_is_blocked(self):
+        hook = self.hl._gate_tool_call
+        for _ in range(8):
+            self.assertIsNone(hook(tool_name="memory_recall", session_id="s-budget"))
+        blocked = hook(tool_name="memory_recall", session_id="s-budget")
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("8 次", blocked["message"])
+
+    def test_non_qq_session_is_exempt(self):
+        self.hl._TURN_META["s-cron"] = {"platform": ""}
+        try:
+            hook = self.hl._gate_tool_call
+            for _ in range(20):
+                self.assertIsNone(hook(tool_name="memory_recall", session_id="s-cron"))
+        finally:
+            self.hl._TURN_META.pop("s-cron", None)
+
 if __name__ == "__main__":
     unittest.main()
 
