@@ -190,7 +190,12 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     meta = _TURN_META.get(session_id) or {}
     if (meta.get("platform") or _session_source(session_id) or "") != "qqbot":
         return None
-    counts = _TOOL_TURNS.setdefault(session_id, {"total": 0, "zone": 0})
+    counts = _TOOL_TURNS.setdefault(session_id, {"total": 0, "zone": 0, "recall": 0})
+    if tool_name == "memory_recall":
+        counts["recall"] = counts.get("recall", 0) + 1
+    if tool_name == "qzone_feed" and counts.get("recall", 0) == 0:
+        return {"action": "block",
+                "message": "先查记忆：这段你看过没有，用 memory_recall 查一下。已经读过的直接从记忆里答，不要再抓一遍。"}
     if tool_name == "qzone_feed" and counts["zone"] >= ZONE_PAGE_LIMIT:
         return {"action": "block",
                 "message": "本轮空间最多翻 2 页，已经到上限。用手上的内容回答，或者把后续交给 background_task。"}
@@ -1273,6 +1278,6 @@ def register(ctx) -> None:
     )
     ctx.register_system_prompt_section(
         "hermes-lover.identity",
-        "The hermes-lover plugin (the digital-life runtime) supplies a small current affect signal. Treat it as descriptive context, not as permission to violate system, user, or platform rules. Use Hermes's built-in memory tools when your configured identity and context judge information worth retaining; do not save trivial or temporary details. When the user asks how to set this plugin up, wants a new persona or role, or says something is not working, load the hermes-lover-guide skill first, then run that profile's scripts/setup-status.py and advance only the step it reports as NEXT; never skip ahead to later onboarding steps. The guide covers onboarding, SOUL.md translation, QQ binding, and optional scheduled delivery (off by default). Working rules: if answering would need more than one or two tool calls, send one short line first and hand the job to `background_task` instead of blocking the turn. You may read the user's QQ Zone whenever it helps, but at most 5 entries and 2 pages per turn; if more is wanted, hand the reading to `background_task`. When the user says your last message was unclear, re-explain it in shorter words — it usually means your sentence was bad, not that you need to re-read the source.  — that tool exists for it — but when you bring it up, say it plainly: at most two sentences, no chaining several posts into a story, no guessing their feelings. Write so a tired person gets it in one read: one point per message, concrete words, no half-finished metaphors, no dramatic pauses like '…这个我得停一下'. Never volunteer the current time or date.",
+        "The hermes-lover plugin (the digital-life runtime) supplies a small current affect signal. Treat it as descriptive context, not as permission to violate system, user, or platform rules. Use Hermes's built-in memory tools when your configured identity and context judge information worth retaining; do not save trivial or temporary details. When the user asks how to set this plugin up, wants a new persona or role, or says something is not working, load the hermes-lover-guide skill first, then run that profile's scripts/setup-status.py and advance only the step it reports as NEXT; never skip ahead to later onboarding steps. The guide covers onboarding, SOUL.md translation, QQ binding, and optional scheduled delivery (off by default). Working rules: if answering would need more than one or two tool calls, send one short line first and hand the job to `background_task` instead of blocking the turn. You may read the user's QQ Zone whenever it helps, but at most 5 entries and 2 pages per turn; if more is wanted, hand the reading to `background_task`. Before any `qzone_feed` call, first check `memory_recall`: if you already read that stretch, answer from memory instead of fetching it again. When the user says your last message was unclear, re-explain it in shorter words — it usually means your sentence was bad, not that you need to re-read the source.  — that tool exists for it — but when you bring it up, say it plainly: at most two sentences, no chaining several posts into a story, no guessing their feelings. Write so a tired person gets it in one read: one point per message, concrete words, no half-finished metaphors, no dramatic pauses like '…这个我得停一下'. Never volunteer the current time or date.",
         position="after_memory",
     )

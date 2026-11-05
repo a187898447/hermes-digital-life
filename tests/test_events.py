@@ -889,8 +889,17 @@ class ToolBudgetTests(unittest.TestCase):
         self.hl._TURN_META.pop("s-budget", None)
         self.hl._TOOL_TURNS.pop("s-budget", None)
 
+    def test_zone_needs_a_memory_check_first(self):
+        hook = self.hl._gate_tool_call
+        blocked = hook(tool_name="qzone_feed", session_id="s-budget")
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("memory_recall", blocked["message"])
+        self.assertIsNone(hook(tool_name="memory_recall", session_id="s-budget"))
+        self.assertIsNone(hook(tool_name="qzone_feed", session_id="s-budget"))
+
     def test_third_zone_page_is_blocked(self):
         hook = self.hl._gate_tool_call
+        self.assertIsNone(hook(tool_name="memory_recall", session_id="s-budget"))
         self.assertIsNone(hook(tool_name="qzone_feed", session_id="s-budget"))
         self.assertIsNone(hook(tool_name="qzone_feed", session_id="s-budget"))
         blocked = hook(tool_name="qzone_feed", session_id="s-budget")
