@@ -127,7 +127,21 @@ def load_cookies() -> dict[str, str]:
 
 
 IMAGE_DIR = HOME / "qzone-images"
+SEEN_PATH = HOME / "qzone-seen.json"
+SEEN_CAP = 400
 IMG_RE = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.I)
+
+
+def load_seen() -> list[str]:
+    try:
+        data = json.loads(SEEN_PATH.read_text())
+    except (OSError, ValueError):
+        return []
+    return [str(x) for x in data] if isinstance(data, list) else []
+
+
+def save_seen(ids: list[str]) -> None:
+    SEEN_PATH.write_text(json.dumps(ids[-SEEN_CAP:], ensure_ascii=False))
 
 
 def _download_images(op, msg: dict, limit: int) -> list[str]:
@@ -156,12 +170,13 @@ def _download_images(op, msg: dict, limit: int) -> list[str]:
         suffix = ".png" if raw[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg"
         name = hashlib.sha1(url.encode()).hexdigest()[:16] + suffix
         path = IMAGE_DIR / name
-        path.write_bytes(raw)
+        if not path.exists():
+            path.write_bytes(raw)
         paths.append(str(path))
     return paths
 
 
-def fetch_feed(count: int = 10, with_images: bool = False) -> dict:
+def fetch_feed(count: int = 10, with_images: bool = False, include_seen: bool = False) -> dict:
     cookies = load_cookies()
     if "skey" not in cookies or "uin" not in cookies:
         return {"ok": False, "error": "not logged in", "hint": "run: qzone-bridge.py login"}
@@ -194,10 +209,21 @@ def fetch_feed(count: int = 10, with_images: bool = False) -> dict:
             "comments": int(msg.get("cmtnum") or 0),
             "likes": int(msg.get("likenum") or 0),
         }
+        item["_id"] = str(msg.get("tid") or "")
         if with_images:
             item["images"] = _download_images(op, msg, 2)
         items.append(item)
-    return {"ok": True, "items": items, "total": payload.get("total") or len(items)}
+    seen = load_seen()
+    if not include_seen:
+        fresh = [item for item in items if not item["_id"] or item["_id"] not in seen]
+    else:
+        fresh = items
+    if fresh:
+        save_seen(seen + [item["_id"] for item in fresh if item["_id"]])
+    for item in items:
+        item.pop("_id", None)
+    return {"ok": True, "items": fresh, "total": payload.get("total") or len(items),
+            "new": len(fresh), "read": len(items)}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -219,7 +245,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/feed":
             q = urllib.parse.parse_qs(parsed.query)
             images = (q.get("images") or ["0"])[0] in ("1", "true", "yes")
-            return self._json(fetch_feed(int((q.get("count") or ["10"])[0]), images))
+            all_posts = (q.get("seen") or ["0"])[0] in ("1", "true", "yes")
+            limit = max(1, min(int((q.get("count") or ["10"])[0]), 10))
+            return self._json(fetch_feed(limit, images, all_posts))
         self._json({"ok": False, "error": "not found"}, 404)
 
 

@@ -988,12 +988,15 @@ def register(ctx) -> None:
         description="Background web search; the answer is sent to the chat when ready.",
     )
     def qzone_feed(args, **kwargs):
-        count = int(args.get("count") or 10)
+        count = max(1, min(int(args.get("count") or 5), 10))
         want_images = bool(args.get("images"))
+        include_seen = bool(args.get("include_seen"))
         port = os.environ.get("QZONE_BRIDGE_PORT") or "8765"
-        url = f"http://127.0.0.1:{port}/feed?count={max(1, min(count, 20))}"
+        url = f"http://127.0.0.1:{port}/feed?count={count}"
         if want_images:
             url += "&images=1"
+        if include_seen:
+            url += "&seen=1"
         try:
             raw = urllib.request.urlopen(url, timeout=15).read()
             data = json.loads(raw.decode("utf-8"))
@@ -1009,16 +1012,20 @@ def register(ctx) -> None:
             if item.get("images"):
                 line += " 图片：" + "，".join(item["images"])
             lines.append(line)
-        return json.dumps({"ok": True, "count": len(lines), "feed": lines}, ensure_ascii=False)
+        return json.dumps({"ok": True, "count": len(lines), "new": data.get("new"),
+                           "feed": lines or ["（没有新动态）"]}, ensure_ascii=False)
 
     ctx.register_tool(
         name="qzone_feed", toolset="digital_life",
         schema={"name": "qzone_feed",
                 "description": "Read the QQ Zone feed of the account behind the local bridge. Read-only: never posts. With images=true it also downloads each entry's photos to local files; pass those paths to vision_analyze to describe them.",
                 "parameters": {"type": "object", "properties": {
-                    "count": {"type": "integer", "default": 10},
+                    "count": {"type": "integer", "default": 5,
+                              "description": "How many entries to inspect, 1-10. The bridge returns only entries you have not read yet by default."},
                     "images": {"type": "boolean", "default": False,
-                               "description": "Also download the entry images to local files so vision_analyze can read them."}},
+                               "description": "Also download up to 2 photos per entry to local files so vision_analyze can read them."},
+                    "include_seen": {"type": "boolean", "default": False,
+                                     "description": "Also include entries already read in earlier calls."}},
                                "additionalProperties": False}},
         handler=qzone_feed,
         description="Read the QQ Zone feed through the local bridge.",
