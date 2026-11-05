@@ -618,6 +618,52 @@ class QqBubbleTransformTests(unittest.TestCase):
                 self.assertIsNone(hook(event=event))
                 self.assertEqual(plugin._MEMORY_STORE["factory"]().read_entries(), {})
 
+    def _owner_hook(self, root, text):
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        patches = (
+            patch.object(plugin.digital_life.storage, "data_root", return_value=root),
+            patch.object(plugin.digital_life.storage, "plugin_db",
+                         side_effect=lambda name, filename: sqlite3.connect(root / filename)),
+            patch.object(plugin.digital_life.storage, "read_state",
+                         return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
+            patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+            patch.object(plugin, "_send_qq", return_value=None),
+            patch.object(plugin, "_plugin_env", side_effect=lambda name: "owner-1" if name == "QQ_OWNER_ID" else ""),
+        )
+        from types import SimpleNamespace
+        event = SimpleNamespace(text=text, sender_id="owner-1",
+                                source=SimpleNamespace(platform=SimpleNamespace(value="qqbot"),
+                                                       chat_id="chat-1", user_id="owner-1"))
+        return ctx, patches, event
+
+    def test_new_rotates_without_clearing_memory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx, patches, event = self._owner_hook(root, "/new")
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+                plugin.register(ctx)
+                plugin._MEMORY_STORE["factory"]().capture("用户：别忘了我", session_id="s1", chat_id="chat-1")
+                before = plugin._MEMORY_STORE["factory"]().read_entries()
+                self.assertTrue(before)
+                result = dict(ctx.hooks)["pre_gateway_dispatch"](event=event)
+                # A bare "/new" is left to the gateway; either way memory must survive.
+                self.assertIn(result, (None, {"action": "rewrite", "text": "/new"}))
+                self.assertEqual(plugin._MEMORY_STORE["factory"]().read_entries().keys(), before.keys())
+
+    def test_forget_clears_memory_without_rotating(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx, patches, event = self._owner_hook(root, "/forget")
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+                plugin.register(ctx)
+                plugin._MEMORY_STORE["factory"]().capture("用户：别忘了我", session_id="s1", chat_id="chat-1")
+                self.assertTrue(plugin._MEMORY_STORE["factory"]().read_entries())
+                result = dict(ctx.hooks)["pre_gateway_dispatch"](event=event)
+                self.assertEqual(result, {"action": "skip", "reason": "hermes-lover /forget"})
+                self.assertEqual(plugin._MEMORY_STORE["factory"]().read_entries(), {})
+
+
 
     def test_stress_directive_leads_the_system_prompt(self):
         state = default_state(1_000_000)

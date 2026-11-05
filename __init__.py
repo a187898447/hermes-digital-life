@@ -215,6 +215,7 @@ def _post_tool_call(tool_name: str = "", args: dict[str, Any] | None = None, res
 
 
 _RESET_COMMAND = re.compile(r"^/(?:new|reset)(?:\s+(?P<scope>all|全部))?(?:\s|$)", re.IGNORECASE)
+_FORGET_COMMAND = re.compile(r"^/(?:forget|clear-memory|清空记忆|清理记忆)(?:\s+(?P<scope>all|全部))?(?:\s|$)", re.IGNORECASE)
 _RESET_SCRUB = 0
 
 
@@ -241,37 +242,44 @@ def _reset_admins() -> set[str]:
 
 
 def _on_gateway_dispatch(event=None, **kwargs):
-    """``/new`` (or ``/reset``) in QQ: owner/manager only, and it wipes palace + life state."""
+    """QQ commands: ``/new`` rotates a conversation, ``/forget`` wipes memory.
+
+    Rotating and forgetting used to be one command, so a full context window
+    silently erased the palace. They are separate now: ``/new`` never touches
+    memory, ``/forget`` never rotates. Both stay owner-only for the ``all``
+    scope; ``/forget`` is owner-only for every scope.
+    """
     try:
         text = (getattr(event, "text", "") or "").strip()
         source = getattr(event, "source", None)
         platform = getattr(getattr(source, "platform", None), "value", "") or ""
-        match = _RESET_COMMAND.match(text)
-        if platform != "qqbot" or not match:
+        if platform != "qqbot":
             return None
-        sender = (getattr(event, "sender_id", "") or getattr(source, "user_id", "") or "")
-        sender = str(sender)
-        if sender not in _reset_admins():
-            logger.info("hermes-lover /new ignored: sender %s is not an owner", sender[-6:])
+        forget = _FORGET_COMMAND.match(text)
+        reset = _RESET_COMMAND.match(text)
+        if not forget and not reset:
             return None
+        sender = str(getattr(event, "sender_id", "") or getattr(source, "user_id", "") or "")
         chat_id = str(getattr(source, "chat_id", "") or "")
-        all_chats = (match.group("scope") or "").lower() in {"all", "全部"}
-        factory = _MEMORY_STORE.get("factory")
-        store = factory() if factory is not None else None
-        if store is not None:
-            # Never fall back to "every chat" when the source carries no chat id.
-            cleared = store.clear(None if all_chats else (chat_id or "unknown"))
-        else:
-            cleared = 0
-        now_ms = time.time() * 1000
-        from .digital_life import domain as _domain, storage as _storage  # noqa: PLC0415
+        all_chats = ((forget or reset).group("scope") or "").lower() in {"all", "全部"}
+        admin = sender in _reset_admins()
+        if not admin:
+            logger.info("hermes-lover command ignored: sender %s is not an owner", sender[-6:])
+            return None
+        if forget:
+            factory = _MEMORY_STORE.get("factory")
+            store = factory() if factory is not None else None
+            cleared = store.clear(None if all_chats else (chat_id or "unknown")) if store is not None else 0
+            now_ms = time.time() * 1000
+            from .digital_life import domain as _domain, storage as _storage  # noqa: PLC0415
 
-        _storage.update_state(now_ms, lambda state: _domain.default_state(now_ms))
-        logger.info("hermes-lover /new by owner: cleared %s palace entries, life state reset", cleared)
+            _storage.update_state(now_ms, lambda state: _domain.default_state(now_ms))
+            logger.info("hermes-lover /forget by owner: cleared %s palace entries, life state reset", cleared)
+            _send_qq(chat_id, "记忆清了。" if not all_chats else "所有会话的记忆都清了。")
+            return {"action": "skip", "reason": "hermes-lover /forget"}
         if all_chats:
-            # /new all means every QQ conversation starts over, not just this one.
             session_store = kwargs.get("session_store")
-            reset = 0
+            rotated = 0
             if session_store is not None:
                 try:
                     for entry in session_store.list_sessions():
@@ -279,20 +287,28 @@ def _on_gateway_dispatch(event=None, **kwargs):
                         if platform_name != "qqbot":
                             continue
                         if session_store.reset_session(entry.session_key) is not None:
-                            reset += 1
+                            rotated += 1
                 except Exception:
                     logger.warning("hermes-lover /new all could not reset host sessions", exc_info=True)
-            logger.info("hermes-lover /new all: %s host sessions rotated", reset)
-            # Let the gateway run its own /new all so the operator still gets the
-            # "New session started" banner and every platform re-routes normally.
+            logger.info("hermes-lover /new all: %s host sessions rotated", rotated)
             return {"action": "rewrite", "text": "/new all"}
         if text.lower().strip() != "/new":
-            # A group message arrives as "<@bot> /new"; hand the gateway a bare command so it
-            # also rotates the conversation instead of only clearing plugin state.
             return {"action": "rewrite", "text": "/new"}
     except Exception:
-        logger.warning("hermes-lover /new reset failed", exc_info=True)
+        logger.warning("hermes-lover gateway command failed", exc_info=True)
     return None
+
+
+def _send_qq(chat_id: str, message: str) -> None:
+    """Best-effort confirmation for a gateway command that skips the model."""
+    if not chat_id:
+        return
+    try:
+        from tools.send_message_tool import send_message_tool  # noqa: PLC0415
+
+        send_message_tool({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
+    except Exception:
+        logger.warning("hermes-lover could not send command confirmation", exc_info=True)
 
 
 def _on_user_message(
