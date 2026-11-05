@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -111,6 +112,33 @@ class LockTests(unittest.TestCase):
                 with proactive._targets_lock():
                     reached.append(True)
             self.assertEqual(reached, [True])
+
+
+class HostAPIDegradeTests(unittest.TestCase):
+    @staticmethod
+    def _unavailable():
+        raise proactive.HostAPIUnavailable("plugins.plugin_storage")
+
+    def test_missing_plugin_storage_fails_closed_without_raising(self):
+        with patch.object(proactive, "_plugin_data_dir", self._unavailable):
+            self.assertEqual(proactive.load_targets(), [])
+            self.assertEqual(proactive.subscribed_chats(), set())
+            self.assertEqual(proactive.subscribe({"chat_id": "A"}), ("unavailable", 0))
+            self.assertEqual(proactive.unsubscribe("A"), ("unavailable", 0))
+            self.assertFalse(proactive.track_chat({"chat_id": "A"}))
+            reached = []
+            with proactive._targets_lock():
+                reached.append(True)
+            self.assertEqual(reached, [True])
+            with patch.object(proactive, "resolve_chat",
+                              return_value={"chat_id": "A", "chat_type": "dm"}):
+                self.assertIsNone(proactive.handle_message("主动一点", "s-1", "qqbot"))
+
+    def test_missing_cron_jobs_keeps_subscriptions_and_returns_zero(self):
+        with patch.dict(sys.modules, {"cron.jobs": None}):
+            self.assertFalse(proactive.sync_beat_delivery())
+            self.assertEqual(proactive.set_beats_enabled(True), 0)
+            self.assertFalse(proactive.ensure_chat_job({"chat_id": "A"}))
 
 
 if __name__ == "__main__":

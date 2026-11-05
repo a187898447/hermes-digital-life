@@ -10,12 +10,19 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import sqlite3
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+
+class HostAPIUnavailable(RuntimeError):
+    """A host-internal module this plugin reads moved or disappeared."""
 
 PLUGIN_NAME = "hermes-lover"
 BEAT_JOB_NAME = "hermes-lover-beat"
@@ -57,18 +64,33 @@ def _home() -> Path:
     return get_hermes_home()
 
 
+def _plugin_data_dir():
+    try:
+        from plugins.plugin_storage import plugin_data_dir  # noqa: PLC0415
+
+        return plugin_data_dir
+    except (ImportError, AttributeError) as exc:
+        raise HostAPIUnavailable("plugins.plugin_storage") from exc
+
+
 def _targets_path() -> Path:
-    from plugins.plugin_storage import plugin_data_dir
-
-    return plugin_data_dir(PLUGIN_NAME) / TARGETS_FILE
+    return _plugin_data_dir()(PLUGIN_NAME) / TARGETS_FILE
 
 
-def load_targets() -> list[dict[str, Any]]:
+def _load_targets_strict() -> list[dict[str, Any]]:
     try:
         data = json.loads(_targets_path().read_text())
     except (OSError, ValueError):
         return []
     return [item for item in data if isinstance(item, dict) and item.get("chat_id")]
+
+
+def load_targets() -> list[dict[str, Any]]:
+    try:
+        return _load_targets_strict()
+    except HostAPIUnavailable:
+        logger.warning("hermes-lover: host plugin storage is unavailable; subscriptions are off")
+        return []
 
 
 def subscribed_chats() -> set[str]:
@@ -84,7 +106,11 @@ def _targets_lock():
     except ImportError:  # pragma: no cover
         yield
         return
-    from plugins.plugin_storage import plugin_data_dir  # noqa: PLC0415
+    try:
+        plugin_data_dir = _plugin_data_dir()  # noqa: PLC0415
+    except HostAPIUnavailable:
+        yield
+        return
 
     path = plugin_data_dir(PLUGIN_NAME) / "proactive.lock"
     try:
@@ -138,17 +164,30 @@ def resolve_chat(session_id: str) -> dict[str, str] | None:
     return None
 
 
+def _cron_jobs():
+    try:
+        import cron.jobs as jobs  # noqa: PLC0415
+
+        return jobs
+    except (ImportError, AttributeError) as exc:
+        raise HostAPIUnavailable("cron.jobs") from exc
+
+
 def sync_beat_delivery() -> bool:
     """Keep the beat job on local delivery: one agent run fans out to every chat."""
-    from cron.jobs import load_jobs, update_job, use_cron_store
+    try:
+        jobs = _cron_jobs()
+    except HostAPIUnavailable:
+        logger.warning("hermes-lover: host cron.jobs is unavailable; beat delivery is unchanged")
+        return False
 
     changed = False
-    with use_cron_store(_home()):
-        for job in load_jobs():
+    with jobs.use_cron_store(_home()):
+        for job in jobs.load_jobs():
             if job.get("name") != BEAT_JOB_NAME:
                 continue
             if job.get("deliver") != ["local"]:
-                update_job(job["id"], {"deliver": ["local"]})
+                jobs.update_job(job["id"], {"deliver": ["local"]})
                 changed = True
     return changed
 
@@ -163,19 +202,23 @@ def track_chat(chat: dict[str, str]) -> bool:
     chat_id = str(chat.get("chat_id") or "")
     if not chat_id:
         return False
-    with _targets_lock():
-        targets = load_targets()
-        if any(str(item.get("chat_id")) == chat_id for item in targets):
-            return False
-        targets.append({
-            "chat_id": chat_id,
-            "chat_type": str(chat.get("chat_type") or ""),
-            "label": str(chat.get("label") or ""),
-            "added_at": time.time(),
-        })
-        _save_targets(targets)
-        sync_beat_delivery()
-        return True
+    try:
+        with _targets_lock():
+            targets = _load_targets_strict()
+            if any(str(item.get("chat_id")) == chat_id for item in targets):
+                return False
+            targets.append({
+                "chat_id": chat_id,
+                "chat_type": str(chat.get("chat_type") or ""),
+                "label": str(chat.get("label") or ""),
+                "added_at": time.time(),
+            })
+            _save_targets(targets)
+            sync_beat_delivery()
+            return True
+    except HostAPIUnavailable:
+        logger.warning("hermes-lover: host plugin storage is unavailable; subscriptions are off")
+        return False
 
 
 def _beat_job_name(chat_id: str) -> str:
@@ -204,18 +247,22 @@ def ensure_chat_job(chat: dict[str, str]) -> bool:
     # chat ids like "local-<hash>" and must never receive proactive messages.
     if not chat_id or chat_id.startswith("local-"):
         return False
-    from cron.jobs import create_job, load_jobs, use_cron_store
+    try:
+        jobs = _cron_jobs()
+    except HostAPIUnavailable:
+        logger.warning("hermes-lover: host cron.jobs is unavailable; no per-chat beat job")
+        return False
 
     name = _beat_job_name(chat_id)
-    with use_cron_store(_home()):
-        jobs = load_jobs()
-        if any(job.get("name") == name for job in jobs):
+    with jobs.use_cron_store(_home()):
+        jobs_list = jobs.load_jobs()
+        if any(job.get("name") == name for job in jobs_list):
             return False
         enabled = any(
             bool(job.get("enabled")) and (job.get("name") or "").startswith(BEAT_JOB_NAME)
-            for job in jobs
+            for job in jobs_list
         )
-        create_job(
+        jobs.create_job(
             CHAT_BEAT_PROMPT.format(chat_type=str(chat.get("chat_type") or "chat"), chat_id=chat_id),
             BEAT_SCHEDULE,
             name=name,
@@ -232,33 +279,41 @@ def subscribe(chat: dict[str, str], label: str = "") -> tuple[str, int]:
     chat_id = str(chat.get("chat_id") or "")
     if not chat_id:
         return "missing", len(load_targets())
-    with _targets_lock():
-        targets = load_targets()
-        if any(item["chat_id"] == chat_id for item in targets):
-            return "present", len(targets)
-        targets.append(
-            {
-                "chat_id": chat_id,
-                "chat_type": str(chat.get("chat_type") or ""),
-                "label": label,
-                "added_at": time.time(),
-            }
-        )
-        _save_targets(targets)
-        sync_beat_delivery()
-        return "added", len(targets)
+    try:
+        with _targets_lock():
+            targets = _load_targets_strict()
+            if any(item["chat_id"] == chat_id for item in targets):
+                return "present", len(targets)
+            targets.append(
+                {
+                    "chat_id": chat_id,
+                    "chat_type": str(chat.get("chat_type") or ""),
+                    "label": label,
+                    "added_at": time.time(),
+                }
+            )
+            _save_targets(targets)
+            sync_beat_delivery()
+            return "added", len(targets)
+    except HostAPIUnavailable:
+        logger.warning("hermes-lover: host plugin storage is unavailable; subscriptions are off")
+        return "unavailable", 0
 
 
 def unsubscribe(chat_id: str) -> tuple[str, int]:
     """Remove ``chat_id`` (idempotent). Returns ``(state, target_count)``."""
-    with _targets_lock():
-        targets = load_targets()
-        kept = [item for item in targets if item["chat_id"] != chat_id]
-        if len(kept) == len(targets):
-            return "absent", len(targets)
-        _save_targets(kept)
-        sync_beat_delivery()
-        return "removed", len(kept)
+    try:
+        with _targets_lock():
+            targets = _load_targets_strict()
+            kept = [item for item in targets if item["chat_id"] != chat_id]
+            if len(kept) == len(targets):
+                return "absent", len(targets)
+            _save_targets(kept)
+            sync_beat_delivery()
+            return "removed", len(kept)
+    except HostAPIUnavailable:
+        logger.warning("hermes-lover: host plugin storage is unavailable; subscriptions are off")
+        return "unavailable", 0
 
 
 def handle_message(text: str, session_id: str, platform: str = "") -> str | None:
@@ -273,10 +328,14 @@ def handle_message(text: str, session_id: str, platform: str = "") -> str | None
         return None
     if action == "add":
         state, count = subscribe(chat, label=str(session_id))
+        if state == "unavailable":
+            return None
         if state == "present":
             return "这个会话已经在主动消息投递列表里了（共 %d 个），不用重复加。" % count
         return "已把这个会话加入主动消息投递（共 %d 个）。" % count
     state, count = unsubscribe(chat["chat_id"])
+    if state == "unavailable":
+        return None
     if state == "absent":
         return "这个会话本来就不在主动消息列表里（当前 %d 个）。" % count
     return "已把这个会话从主动消息投递里移除（还剩 %d 个）。" % count
@@ -284,19 +343,23 @@ def handle_message(text: str, session_id: str, platform: str = "") -> str | None
 
 def set_beats_enabled(enabled: bool) -> int:
     """Enable or pause every hermes-lover beat job; returns how many changed."""
-    from cron.jobs import load_jobs, pause_job, resume_job, use_cron_store
+    try:
+        jobs = _cron_jobs()
+    except HostAPIUnavailable:
+        logger.warning("hermes-lover: host cron.jobs is unavailable; beat jobs are unchanged")
+        return 0
 
     changed = 0
-    with use_cron_store(_home()):
-        for job in load_jobs():
+    with jobs.use_cron_store(_home()):
+        for job in jobs.load_jobs():
             name = job.get("name") or ""
             if name != BEAT_JOB_NAME and not name.startswith(BEAT_JOB_PREFIX):
                 continue
             if bool(job.get("enabled")) == enabled:
                 continue
             if enabled:
-                resume_job(job["id"])
+                jobs.resume_job(job["id"])
             else:
-                pause_job(job["id"], "paused by the operator")
+                jobs.pause_job(job["id"], "paused by the operator")
             changed += 1
     return changed

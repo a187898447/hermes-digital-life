@@ -316,13 +316,28 @@ def _on_gateway_dispatch(event=None, **kwargs):
     return None
 
 
+def _host_send_message_tool():
+    """The host send tool, or ``None`` when a host update moved it away."""
+    try:
+        from tools.send_message_tool import send_message_tool  # noqa: PLC0415
+
+        return send_message_tool
+    except (ImportError, AttributeError):
+        logger.warning(
+            "hermes-lover: host tools.send_message_tool is unavailable; "
+            "command confirmations and beat sends will be skipped"
+        )
+        return None
+
+
 def _send_qq(chat_id: str, message: str) -> None:
     """Best-effort confirmation for a gateway command that skips the model."""
     if not chat_id:
         return
+    send_message_tool = _host_send_message_tool()
+    if send_message_tool is None:
+        return
     try:
-        from tools.send_message_tool import send_message_tool  # noqa: PLC0415
-
         send_message_tool({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
     except Exception:
         logger.warning("hermes-lover could not send command confirmation", exc_info=True)
@@ -875,7 +890,9 @@ def register(ctx) -> None:
             delay = 0
         if delay:
             time.sleep(delay)
-        from tools.send_message_tool import send_message_tool
+        send_message_tool = _host_send_message_tool()
+        if send_message_tool is None:
+            return json.dumps({"ok": False, "error": "send unavailable"}, ensure_ascii=False)
         raw = send_message_tool({"action": "send", "target": f"qqbot:{chat_id}", "message": text})
         try:
             result = json.loads(raw)

@@ -837,5 +837,29 @@ class PersonaSyncTests(unittest.TestCase):
             self.assertEqual((home / "SOUL.md").read_text(), "mine, edited")
 
 
+class HostSendFallbackTests(unittest.TestCase):
+    def test_missing_host_send_tool_degrades_confirmations_and_beats(self):
+        ctx = RecordingContext()
+        plugin.register(ctx)
+        handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["beat_send"]
+        with patch.dict(sys.modules, {"tools": None, "tools.send_message_tool": None}):
+            self.assertIsNone(plugin._host_send_message_tool())
+            plugin._send_qq("c1", "hello")  # must not raise
+            with patch.object(plugin, "_session_source", return_value="cron"):
+                payload = json.loads(handler({"chat_id": "c1", "text": "hi"},
+                                             session_id="s-cron"))
+        self.assertEqual(payload, {"ok": False, "error": "send unavailable"})
+
+    def test_host_send_tool_is_used_when_present(self):
+        calls = []
+        module = types.ModuleType("tools.send_message_tool")
+        module.send_message_tool = lambda args: calls.append(args) or json.dumps({"ok": True})
+        tools = types.ModuleType("tools")
+        tools.send_message_tool = module
+        with patch.dict(sys.modules, {"tools": tools, "tools.send_message_tool": module}):
+            plugin._send_qq("c1", "hello")
+        self.assertEqual(calls, [{"action": "send", "target": "qqbot:c1", "message": "hello"}])
+
+
 if __name__ == "__main__":
     unittest.main()

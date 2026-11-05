@@ -81,6 +81,17 @@ hermes-web-ui restart
 
 If a Studio upgrade overwrites the bundle, re-run the installer or the script above.
 
+## Known issue: a host update can disable the plugin or move its internals
+
+Hermes updates can add `hermes-lover` to `plugins.disabled_by_update`, drop `digital_life`/`no_mcp` from `platform_toolsets.qqbot`, or move internal modules the plugin reads (`tools.send_message_tool`, `cron.jobs`, `plugins.plugin_storage`). A moved module now degrades one feature instead of breaking the turn, and `hermes-lover doctor` reports every host condition the plugin depends on:
+
+```sh
+hermes -p hermes-lover hermes-lover doctor        # read-only; exit 1 when something needs a fix
+hermes -p hermes-lover hermes-lover doctor --fix  # re-enable, re-patch, re-sync profile files
+```
+
+`--fix` never edits cron settings, restarts the gateway, or overwrites `SOUL.md`; do the restart yourself after it reports clean.
+
 ## Optional: billion-context (bili)
 
 The plugin works without [billion-context](https://github.com/ranxianglei/billion-context);
