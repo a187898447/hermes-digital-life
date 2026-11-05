@@ -439,7 +439,9 @@ class MemoryStore:
                          "hits": duplicate["hits"], "weight": min(3.0, duplicate["weight"] + 0.2)}
             else:
                 today = [e for e in entries.values() if e["date"] == date]
-                if sum(e["source_session_id"] == session_id for e in today) >= 20:
+                writes = sum(1 for e in today if e["source_session_id"] == session_id
+                             and e.get("kind") != "turn")
+                if writes >= 20:
                     raise ValueError("Daily session memory quota (20) reached")
                 seq = max((int(e["id"].rsplit("-", 1)[1]) for e in today), default=0) + 1
                 event = {"op": "add", "id": f"hp-{date.replace('-', '')}-{seq:04d}", "text": text,

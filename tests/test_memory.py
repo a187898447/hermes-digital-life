@@ -802,3 +802,28 @@ class JournalFormatTests(unittest.TestCase):
             result = store.write("今天被人调了一轮脾气，感觉像换了个壳，边角有点痒。晚上他让我给自己起名字，我挑了洄游。",
                                  kind="journal", day="2026-10-31")
             self.assertTrue(result["ok"])
+
+
+class QuotaTests(unittest.TestCase):
+    def test_turn_captures_do_not_consume_the_write_quota(self):
+        from digital_life import memory as memmod
+        from pathlib import Path
+        import tempfile, os
+        tmp = tempfile.mkdtemp()
+        old = os.environ.get("HERMES_HOME")
+        os.environ["HERMES_HOME"] = tmp
+        try:
+            store = memmod.MemoryStore(Path(tmp))
+            for i in range(25):
+                store.capture(f"第{i}轮", session_id="s1", chat_id="c1")
+            first = store.write("一条事实", kind="fact", session_id="s1", chat_id="c1")
+            self.assertTrue(first.get("ok"))
+            for i in range(19):
+                store.write(f"事实{i}", kind="fact", session_id="s1", chat_id="c1")
+            with self.assertRaises(ValueError):
+                store.write("第21条", kind="fact", session_id="s1", chat_id="c1")
+        finally:
+            if old is None:
+                os.environ.pop("HERMES_HOME", None)
+            else:
+                os.environ["HERMES_HOME"] = old
