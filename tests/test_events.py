@@ -666,6 +666,22 @@ class QqBubbleTransformTests(unittest.TestCase):
             self.assertIn(command, sent[0])
 
 
+    def test_restart_acks_then_schedules_a_gateway_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx, patches, event = self._owner_hook(root, "/restart")
+            sent: list[str] = []
+            scheduled: list[float] = []
+            with patches[0], patches[1], patches[2], patches[3], patch.object(
+                    plugin, "_send_qq", side_effect=lambda chat_id, text: sent.append(text)), patches[5], \
+                    patch.object(plugin, "_restart_gateway_later",
+                                 side_effect=lambda delay=1.5: scheduled.append(delay)):
+                plugin.register(ctx)
+                result = dict(ctx.hooks)["pre_gateway_dispatch"](event=event)
+        self.assertEqual(result, {"action": "skip", "reason": "hermes-lover /restart"})
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(scheduled, [1.5])
+
     def test_forget_clears_memory_without_rotating(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

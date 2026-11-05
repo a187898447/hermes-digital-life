@@ -10,6 +10,7 @@ import re
 import sqlite3
 import subprocess
 import sys
+import threading
 import urllib.error
 import urllib.request
 import time
@@ -228,8 +229,26 @@ _HELP_TEXT = (
     "/forget —— 清空当前会话记忆，删了就回不来\n"
     "/forget all —— 清空所有 QQ 会话记忆\n"
     "/core —— 查看当前情绪、能量和未解问题\n"
+    "/restart —— 重启网关，让改过的插件代码生效\n"
     "/help —— 显示这张表"
 )
+_RESTART_COMMAND = re.compile(r"^/(?:restart|重启|重载)(?:\s|$)", re.IGNORECASE)
+
+
+def _restart_gateway_later(delay: float = 1.5) -> None:
+    def fire() -> None:
+        try:
+            subprocess.Popen(["hermes", "gateway", "restart", "--all", "--detach", "-y"],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True, close_fds=True)
+        except OSError:
+            logger.warning("hermes-lover /restart could not launch hermes gateway restart")
+
+    timer = threading.Timer(delay, fire)
+    timer.daemon = True
+    timer.start()
+
+
 _FORGET_COMMAND = re.compile(r"^/(?:forget|clear-memory|清空记忆|清理记忆)(?:\s+(?P<scope>all|全部))?(?:\s|$)", re.IGNORECASE)
 _RESET_SCRUB = 0
 
@@ -269,6 +288,15 @@ def _on_gateway_dispatch(event=None, **kwargs):
         source = getattr(event, "source", None)
         platform = getattr(getattr(source, "platform", None), "value", "") or ""
         if platform != "qqbot":
+            return None
+        if _RESTART_COMMAND.match(text):
+            chat_id = str(getattr(source, "chat_id", "") or "")
+            sender = str(getattr(event, "sender_id", "") or getattr(source, "user_id", "") or "")
+            if sender in _reset_admins():
+                _send_qq(chat_id, "重启中，十来秒后回来。")
+                _restart_gateway_later()
+                logger.info("hermes-lover /restart by owner")
+                return {"action": "skip", "reason": "hermes-lover /restart"}
             return None
         if _HELP_COMMAND.match(text):
             chat_id = str(getattr(source, "chat_id", "") or "")
