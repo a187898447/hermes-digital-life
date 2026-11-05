@@ -5,8 +5,6 @@ author: pengyu
 license: MIT
 requires_hermes: ">=0.22"
 kind: standalone
-python_dependencies:
-  - "psutil>=5.9,<8"
 config_schema:
   wake:
     type: dict
