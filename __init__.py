@@ -1050,7 +1050,15 @@ def register(ctx) -> None:
             raw = urllib.request.urlopen(url, timeout=15).read()
             data = json.loads(raw.decode("utf-8"))
         except (OSError, ValueError):
-            return json.dumps({"ok": False, "error": "qzone bridge 未运行，先运行 scripts/qzone-bridge.py serve"})
+            started = json.loads(qzone_bridge({"action": "start"}))
+            if not started.get("ok"):
+                return json.dumps({"ok": False, "error": "qzone bridge 未运行且启动失败",
+                                   "detail": started.get("error"), "hint": started.get("detail")})
+            try:
+                raw = urllib.request.urlopen(url, timeout=20).read()
+                data = json.loads(raw.decode("utf-8"))
+            except (OSError, ValueError):
+                return json.dumps({"ok": False, "error": "qzone bridge 启动后仍不可用"})
         if not data.get("ok"):
             return json.dumps({"ok": False, "error": data.get("error") or "feed failed",
                                "hint": data.get("hint")})

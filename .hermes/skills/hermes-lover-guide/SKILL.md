@@ -185,8 +185,7 @@ hermes gateway list       # default 与 <角色名> 都应显示 ✓
 2. 扫码登录一次（cookie 存 `~/.hermes/qzone-cookies.json`，600）：
    `python3 ~/.hermes/profiles/<角色名>/scripts/qzone-bridge.py login`
    把二维码图路径给用户，让他用 QQ 扫；**不要代扫、不要索要 cookie**。
-3. 让桥常驻：`python3 ~/.hermes/profiles/<角色名>/scripts/qzone-bridge.py serve`
-   （桥只绑 127.0.0.1:8765，只开 `/health`、`/feed`。）
+3. 桥不需要用户手动常驻：插件工具 `qzone_feed` 发现桥没起会自己调 `qzone_bridge start`；用户想手动管也可以 `python3 ~/.hermes/profiles/<角色名>/scripts/qzone-bridge.py serve`（只绑 127.0.0.1:8765，只开 `/health`、`/feed`）。
 4. 验证：`curl -s http://127.0.0.1:8765/health` 应返回 `{"ok":true,"logged_in":true}`。
 5. 告诉用户：之后直接说「看看空间最近有什么」，模型会调 `qzone_feed`。
 6. 只读：没有发说说/评论的能力；用户要发，说明这是另一步且个人号有风控风险。
