@@ -875,13 +875,13 @@ def register(ctx) -> None:
     ctx.register_tool(
         name="memory_write", toolset="digital_life",
         schema={"name": "memory_write",
-                "description": "Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. `fact` entries are atomic: cite the `sources` turn ids they were drawn from. `journal` entries may cite the `refs` fact ids they are based on. Does not change life state.",
+                "description": "Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. `fact` entries are atomic: cite the `sources` turn ids they were drawn from. `journal` entries may cite the `refs` fact ids they are based on; a journal can only be written for a day that has already ended (next-day backfill). Does not change life state.",
                 "parameters": {"type": "object", "properties": {
             "text": {"type": "string", "maxLength": 4000},
             "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal"], "default": "note"},
             "weight": {"type": ["number", "null"]},
             "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                    "description": "Anchor a journal or fact entry to the day it describes."},
+                    "description": "Anchor a journal or fact entry to the day it describes. Journals must target a past day."},
             "sources": {"type": "array", "items": {"type": "string"}, "maxItems": 20,
                         "description": "For kind=fact: ids of the turn entries this fact was distilled from. Unknown ids are dropped."},
             "refs": {"type": "array", "items": {"type": "string"}, "maxItems": 20,

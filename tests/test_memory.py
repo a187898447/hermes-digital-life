@@ -227,6 +227,12 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(entry["kind"], "journal")
         self.assertEqual(entry["date"], "2026-10-31")
 
+    def test_journal_cannot_target_today(self):
+        with self.assertRaises(ValueError):
+            self.store.write("【日记】今天还没过完。", kind="journal")
+        earlier = self.store.write("【日记】昨天过完了。", kind="journal", day="2026-10-31")
+        self.assertEqual(earlier["date"], "2026-10-31")
+
     def test_fact_sources_trace_to_turns_and_drop_unknown_ids(self):
         turn = self.store.capture("用户：今天又熬夜了\n助手：别熬了", session_id="s1", now_ms=NOW)
         fact = self.write("用户今天熬夜到很晚", kind="fact",
@@ -238,10 +244,10 @@ class MemoryTests(unittest.TestCase):
 
     def test_journal_refs_cite_facts_and_surface_as_sources(self):
         fact = self.write("用户今天熬夜到很晚", kind="fact")
-        diary = self.write("【日记】今天他又熬夜，我有点心疼。", kind="journal", day="2026-11-02",
+        diary = self.write("【日记】今天他又熬夜，我有点心疼。", kind="journal", day="2026-10-31",
                            refs=[fact["id"], "hp-20261102-9999"])
         self.assertEqual(self.store.get(diary["id"])["refs"], [fact["id"]])
-        shown = self.recall(day="2026-11-02")["shown"]
+        shown = self.recall(day="2026-10-31")["shown"]
         self.assertEqual(shown[0]["kind"], "journal")
         self.assertEqual(shown[0]["sources"], [fact["id"]])
 
@@ -274,10 +280,10 @@ class MemoryTests(unittest.TestCase):
         self.assertEqual(entry["last_access_at"], NOW)
 
     def test_day_recall_opens_journal_first_then_raw_entries(self):
-        day = "2026-11-02"
-        self.store.capture("用户：今天好累\n助手：早点睡", session_id="s1", now_ms=NOW)
-        self.store.write("【日记 2026-11-02】今天被夸了，嘴上说不在乎。", kind="journal",
-                         session_id="journal", now_ms=NOW + 1)
+        day = "2026-11-01"
+        self.store.capture("用户：今天好累\n助手：早点睡", session_id="s1", now_ms=NOW - 86_400_000)
+        self.store.write("【日记 2026-11-01】今天被夸了，嘴上说不在乎。", kind="journal",
+                         session_id="journal", day="2026-11-01")
         result = self.recall(day=day)
         self.assertEqual(result["shown"][0]["kind"], "journal")
         self.assertTrue(all(row["date"] == day for row in result["shown"]))
@@ -507,7 +513,7 @@ class HybridRecallTests(unittest.TestCase):
 
     def test_vectors_are_written_with_fact_and_journal_entries(self):
         fact = self.write("昨晚熬夜", kind="fact")
-        diary = self.write("【日记】昨晚他又熬夜。", kind="journal")
+        diary = self.write("【日记】昨晚他又熬夜。", kind="journal", day="2026-10-31")
         with closing(sqlite3.connect(self.root / "memory-index.db")) as db:
             ids = {row[0] for row in db.execute("SELECT id, dim, blob FROM vectors")}
         self.assertEqual(ids, {fact["id"], diary["id"]})

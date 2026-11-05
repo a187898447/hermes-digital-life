@@ -10,6 +10,7 @@ import math
 import os
 import re
 import sqlite3
+import threading
 import struct
 import threading
 import time
@@ -101,6 +102,9 @@ def _number(value: Any) -> bool:
     return not isinstance(value, bool) and isinstance(value, (int, float)) and math.isfinite(value)
 
 
+_STORE_LOCK = threading.RLock()
+
+
 def _now(value):
     return int(time.time() * 1000 if value is None else value)
 
@@ -126,7 +130,7 @@ class MemoryStore:
 
     @contextmanager
     def _locked(self):
-        with _WRITE_LOCK:
+        with _STORE_LOCK, _WRITE_LOCK:
             self._require_running()
             self.directory.mkdir(parents=True, exist_ok=True)
             with (self.directory / ".lock").open("a+b") as lock:
@@ -414,6 +418,10 @@ class MemoryStore:
             # Facts cite the turns they were distilled from; diaries cite their facts.
             traced_sources = self._known(sources, entries) if kind == "fact" else []
             traced_refs = self._known(refs, entries) if kind == "journal" else []
+            if kind == "journal":
+                from datetime import datetime as _dt  # noqa: PLC0415
+                if date >= _dt.fromtimestamp(now_ms / 1000).strftime("%Y-%m-%d"):
+                    raise ValueError("journal 只能补写已经结束的日子；当天的事等明天再写")
             duplicate = next((e for e in entries.values()
                               if e["date"] == date and e["text"] == text
                               and e.get("chat_id", "") == (chat_id or "")), None)
