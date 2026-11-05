@@ -940,6 +940,29 @@ def register(ctx) -> None:
         handler=beat_send,
         description="Send one proactive line to a QQ chat after an optional delay.",
     )
+    def search_later(args, session_id="", **kwargs):
+        question = str(args.get("question") or "").strip()
+        if not question:
+            return json.dumps({"ok": False, "error": "question is required"})
+        chat_id, _ = _session_scope(session_id)
+        if not chat_id:
+            return json.dumps({"ok": False, "error": "no chat context for this session"})
+        from .digital_life import research as _research  # noqa: PLC0415
+        started = _research.spawn(question, chat_id, _send_qq)
+        if not started:
+            return json.dumps({"ok": False, "error": "a search for this chat is already running"})
+        return json.dumps({"ok": True, "note": "Reply to the user now; the answer arrives as a separate message."})
+
+    ctx.register_tool(
+        name="search_later", toolset="digital_life",
+        schema={"name": "search_later",
+                "description": "Search the web in the background and send the answer to this chat later. Call it only when the user actually asked for facts you do not know; reply to the user in the same turn instead of waiting.",
+                "parameters": {"type": "object", "properties": {
+                    "question": {"type": "string", "maxLength": 300},
+                }, "required": ["question"], "additionalProperties": False}},
+        handler=search_later,
+        description="Background web search; the answer is sent to the chat when ready.",
+    )
     ctx.register_tool(
         name="memory_write", toolset="digital_life",
         schema={"name": "memory_write",

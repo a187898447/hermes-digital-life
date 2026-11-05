@@ -28,6 +28,7 @@ provides_tools:
   - digital_life_status
   - beat_targets
   - beat_send
+  - search_later
 provides_hooks:
   - pre_llm_call
   - pre_gateway_dispatch

@@ -352,7 +352,7 @@ class RegistrationTests(unittest.TestCase):
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)
-        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "memory_write", "memory_recall", "digital_life_status"])
+        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "memory_write", "memory_recall", "digital_life_status"])
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertEqual(set(schemas["memory_write"]) & {"sources", "refs"}, {"sources", "refs"})
         self.assertIn("kind", schemas["memory_recall"])
@@ -879,3 +879,26 @@ class QqLabelTests(unittest.TestCase):
     def test_other_platforms_keep_labels(self):
         self.assertIsNone(
             plugin._transform_llm_output("结论：可以。", platform="cli"))
+
+
+class SearchLaterTests(unittest.TestCase):
+    def test_worker_sends_the_answer_to_the_chat(self):
+        from digital_life import research
+
+        sent = []
+        self.assertTrue(research.spawn("问题", "chat-9", lambda c, t: sent.append((c, t)),
+                                       runner=lambda q: "结论"))
+        for _ in range(50):
+            if sent:
+                break
+            import time as _t
+            _t.sleep(0.02)
+        self.assertEqual(sent, [("chat-9", "查到了：结论")])
+
+    def test_one_search_per_chat_at_a_time(self):
+        from digital_life import research
+        import threading
+        gate = threading.Event()
+        research.spawn("a", "chat-8", lambda c, t: None, runner=lambda q: (gate.wait(1), "")[1])
+        self.assertFalse(research.spawn("b", "chat-8", lambda c, t: None, runner=lambda q: ""))
+        gate.set()
