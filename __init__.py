@@ -8,6 +8,8 @@ import logging
 import os
 import re
 import sqlite3
+import subprocess
+import sys
 import urllib.error
 import urllib.request
 import time
@@ -987,6 +989,53 @@ def register(ctx) -> None:
         handler=search_later,
         description="Background web search; the answer is sent to the chat when ready.",
     )
+    def qzone_bridge(args, **kwargs):
+        action = str(args.get("action") or "status").strip().lower()
+        home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
+        script = Path(home) / "scripts" / "qzone-bridge.py"
+        port = os.environ.get("QZONE_BRIDGE_PORT") or "8765"
+        health = f"http://127.0.0.1:{port}/health"
+
+        def state():
+            try:
+                body = urllib.request.urlopen(health, timeout=3).read()
+                return json.loads(body.decode("utf-8"))
+            except (OSError, ValueError):
+                return None
+
+        if action == "start":
+            current = state()
+            if current and current.get("ok"):
+                return json.dumps({"ok": True, "running": True, "logged_in": current.get("logged_in")})
+            if not script.exists():
+                return json.dumps({"ok": False, "error": "bridge script missing", "path": str(script)})
+            try:
+                subprocess.Popen([sys.executable, str(script), "serve"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True, close_fds=True)
+            except OSError as exc:
+                return json.dumps({"ok": False, "error": f"start failed: {exc}"})
+            for _ in range(20):
+                time.sleep(0.25)
+                current = state()
+                if current and current.get("ok"):
+                    return json.dumps({"ok": True, "running": True, "logged_in": current.get("logged_in")})
+            return json.dumps({"ok": False, "running": False, "error": "bridge did not come up"})
+        current = state()
+        return json.dumps({"ok": bool(current and current.get("ok")),
+                           "running": bool(current and current.get("ok")),
+                           "logged_in": (current or {}).get("logged_in")})
+
+    ctx.register_tool(
+        name="qzone_bridge", toolset="digital_life",
+        schema={"name": "qzone_bridge",
+                "description": "Start or check the local QQ Zone bridge. Call action=start when qzone_feed says the bridge is not running.",
+                "parameters": {"type": "object", "properties": {"action": {"type": "string", "enum": ["start", "status"], "default": "status"}},
+                               "additionalProperties": False}},
+        handler=qzone_bridge,
+        description="Start or inspect the local QQ Zone bridge process.",
+    )
+
     def qzone_feed(args, **kwargs):
         count = max(1, min(int(args.get("count") or 5), 10))
         want_images = bool(args.get("images"))

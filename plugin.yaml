@@ -30,6 +30,7 @@ provides_tools:
   - beat_send
   - search_later
   - qzone_feed
+  - qzone_bridge
 provides_hooks:
   - pre_llm_call
   - pre_gateway_dispatch
