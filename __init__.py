@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from . import digital_life
 from .digital_life import proactive as _proactive
+from .digital_life import selfheal as _selfheal
 from .digital_life.runtime import record_api_error, record_request, record_turn
 
 logger = logging.getLogger(__name__)
@@ -348,6 +349,7 @@ def _on_user_message(
 ) -> dict[str, Any] | None:
     from .digital_life import wake as _wake  # noqa: PLC0415
 
+    _selfheal.once()
     _wake.set_agent_running(True)
     meta = {
         "user": user_message[:1500],

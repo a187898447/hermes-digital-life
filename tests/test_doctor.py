@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -334,3 +336,43 @@ cron:
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+from digital_life import selfheal
+
+
+class SelfHealTests(unittest.TestCase):
+    def test_recent_run_is_not_due(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "doctor-selfheal.json"
+            state.write_text(json.dumps({"at": 1_000_000.0}), "utf-8")
+            self.assertFalse(selfheal.is_due(state, 1_000_000.0 + 60_000))
+
+    def test_missing_or_stale_state_is_due(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "doctor-selfheal.json"
+            self.assertTrue(selfheal.is_due(state, 1_000_000.0))
+            state.write_text(json.dumps({"at": 1_000_000.0}), "utf-8")
+            self.assertTrue(selfheal.is_due(state, 1_000_000.0 + 3_600_001))
+            state.write_text("{broken", "utf-8")
+            self.assertTrue(selfheal.is_due(state, 1_000_000.0))
+
+    def test_worker_records_result_and_swallows_errors(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            state = Path(tmp) / "doctor-selfheal.json"
+            with patch.object(selfheal, "logger") as logger:
+                with patch("digital_life.doctor.run", side_effect=RuntimeError("boom")):
+                    selfheal.worker(state, 2_000_000.0)
+                self.assertFalse(state.exists())
+                logger.warning.assert_called()
+
+            def fake_run(**kwargs):
+                kwargs["out"](json.dumps({"fixed": ["patch.studio-bridge"]}))
+                return 0
+
+            with patch("digital_life.doctor.run", side_effect=fake_run):
+                selfheal.worker(state, 3_000_000.0)
+            self.assertEqual(json.loads(state.read_text("utf-8"))["fixed"], ["patch.studio-bridge"])
