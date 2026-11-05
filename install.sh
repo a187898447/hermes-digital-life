@@ -227,6 +227,20 @@ else
   fi
 fi
 
+# QQ bubbles: the stock adapter only splits short chat-like blocks. Patch it so
+# conversational replies always arrive as separate bubbles, while reference
+# dumps (search results, files, code) stay whole. Same shape as the Studio
+# fixes: skip when already patched or when the adapter has no anchor.
+QQ_SPLIT_FIX="$SOURCE/scripts/fix-qq-dialogue-split.py"
+if [[ -f "$QQ_SPLIT_FIX" ]] && command -v python3 >/dev/null 2>&1; then
+  if python3 "$QQ_SPLIT_FIX" --check >/dev/null 2>&1; then
+    printf 'QQ 对话拆分已正常，无需修复。\n'
+  else
+    python3 "$QQ_SPLIT_FIX" ||
+      printf '提示: QQ 对话拆分补丁未应用；长回复仍会整段发出。\n' >&2
+  fi
+fi
+
 # `hermes profile create` drops a generic alias wrapper that forwards straight
 # to the host CLI, which makes `hermes-lover status` print Hermes' own status.
 # Route the plugin's operator verbs back to the plugin command; keep chat etc.
