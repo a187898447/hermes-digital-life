@@ -150,6 +150,10 @@ if [[ -f "$GATE_SCRIPT" ]]; then
   if [[ -f "$SOURCE/scripts/qq-bind.py" ]]; then
     cp "$SOURCE/scripts/qq-bind.py" "$PROFILE_HOME/scripts/qq-bind.py"
   fi
+  if [[ -f "$SOURCE/scripts/qzone-bridge.py" ]]; then
+    cp "$SOURCE/scripts/qzone-bridge.py" "$PROFILE_HOME/scripts/qzone-bridge.py"
+    chmod +x "$PROFILE_HOME/scripts/qzone-bridge.py"
+  fi
   if [[ -f "$SOURCE/scripts/sync-persona.sh" ]]; then
     cp "$SOURCE/scripts/sync-persona.sh" "$PROFILE_HOME/scripts/sync-persona.sh"
     chmod +x "$PROFILE_HOME/scripts/sync-persona.sh"

@@ -352,7 +352,7 @@ class RegistrationTests(unittest.TestCase):
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)
-        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "memory_write", "memory_recall", "digital_life_status"])
+        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "qzone_feed", "memory_write", "memory_recall", "digital_life_status"])
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertEqual(set(schemas["memory_write"]) & {"sources", "refs"}, {"sources", "refs"})
         self.assertIn("kind", schemas["memory_recall"])
@@ -917,3 +917,57 @@ class ClockInjectionTests(unittest.TestCase):
         self.assertNotIn("现在的时间", note)
         with_clock = runtime.affect_note(1_760_000_000_000.0, include_time=True)
         self.assertIn("现在的时间", with_clock)
+
+
+class QzoneFeedTests(unittest.TestCase):
+    def test_reads_feed_from_the_bridge(self):
+        import http.server
+        import threading
+        import os
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                body = json.dumps({"ok": True, "items": [
+                    {"name": "小明", "time": "今天", "text": "晚饭吃了面", "comments": 1, "likes": 2},
+                ]}, ensure_ascii=False).encode()
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                return
+
+        server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        old = os.environ.get("QZONE_BRIDGE_PORT")
+        os.environ["QZONE_BRIDGE_PORT"] = str(server.server_port)
+        try:
+            ctx = RecordingContext()
+            plugin.register(ctx)
+            handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["qzone_feed"]
+            payload = json.loads(handler({"count": 3}))
+            self.assertTrue(payload["ok"])
+            self.assertIn("小明", payload["feed"][0])
+        finally:
+            server.shutdown()
+            if old is None:
+                os.environ.pop("QZONE_BRIDGE_PORT", None)
+            else:
+                os.environ["QZONE_BRIDGE_PORT"] = old
+
+    def test_degrades_when_the_bridge_is_down(self):
+        import os
+        old = os.environ.get("QZONE_BRIDGE_PORT")
+        os.environ["QZONE_BRIDGE_PORT"] = "1"
+        try:
+            ctx = RecordingContext()
+            plugin.register(ctx)
+            handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["qzone_feed"]
+            payload = json.loads(handler({}))
+            self.assertFalse(payload["ok"])
+        finally:
+            if old is None:
+                os.environ.pop("QZONE_BRIDGE_PORT", None)
+            else:
+                os.environ["QZONE_BRIDGE_PORT"] = old

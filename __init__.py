@@ -8,6 +8,8 @@ import logging
 import os
 import re
 import sqlite3
+import urllib.error
+import urllib.request
 import time
 from pathlib import Path
 from typing import Any, Optional
@@ -984,6 +986,33 @@ def register(ctx) -> None:
                 }, "required": ["question"], "additionalProperties": False}},
         handler=search_later,
         description="Background web search; the answer is sent to the chat when ready.",
+    )
+    def qzone_feed(args, **kwargs):
+        count = int(args.get("count") or 10)
+        port = os.environ.get("QZONE_BRIDGE_PORT") or "8765"
+        url = f"http://127.0.0.1:{port}/feed?count={max(1, min(count, 20))}"
+        try:
+            raw = urllib.request.urlopen(url, timeout=15).read()
+            data = json.loads(raw.decode("utf-8"))
+        except (OSError, ValueError):
+            return json.dumps({"ok": False, "error": "qzone bridge 未运行，先运行 scripts/qzone-bridge.py serve"})
+        if not data.get("ok"):
+            return json.dumps({"ok": False, "error": data.get("error") or "feed failed",
+                               "hint": data.get("hint")})
+        lines = []
+        for item in data.get("items") or []:
+            text = " ".join(str(item.get("text") or "").split())[:200]
+            lines.append(f"{item.get('name') or '?'}（{item.get('time') or '?'}）：{text}")
+        return json.dumps({"ok": True, "count": len(lines), "feed": lines}, ensure_ascii=False)
+
+    ctx.register_tool(
+        name="qzone_feed", toolset="digital_life",
+        schema={"name": "qzone_feed",
+                "description": "Read the QQ Zone feed of the account behind the local bridge. Read-only: never posts. Returns the newest entries.",
+                "parameters": {"type": "object", "properties": {"count": {"type": "integer", "default": 10}},
+                               "additionalProperties": False}},
+        handler=qzone_feed,
+        description="Read the QQ Zone feed through the local bridge.",
     )
     ctx.register_tool(
         name="memory_write", toolset="digital_life",

@@ -29,6 +29,7 @@ provides_tools:
   - beat_targets
   - beat_send
   - search_later
+  - qzone_feed
 provides_hooks:
   - pre_llm_call
   - pre_gateway_dispatch
