@@ -538,6 +538,89 @@ def inspect(
 
 
 
+def _hermes_prefix(home: Path) -> list[str] | None:
+    """Command prefix for the profile; ``None`` for a custom HERMES_HOME."""
+    name = profile_name(home)
+    if name == "custom":
+        return None
+    if name == "default":
+        return ["hermes"]
+    return ["hermes", "-p", name]
+
+
+def _set_toolsets(home: Path, toolsets: list[str], runner: Runner) -> bool:
+    prefix = _hermes_prefix(home)
+    if prefix is None or not toolsets:
+        return False
+    rc, _ = runner(
+        [*prefix, "config", "set", "platform_toolsets.qqbot",
+         json.dumps(toolsets, ensure_ascii=False)],
+        _env(home),
+    )
+    return rc == 0
+
+
+def _enable_plugin(home: Path, runner: Runner) -> bool:
+    prefix = _hermes_prefix(home)
+    if prefix is None:
+        return False
+    rc, _ = runner([*prefix, "plugins", "enable", PLUGIN_NAME], _env(home))
+    return rc == 0
+
+
+def _apply_patch(repo: Path, script: str, home: Path, runner: Runner) -> bool:
+    path = repo / "scripts" / script
+    if not path.is_file():
+        return False
+    rc, _ = runner(["python3", str(path)], _env(host_root(home)))
+    return rc == 0
+
+
+def _copy_pairs(pairs: list[tuple[str, str]]) -> bool:
+    changed = False
+    for src_name, dst_name in pairs:
+        src, dst = Path(src_name), Path(dst_name)
+        try:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            changed = True
+        except OSError:
+            continue
+    return changed
+
+
+def repair(
+    checks: list[Check],
+    home: Path | None = None,
+    repo: Path | None = None,
+    runner: Runner | None = None,
+) -> list[str]:
+    """Apply the safe repairs, returning the keys that were actually applied."""
+    home = Path(home) if home is not None else profile_home()
+    repo = Path(repo) if repo is not None else repository_root()
+    runner = runner or _default_runner
+    applied: list[str] = []
+    for check in checks:
+        if check.status != FIX:
+            continue
+        changed = False
+        try:
+            if check.fix == "plugin":
+                changed = _enable_plugin(home, runner)
+            elif check.fix == "toolsets":
+                changed = _set_toolsets(home, list(check.payload.get("toolsets") or []), runner)
+            elif check.fix == "patch":
+                changed = _apply_patch(
+                    repo, str(check.payload.get("script") or ""), home, runner)
+            elif check.fix == "copy":
+                changed = _copy_pairs(list(check.payload.get("pairs") or []))
+        except (OSError, subprocess.SubprocessError):
+            changed = False
+        if changed:
+            applied.append(check.key)
+    return applied
+
+
 def _summary(checks: list[Check]) -> str:
     counts = {status: sum(1 for check in checks if check.status == status)
               for status in (OK, FIX, WARN, SKIP)}
@@ -546,22 +629,37 @@ def _summary(checks: list[Check]) -> str:
 
 
 def run(
+    fix: bool = False,
     as_json: bool = False,
     home: Path | None = None,
     repo: Path | None = None,
+    runner: Runner | None = None,
+    studio: bool | None = None,
     out: Callable[[str], None] = print,
 ) -> int:
     home = Path(home) if home is not None else profile_home()
     repo = Path(repo) if repo is not None else repository_root()
-    checks = inspect(home, repo)
+    runner = runner or _default_runner
+    checks = inspect(home, repo, runner=runner, studio=studio)
+    applied: list[str] = []
+    if fix:
+        applied = repair(checks, home, repo, runner)
+        checks = inspect(home, repo, runner=runner, studio=studio)
 
     if as_json:
         out(json.dumps({
             "ok": not any(check.status == FIX for check in checks),
+            "fixed": applied,
             "checks": [{"key": check.key, "status": check.status, "detail": check.detail}
                        for check in checks],
         }, ensure_ascii=False))
     else:
+        if fix:
+            if applied:
+                out("已自动修复：" + "、".join(applied))
+                out("重新检查：")
+            else:
+                out("没有可自动修复的项。")
         for check in checks:
             out(f"{check.status:<4} {check.key:<26} {check.detail}")
         out("")

@@ -36,16 +36,58 @@ class FakeRunner:
         return (0, "patched")
 
 
+class FixingRunner(FakeRunner):
+    """A fake host that also applies ``plugins enable`` / ``config set``."""
+
+    def __init__(self, config_path: Path, checks=None):
+        super().__init__(checks)
+        self.config_path = config_path
+        self.patched: set[str] = set()
+
+    def _write(self, config) -> None:
+        self.config_path.write_text(
+            yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8")
+
+    def __call__(self, cmd, env):
+        self.calls.append((list(cmd), dict(env)))
+        if "--check" in cmd:
+            script = Path(cmd[1]).name
+            if script in self.patched:
+                return (0, "OK: patched")
+            return self.checks.get(script, (0, "ok"))
+        if cmd and cmd[0] == "hermes":
+            config = yaml.safe_load(self.config_path.read_text(encoding="utf-8"))
+            if "plugins" in cmd and "enable" in cmd:
+                plugins = config.setdefault("plugins", {})
+                enabled = plugins.setdefault("enabled", [])
+                if doctor.PLUGIN_NAME not in enabled:
+                    enabled.append(doctor.PLUGIN_NAME)
+                plugins.pop("disabled_by_update", None)
+                plugins["disabled"] = []
+            elif "config" in cmd and "set" in cmd:
+                config.setdefault("platform_toolsets", {})["qqbot"] = json.loads(cmd[-1])
+            self._write(config)
+            return (0, "ok")
+        if cmd and cmd[0] == "python3" and len(cmd) > 1 and cmd[1].endswith(".py"):
+            self.patched.add(Path(cmd[1]).name)
+        return (0, "patched")
+
+
 class Fixture:
-    def __init__(self, tmp: str, config: dict | None = None):
+    def __init__(self, tmp: str, config: dict | None = None, named: bool = False):
         self.root = Path(tmp)
         self.repo = self.root / "repo"
-        self.home = self.root / "home"
+        self.home = (self.root / "profiles" / "hermes-lover") if named else (self.root / "home")
         self.home.mkdir(parents=True)
         self.runner = FakeRunner()
+        self.named = named
         self._build_repo()
         self.write_config(DEFAULT_CONFIG if config is None else config)
         self.sync_home()
+
+    def fixing_runner(self, checks=None) -> FixingRunner:
+        self.runner = FixingRunner(self.home / "config.yaml", checks)
+        return self.runner
 
     def _build_repo(self) -> None:
         scripts = self.repo / "scripts"
@@ -107,7 +149,8 @@ class DoctorCheckTests(unittest.TestCase):
             self.assertEqual(statuses["patch.studio-cross-profile"], doctor.SKIP)
             self.assertNotIn(doctor.FIX, statuses.values())
             output = []
-            self.assertEqual(doctor.run(home=fixture.home, repo=fixture.repo, out=output.append), 0)
+            self.assertEqual(doctor.run(home=fixture.home, repo=fixture.repo, runner=fixture.runner,
+                                      studio=False, out=output.append), 0)
             self.assertIn("结果：11 项检查", output[-1])
 
     def test_disabled_plugin_is_a_fix_and_exits_one(self):
@@ -118,7 +161,8 @@ class DoctorCheckTests(unittest.TestCase):
             check = fixture.by_key(fixture.inspect())["plugin.enabled"]
             self.assertEqual(check.status, doctor.FIX)
             self.assertEqual(check.fix, "plugin")
-            self.assertEqual(doctor.run(home=fixture.home, repo=fixture.repo, out=lambda _: None), 1)
+            self.assertEqual(doctor.run(home=fixture.home, repo=fixture.repo, runner=fixture.runner,
+                                      studio=False, out=lambda _: None), 1)
 
     def test_disabled_by_update_is_a_fix(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -187,7 +231,8 @@ class DoctorCheckTests(unittest.TestCase):
             config["plugins"]["enabled"] = []
             fixture = Fixture(tmp, config)
             output = []
-            code = doctor.run(home=fixture.home, repo=fixture.repo, as_json=True, out=output.append)
+            code = doctor.run(home=fixture.home, repo=fixture.repo, runner=fixture.runner,
+                                      studio=False, as_json=True, out=output.append)
             self.assertEqual(code, 1)
             payload = json.loads("\n".join(output))
             self.assertFalse(payload["ok"])
@@ -201,6 +246,51 @@ class DoctorCheckTests(unittest.TestCase):
             checks = fixture.by_key(fixture.inspect())
             self.assertEqual(checks["plugin.enabled"].status, doctor.WARN)
             self.assertEqual(checks["config.wake"].status, doctor.SKIP)
+
+    def test_fix_repairs_and_second_pass_is_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = json.loads(json.dumps(DEFAULT_CONFIG))
+            config["plugins"]["enabled"] = []
+            config["platform_toolsets"]["qqbot"] = ["web", "no_mcp"]
+            fixture = Fixture(tmp, config, named=True)
+            runner = fixture.fixing_runner({
+                "fix-qq-dialogue-split.py": (1, "未修复: adapter.py\n需要运行本脚本以应用拆分补丁。"),
+                "fix-studio-bridge-python.py": (1, "未修复: site-packages"),
+            })
+            (fixture.home / "personas" / "001-example" / "SOUL.md").write_text("old\n")
+            output = []
+            code = doctor.run(fix=True, home=fixture.home, repo=fixture.repo, runner=runner,
+                              studio=False, out=output.append)
+            self.assertEqual(code, 0)
+            self.assertIn("已自动修复", output[0])
+            saved = yaml.safe_load((fixture.home / "config.yaml").read_text(encoding="utf-8"))
+            self.assertEqual(saved["plugins"]["enabled"], ["hermes-lover"])
+            self.assertIn("digital_life", saved["platform_toolsets"]["qqbot"])
+            self.assertEqual(
+                (fixture.home / "personas" / "001-example" / "SOUL.md").read_text(),
+                (fixture.repo / "personas" / "001-example" / "SOUL.md").read_text())
+
+            second = []
+            code = doctor.run(fix=True, home=fixture.home, repo=fixture.repo, runner=runner,
+                              studio=False, out=second.append)
+            self.assertEqual(code, 0)
+            self.assertEqual(second[0], "没有可自动修复的项。")
+            self.assertNotIn(doctor.FIX, [check.status for check in fixture.inspect()])
+
+    def test_fix_leaves_a_custom_home_config_alone(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            config = json.loads(json.dumps(DEFAULT_CONFIG))
+            config["plugins"]["enabled"] = []
+            fixture = Fixture(tmp, config)
+            runner = fixture.fixing_runner()
+            output = []
+            code = doctor.run(fix=True, home=fixture.home, repo=fixture.repo, runner=runner,
+                              studio=False, out=output.append)
+            self.assertEqual(code, 1)
+            self.assertFalse([cmd for cmd, _ in runner.calls if cmd and cmd[0] == "hermes"])
+            saved = yaml.safe_load((fixture.home / "config.yaml").read_text(encoding="utf-8"))
+            self.assertEqual(saved["plugins"]["enabled"], [])
+            self.assertIn("没有可自动修复的项。", output)
 
     def test_config_subset_parser_reads_the_hermes_yaml_shape(self):
         text = """
