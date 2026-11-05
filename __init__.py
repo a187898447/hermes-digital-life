@@ -215,6 +215,16 @@ def _post_tool_call(tool_name: str = "", args: dict[str, Any] | None = None, res
 
 
 _RESET_COMMAND = re.compile(r"^/(?:new|reset)(?:\s+(?P<scope>all|全部))?(?:\s|$)", re.IGNORECASE)
+_HELP_COMMAND = re.compile(r"^/(?:help|帮助|命令)(?:\s|$)", re.IGNORECASE)
+_HELP_TEXT = (
+    "可用命令（仅所有者生效）：\n"
+    "/new —— 只换会话，不清记忆\n"
+    "/new all —— 换掉所有 QQ 会话\n"
+    "/forget —— 清空当前会话记忆，删了就回不来\n"
+    "/forget all —— 清空所有 QQ 会话记忆\n"
+    "/core —— 查看当前情绪、能量和未解问题\n"
+    "/help —— 显示这张表"
+)
 _FORGET_COMMAND = re.compile(r"^/(?:forget|clear-memory|清空记忆|清理记忆)(?:\s+(?P<scope>all|全部))?(?:\s|$)", re.IGNORECASE)
 _RESET_SCRUB = 0
 
@@ -254,6 +264,13 @@ def _on_gateway_dispatch(event=None, **kwargs):
         source = getattr(event, "source", None)
         platform = getattr(getattr(source, "platform", None), "value", "") or ""
         if platform != "qqbot":
+            return None
+        if _HELP_COMMAND.match(text):
+            chat_id = str(getattr(source, "chat_id", "") or "")
+            sender = str(getattr(event, "sender_id", "") or getattr(source, "user_id", "") or "")
+            if sender in _reset_admins():
+                _send_qq(chat_id, _HELP_TEXT)
+                return {"action": "skip", "reason": "hermes-lover /help"}
             return None
         forget = _FORGET_COMMAND.match(text)
         reset = _RESET_COMMAND.match(text)

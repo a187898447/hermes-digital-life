@@ -651,6 +651,21 @@ class QqBubbleTransformTests(unittest.TestCase):
                 self.assertIn(result, (None, {"action": "rewrite", "text": "/new"}))
                 self.assertEqual(plugin._MEMORY_STORE["factory"]().read_entries().keys(), before.keys())
 
+    def test_help_lists_the_owner_commands(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx, patches, event = self._owner_hook(root, "/help")
+            sent: list[str] = []
+            with patches[0], patches[1], patches[2], patches[3], patch.object(
+                    plugin, "_send_qq", side_effect=lambda chat_id, text: sent.append(text)), patches[5]:
+                plugin.register(ctx)
+                result = dict(ctx.hooks)["pre_gateway_dispatch"](event=event)
+        self.assertEqual(result, {"action": "skip", "reason": "hermes-lover /help"})
+        self.assertEqual(len(sent), 1)
+        for command in ("/new", "/forget", "/core", "/help"):
+            self.assertIn(command, sent[0])
+
+
     def test_forget_clears_memory_without_rotating(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

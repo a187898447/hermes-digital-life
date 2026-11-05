@@ -277,5 +277,5 @@ hermes-web-ui restart
 - `/new`、`/new all`：只换会话（`all` 换所有 QQ 会话），**不动记忆**。上下文满了、想重开话题就用它，记忆不会丢。
 - `/forget`、`/forget all`（也接受 `/clear-memory`、`/清空记忆`）：清空当前会话（或全部）在记忆宫殿里的条目，并把 digital-life 状态恢复默认，**不换会话**。
 
-两个命令都只对所有者（`QQ_OWNER_ID` / `QQ_ALLOWED_USERS`）生效；其他人发只走宿主自己的 `/new`。
+命令表：`/help` 会回一张表（`/new`、`/forget`、`/core`）。两个命令都只对所有者（`QQ_OWNER_ID` / `QQ_ALLOWED_USERS`）生效；其他人发只走宿主自己的 `/new`。
 清理会直接删掉记忆条目（不是归档），冷检索和压缩都翻不回来——这是用户明确要求的隐私操作，不要主动建议，也不要在对话里承诺"会记住一切"。
