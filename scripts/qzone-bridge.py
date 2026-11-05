@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import http.cookiejar
+import hashlib
 import json
 import os
 import re
@@ -125,7 +126,42 @@ def load_cookies() -> dict[str, str]:
     return {str(k): str(v) for k, v in data.items()} if isinstance(data, dict) else {}
 
 
-def fetch_feed(count: int = 10) -> dict:
+IMAGE_DIR = HOME / "qzone-images"
+IMG_RE = re.compile(r'<img[^>]+src=["\']([^"\']+)["\']', re.I)
+
+
+def _download_images(op, msg: dict, limit: int) -> list[str]:
+    urls = []
+    for match in IMG_RE.finditer(msg.get("content") or ""):
+        urls.append(match.group(1).replace("&amp;", "&"))
+    for pic in msg.get("pic") or []:
+        if not isinstance(pic, dict):
+            continue
+        url = pic.get("url1") or pic.get("url2") or pic.get("pic_id") or pic.get("url")
+        if url:
+            urls.append(str(url).replace("http://", "https://", 1))
+    paths = []
+    for url in urls:
+        if len(paths) >= limit:
+            break
+        if not url.startswith(("http://", "https://")):
+            continue
+        try:
+            raw = op.open(url, timeout=20).read()
+        except OSError:
+            continue
+        if len(raw) < 512:
+            continue
+        IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+        suffix = ".png" if raw[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg"
+        name = hashlib.sha1(url.encode()).hexdigest()[:16] + suffix
+        path = IMAGE_DIR / name
+        path.write_bytes(raw)
+        paths.append(str(path))
+    return paths
+
+
+def fetch_feed(count: int = 10, with_images: bool = False) -> dict:
     cookies = load_cookies()
     if "skey" not in cookies or "uin" not in cookies:
         return {"ok": False, "error": "not logged in", "hint": "run: qzone-bridge.py login"}
@@ -151,13 +187,16 @@ def fetch_feed(count: int = 10) -> dict:
         return {"ok": False, "error": "bad feed json"}
     items = []
     for msg in (payload.get("msglist") or [])[:count]:
-        items.append({
+        item = {
             "name": msg.get("name") or "",
             "time": msg.get("createTime") or "",
             "text": (msg.get("content") or "").strip()[:500],
             "comments": int(msg.get("cmtnum") or 0),
             "likes": int(msg.get("likenum") or 0),
-        })
+        }
+        if with_images:
+            item["images"] = _download_images(op, msg, 2)
+        items.append(item)
     return {"ok": True, "items": items, "total": payload.get("total") or len(items)}
 
 
@@ -179,7 +218,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": True, "logged_in": bool(load_cookies())})
         if parsed.path == "/feed":
             q = urllib.parse.parse_qs(parsed.query)
-            return self._json(fetch_feed(int((q.get("count") or ["10"])[0])))
+            images = (q.get("images") or ["0"])[0] in ("1", "true", "yes")
+            return self._json(fetch_feed(int((q.get("count") or ["10"])[0]), images))
         self._json({"ok": False, "error": "not found"}, 404)
 
 

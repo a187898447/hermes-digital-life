@@ -989,8 +989,11 @@ def register(ctx) -> None:
     )
     def qzone_feed(args, **kwargs):
         count = int(args.get("count") or 10)
+        want_images = bool(args.get("images"))
         port = os.environ.get("QZONE_BRIDGE_PORT") or "8765"
         url = f"http://127.0.0.1:{port}/feed?count={max(1, min(count, 20))}"
+        if want_images:
+            url += "&images=1"
         try:
             raw = urllib.request.urlopen(url, timeout=15).read()
             data = json.loads(raw.decode("utf-8"))
@@ -1002,14 +1005,20 @@ def register(ctx) -> None:
         lines = []
         for item in data.get("items") or []:
             text = " ".join(str(item.get("text") or "").split())[:200]
-            lines.append(f"{item.get('name') or '?'}（{item.get('time') or '?'}）：{text}")
+            line = f"{item.get('name') or '?'}（{item.get('time') or '?'}）：{text}"
+            if item.get("images"):
+                line += " 图片：" + "，".join(item["images"])
+            lines.append(line)
         return json.dumps({"ok": True, "count": len(lines), "feed": lines}, ensure_ascii=False)
 
     ctx.register_tool(
         name="qzone_feed", toolset="digital_life",
         schema={"name": "qzone_feed",
-                "description": "Read the QQ Zone feed of the account behind the local bridge. Read-only: never posts. Returns the newest entries.",
-                "parameters": {"type": "object", "properties": {"count": {"type": "integer", "default": 10}},
+                "description": "Read the QQ Zone feed of the account behind the local bridge. Read-only: never posts. With images=true it also downloads each entry's photos to local files; pass those paths to vision_analyze to describe them.",
+                "parameters": {"type": "object", "properties": {
+                    "count": {"type": "integer", "default": 10},
+                    "images": {"type": "boolean", "default": False,
+                               "description": "Also download the entry images to local files so vision_analyze can read them."}},
                                "additionalProperties": False}},
         handler=qzone_feed,
         description="Read the QQ Zone feed through the local bridge.",
