@@ -244,6 +244,17 @@ if [[ -f "$QQ_SPLIT_FIX" ]] && command -v python3 >/dev/null 2>&1; then
   fi
 fi
 
+# QQ bubble pacing: add a short typing pause between consecutive bubbles.
+QQ_PACE_FIX="$SOURCE/scripts/fix-qq-typing-pace.py"
+if [[ -f "$QQ_PACE_FIX" ]] && command -v python3 >/dev/null 2>&1; then
+  if python3 "$QQ_PACE_FIX" --check >/dev/null 2>&1; then
+    printf 'QQ 气泡节奏已正常，无需修复。\n'
+  else
+    python3 "$QQ_PACE_FIX" ||
+      printf '提示: QQ 气泡节奏补丁未应用；多条回复会一次性发出。\n' >&2
+  fi
+fi
+
 # `hermes profile create` drops a generic alias wrapper that forwards straight
 # to the host CLI, which makes `hermes-lover status` print Hermes' own status.
 # Route the plugin's operator verbs back to the plugin command; keep chat etc.
