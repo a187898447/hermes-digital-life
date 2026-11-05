@@ -19,7 +19,7 @@ NEW = MARKER + """
         previous_chunk = ""
         for chunk in chunks:
             if previous_chunk:
-                await asyncio.sleep(min(2.2, 0.6 + len(previous_chunk) * 0.03))
+                await asyncio.sleep(min(3.0, max(1.0, 0.8 + len(previous_chunk) * 0.04)))
             last_result = await self._send_chunk(chat_id, chunk, reply_to)"""
 
 
