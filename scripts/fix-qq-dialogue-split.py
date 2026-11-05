@@ -47,15 +47,12 @@ INSERT = '''    # hermes-lover: dialogue split — bubble conversations, keep da
         )
         if structured / len(lines) >= 0.4:
             return True
-        long_lines = sum(1 for line in lines if len(line) > 140)
-        if len(lines) >= 2 and long_lines / len(lines) >= 0.5:
-            return True
         labelled = sum(
             1 for line in lines
             if len(line) <= 80 and (line.count(":") + line.count("：")) >= 1
             and line.split(":")[0].split("：")[0].strip().isascii()
         )
-        if len(lines) >= 2 and labelled / len(lines) >= 0.5:
+        if len(lines) >= 2 and labelled == len(lines):
             return True
         return any(
             key in text
@@ -67,7 +64,28 @@ INSERT = '''    # hermes-lover: dialogue split — bubble conversations, keep da
     def _qq_dialogue_units(cls, content: str) -> list:
         import re as _re
         text = " ".join(part.strip() for part in content.splitlines() if part.strip())
-        pieces = [p.strip() for p in _re.split(r"(?<=[。！？!?…~])", text) if p.strip()]
+        raw_pieces = [p.strip() for p in _re.split(r"(?<=[。！？!?…~])", text) if p.strip()]
+        pieces = []
+        limit = cls._QQ_DIALOGUE_MAX_CHARS * 2
+        for piece in raw_pieces:
+            if len(piece) <= limit:
+                pieces.append(piece)
+                continue
+            buffer = ""
+            for chunk in _re.split(r"(?<=[，,、；;：:])", piece):
+                while len(chunk) > limit:
+                    if buffer:
+                        pieces.append(buffer)
+                        buffer = ""
+                    pieces.append(chunk[:limit])
+                    chunk = chunk[limit:]
+                if buffer and len(buffer) + len(chunk) > limit:
+                    pieces.append(buffer)
+                    buffer = chunk
+                else:
+                    buffer = f"{buffer}{chunk}" if buffer else chunk
+            if buffer:
+                pieces.append(buffer)
         units = []
         current = ""
         for piece in pieces:
@@ -79,9 +97,23 @@ INSERT = '''    # hermes-lover: dialogue split — bubble conversations, keep da
         if current:
             units.append(current)
         if len(units) > cls._QQ_DIALOGUE_MAX_BUBBLES:
-            head = units[: cls._QQ_DIALOGUE_MAX_BUBBLES - 1]
-            head.append("".join(units[cls._QQ_DIALOGUE_MAX_BUBBLES - 1:]))
-            units = head
+            total = sum(len(unit) for unit in units)
+            budget = max(cls._QQ_DIALOGUE_MAX_CHARS, -(-total // cls._QQ_DIALOGUE_MAX_BUBBLES))
+            while True:
+                packed = []
+                current = ""
+                for unit in units:
+                    if current and len(current) + len(unit) > budget:
+                        packed.append(current)
+                        current = unit
+                    else:
+                        current = f"{current}{unit}" if current else unit
+                if current:
+                    packed.append(current)
+                if len(packed) <= cls._QQ_DIALOGUE_MAX_BUBBLES:
+                    break
+                budget = budget * 3 // 2 + 1
+            units = packed
         return units
 
 '''
