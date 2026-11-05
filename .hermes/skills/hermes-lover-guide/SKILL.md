@@ -177,6 +177,20 @@ hermes gateway list       # default 与 <角色名> 都应显示 ✓
 - 遇到 5 分钟审批超时（`BLOCKED: Command timed out`）就停，把命令交给用户。
 - 常见失败：同一 App 在两个 profile 都 enabled（双绑/抢答）；`launchd` 加载失败时 `gateway start` 会退化成 detached 进程，开机不会自启。
 
+## 子流程 E：QQ 空间（可选，只读）
+
+只在用户主动问「能不能看空间」时处理；这不在五步主流程里，也不影响 `NEXT`。
+
+1. 确认桥脚本在：`~/.hermes/profiles/<角色名>/scripts/qzone-bridge.py`；不在就让用户重跑安装脚本。
+2. 扫码登录一次（cookie 存 `~/.hermes/qzone-cookies.json`，600）：
+   `python3 ~/.hermes/profiles/<角色名>/scripts/qzone-bridge.py login`
+   把二维码图路径给用户，让他用 QQ 扫；**不要代扫、不要索要 cookie**。
+3. 让桥常驻：`python3 ~/.hermes/profiles/<角色名>/scripts/qzone-bridge.py serve`
+   （桥只绑 127.0.0.1:8765，只开 `/health`、`/feed`。）
+4. 验证：`curl -s http://127.0.0.1:8765/health` 应返回 `{"ok":true,"logged_in":true}`。
+5. 告诉用户：之后直接说「看看空间最近有什么」，模型会调 `qzone_feed`。
+6. 只读：没有发说说/评论的能力；用户要发，说明这是另一步且个人号有风控风险。
+
 ## 子流程 D：主动消息
 
 安装时创建 `hermes-lover-beat` 任务，但**默认暂停**。启用后每天 10/14/16/18/20 前后 ±60 分钟内随机触发一次；一次触发里调 `beat_targets` 取所有订阅会话，对每个会话 `memory_recall(chat_id=…)` 看它自己的记忆、各写一句，再用 `beat_send(chat_id, text, delay_seconds=随机)` 错开发出去。任务本身的 Deliver 是 `local`（不再靠它投递）。每个说过话的 QQ 会话（私聊和群）都会自动订阅；删除订阅文件等于关闭主动消息，不会退回给所有会话；退订只去掉该会话。没接通 QQ 就什么都不发。
