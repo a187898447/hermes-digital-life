@@ -122,8 +122,7 @@ if [[ -d "$SKILLS_SRC" ]]; then
   for skill_dir in "$SKILLS_SRC"/*/; do
     [[ -f "$skill_dir/SKILL.md" ]] || continue
     skill_name="$(basename "$skill_dir")"
-    mkdir -p "$PROFILE_HOME/skills/$skill_name"
-    cp "$skill_dir/SKILL.md" "$PROFILE_HOME/skills/$skill_name/SKILL.md"
+    cp -R "$skill_dir" "$PROFILE_HOME/skills/$skill_name"
   done
   printf '已安装随插件附带的 skill 到: %s\n' "$PROFILE_HOME/skills"
 else
