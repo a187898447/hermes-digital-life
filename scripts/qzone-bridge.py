@@ -176,54 +176,69 @@ def _download_images(op, msg: dict, limit: int) -> list[str]:
     return paths
 
 
-def fetch_feed(count: int = 10, with_images: bool = False, include_seen: bool = False) -> dict:
-    cookies = load_cookies()
-    if "skey" not in cookies or "uin" not in cookies:
-        return {"ok": False, "error": "not logged in", "hint": "run: qzone-bridge.py login"}
-    uin = uin_of(cookies)
-    op = opener(cookies)
-    op.addheaders = [("User-Agent", UA), ("Referer", f"https://user.qzone.qq.com/{uin}")]
+def _fetch_page(op, uin: str, cookies: dict, pos: int, num: int, with_images: bool):
     params = urllib.parse.urlencode({
-        "uin": uin, "ftype": 0, "sort": 0, "pos": 0, "num": max(1, min(count, 40)),
+        "uin": uin, "ftype": 0, "sort": 0, "pos": max(0, pos), "num": max(1, min(num, 40)),
         "replynum": 0, "g_tk": gtk(cookies.get("p_skey") or cookies["skey"]), "code": 0, "format": "jsonp",
         "callback": "_preloadCallback",
     })
     url = f"https://h5.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msglist_v6?{params}"
-    try:
-        raw = op.open(url, timeout=20).read().decode("utf-8", "replace")
-    except OSError as exc:
-        return {"ok": False, "error": f"feed request failed: {exc}"}
+    raw = op.open(url, timeout=20).read().decode("utf-8", "replace")
     match = re.search(r"^\s*_preloadCallback\((\{.*\})\)\s*;?\s*$", raw, re.S)
     if not match:
-        return {"ok": False, "error": "unexpected feed payload", "raw": raw[:200]}
-    try:
-        payload = json.loads(match.group(1))
-    except ValueError:
-        return {"ok": False, "error": "bad feed json"}
+        raise ValueError("unexpected feed payload")
+    payload = json.loads(match.group(1))
     items = []
-    for msg in (payload.get("msglist") or [])[:count]:
+    for msg in payload.get("msglist") or []:
         item = {
             "name": msg.get("name") or "",
             "time": msg.get("createTime") or "",
             "text": (msg.get("content") or "").strip()[:500],
             "comments": int(msg.get("cmtnum") or 0),
             "likes": int(msg.get("likenum") or 0),
+            "_id": str(msg.get("tid") or ""),
         }
-        item["_id"] = str(msg.get("tid") or "")
         if with_images:
             item["images"] = _download_images(op, msg, 2)
         items.append(item)
-    seen = load_seen()
-    if not include_seen:
-        fresh = [item for item in items if not item["_id"] or item["_id"] not in seen]
-    else:
-        fresh = items
-    if fresh:
-        save_seen(seen + [item["_id"] for item in fresh if item["_id"]])
+    return items, int(payload.get("total") or 0)
+
+
+def fetch_feed(count: int = 5, with_images: bool = False, include_seen: bool = False, pos: int = 0) -> dict:
+    cookies = load_cookies()
+    if "skey" not in cookies or "uin" not in cookies:
+        return {"ok": False, "error": "not logged in", "hint": "run: qzone-bridge.py login"}
+    uin = uin_of(cookies)
+    op = opener(cookies)
+    op.addheaders = [("User-Agent", UA), ("Referer", f"https://user.qzone.qq.com/{uin}")]
+    want = max(1, min(count, 10))
+    seen = set(load_seen())
+    items: list[dict] = []
+    page = max(0, pos)
+    total = 0
+    pages = 0
+    try:
+        while len(items) < want and pages < 3:
+            chunk, total = _fetch_page(op, uin, cookies, page, want, with_images)
+            pages += 1
+            if not chunk:
+                break
+            for item in chunk:
+                if include_seen or item["_id"] not in seen:
+                    items.append(item)
+            page += len(chunk)
+            if page >= total:
+                break
+    except (OSError, ValueError) as exc:
+        return {"ok": False, "error": f"feed request failed: {exc}"}
+    fresh_ids = [item["_id"] for item in items if item["_id"]]
+    if fresh_ids:
+        save_seen(load_seen() + fresh_ids)
+    fresh = items[:want]
     for item in items:
         item.pop("_id", None)
-    return {"ok": True, "items": fresh, "total": payload.get("total") or len(items),
-            "new": len(fresh), "read": len(items)}
+    return {"ok": True, "items": fresh, "total": total, "pos": page,
+            "has_more": page < total, "scanned_pages": pages}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -246,8 +261,9 @@ class Handler(BaseHTTPRequestHandler):
             q = urllib.parse.parse_qs(parsed.query)
             images = (q.get("images") or ["0"])[0] in ("1", "true", "yes")
             all_posts = (q.get("seen") or ["0"])[0] in ("1", "true", "yes")
-            limit = max(1, min(int((q.get("count") or ["10"])[0]), 10))
-            return self._json(fetch_feed(limit, images, all_posts))
+            limit = max(1, min(int((q.get("count") or ["5"])[0]), 10))
+            pos = max(0, int((q.get("pos") or ["0"])[0]))
+            return self._json(fetch_feed(limit, images, all_posts, pos))
         self._json({"ok": False, "error": "not found"}, 404)
 
 
