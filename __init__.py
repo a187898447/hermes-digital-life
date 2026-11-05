@@ -624,6 +624,17 @@ def _qq_short_lines(text: str) -> list[str]:
     return [line for line in lines if line]
 
 
+_QQ_LABEL_RE = re.compile(
+    r"(?:^|(?<=[。！？!?\n]))\s*(?:理由|原因|结论|解释|依据|说明|分析)\s*[：:]\s*"
+)
+
+
+def _qq_strip_labels(text: str) -> str:
+    """Drop "理由：" style labels; keep the sentence that follows them."""
+    stripped = _QQ_LABEL_RE.sub("", text)
+    return stripped.lstrip("\n") if stripped.strip() else text
+
+
 def _qq_bubble_rewrite(text: str) -> Optional[str]:
     """Rewrite one long reply into 2-6 short lines so the QQ adapter splits bubbles."""
     if not text or text.lstrip().startswith("/") or "```" in text or "|---" in text:
@@ -655,7 +666,11 @@ def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs)
     """Give QQ replies the short-burst shape the persona uses; other surfaces untouched."""
     if platform != "qqbot":
         return None
-    return _qq_bubble_rewrite(response_text)
+    cleaned = _qq_strip_labels(response_text or "")
+    rewritten = _qq_bubble_rewrite(cleaned)
+    if rewritten:
+        return rewritten
+    return cleaned if cleaned != response_text else None
 
 
 def _sync_persona_card(root: Path | None = None) -> None:

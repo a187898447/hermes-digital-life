@@ -863,3 +863,19 @@ class HostSendFallbackTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class QqLabelTests(unittest.TestCase):
+    def test_label_is_stripped_from_a_reply(self):
+        out = plugin._transform_llm_output(
+            "猜 38。理由：白灼虾五只半斤，一斤 68。", platform="qqbot")
+        self.assertNotIn("理由", out)
+        self.assertIn("白灼虾五只半斤", out)
+
+    def test_unlabelled_reply_is_untouched(self):
+        self.assertIsNone(
+            plugin._transform_llm_output("行。知道了。", platform="qqbot"))
+
+    def test_other_platforms_keep_labels(self):
+        self.assertIsNone(
+            plugin._transform_llm_output("结论：可以。", platform="cli"))
