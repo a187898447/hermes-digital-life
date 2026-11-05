@@ -50,12 +50,17 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
     resolve.add_argument("gap_id")
     wake = actions.add_parser("wake", help="Manually wake for one open gap (opt-in self-wake demo)")
     wake.add_argument("--gap", default="", help="Gap identifier; defaults to the highest tension")
+    doctor = actions.add_parser("doctor", help="Check the host conditions hermes-lover depends on")
+    doctor.add_argument("--json", action="store_true", help="Print one JSON object instead of lines")
     subparser.set_defaults(func=run_command)
 
 
 def run_command(args: argparse.Namespace) -> int:
     action = args.digital_life_action
     now_ms = time.time() * 1000
+    if action == "doctor":
+        from . import doctor
+        return doctor.run(as_json=args.json)
     if action == "memory-rebuild":
         from . import storage
         from .memory import MemoryStore
