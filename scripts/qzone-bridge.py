@@ -36,6 +36,11 @@ def hash33(text: str) -> int:
     return value
 
 
+def uin_of(cookies: dict) -> str:
+    raw = cookies.get("uin") or cookies.get("pt2gguin") or ""
+    return re.sub(r"\D", "", raw).lstrip("0")
+
+
 def gtk(skey: str) -> int:
     value = 5381
     for ch in skey:
@@ -88,9 +93,18 @@ def login(open_qr) -> int:
         if not code:
             continue
         if code.group(1) == "0":
-            check = re.search(r"'(https://ptlogin2\.qq\.com/check_sig[^']+)'", body)
+            check = re.search(r"'(https?://[^']*check_sig[^']+)'", body)
             if check:
-                op.open(check.group(1).replace("\\x26", "&"), timeout=20).read()
+                try:
+                    op.open(check.group(1).replace("\\x26", "&").replace("\\/", "/"), timeout=20).read(64)
+                except OSError:
+                    pass
+            uin = uin_of({c.name: c.value for c in cj})
+            if uin:
+                try:
+                    op.open(f"https://user.qzone.qq.com/{uin}", timeout=20).read(64)
+                except OSError:
+                    pass
             store = {c.name: c.value for c in cj}
             COOKIE_PATH.write_text(json.dumps(store, ensure_ascii=False))
             os.chmod(COOKIE_PATH, 0o600)
@@ -115,12 +129,12 @@ def fetch_feed(count: int = 10) -> dict:
     cookies = load_cookies()
     if "skey" not in cookies or "uin" not in cookies:
         return {"ok": False, "error": "not logged in", "hint": "run: qzone-bridge.py login"}
-    uin = cookies["uin"].lstrip("o")
+    uin = uin_of(cookies)
     op = opener(cookies)
     op.addheaders = [("User-Agent", UA), ("Referer", f"https://user.qzone.qq.com/{uin}")]
     params = urllib.parse.urlencode({
         "uin": uin, "ftype": 0, "sort": 0, "pos": 0, "num": max(1, min(count, 40)),
-        "replynum": 0, "g_tk": gtk(cookies["skey"]), "code": 0, "format": "jsonp",
+        "replynum": 0, "g_tk": gtk(cookies.get("p_skey") or cookies["skey"]), "code": 0, "format": "jsonp",
         "callback": "_preloadCallback",
     })
     url = f"https://h5.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msglist_v6?{params}"
