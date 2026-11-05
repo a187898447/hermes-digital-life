@@ -31,6 +31,15 @@ INSERT = '''    # hermes-lover: dialogue split — bubble conversations, keep da
     _QQ_DIALOGUE_MAX_BUBBLES = 10
 
     @classmethod
+    def _qq_is_host_notice(cls, content: str) -> bool:
+        text = content.strip()
+        if "First-time tip" in text or "This notice won't appear again" in text:
+            return True
+        if text.startswith("(tip)") and "only shows once" in text:
+            return True
+        return False
+
+    @classmethod
     def _qq_looks_like_reference_block(cls, content: str) -> bool:
         text = content.strip()
         if "```" in text:
@@ -118,7 +127,9 @@ INSERT = '''    # hermes-lover: dialogue split — bubble conversations, keep da
 
 '''
 
-BRANCH = '''        if not cls._qq_looks_like_reference_block(content):
+BRANCH = '''        if cls._qq_is_host_notice(content):
+            return []
+        if not cls._qq_looks_like_reference_block(content):
             dialogue = cls._qq_dialogue_units(content)
             if len(dialogue) > 1:
                 return dialogue
