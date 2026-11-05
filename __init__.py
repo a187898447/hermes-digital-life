@@ -783,7 +783,8 @@ def register(ctx) -> None:
                 f"调用 hermes-lover status 看现在的状态，再用 memory_write(kind=\"journal\", day=\"{day}\", "
                 f"text=\"…\", refs=[\"hp-…\"]) 写一篇 120–400 字第一人称日记，refs 引用那天 fact 的 id"
                 f"（可先 memory_recall(day=\"{day}\", kind=\"fact\") 查），没有 fact 就省略 refs。"
-                f"写清开心和难过的地方、发生了什么、自己的一点想法。"
+                f"写你做了什么事、当时的心情、脑子里在转什么；不要按时间点罗列（别写「21:57 …，22:06 …」），"
+                f"不要流水账，不要列表，正常成段地写。"
                 f"{older}不要向用户提这件事，也不要问用户，写完后照常回答。")
         return " ".join(notes) if notes else None
 
@@ -927,7 +928,7 @@ def register(ctx) -> None:
     ctx.register_tool(
         name="memory_write", toolset="digital_life",
         schema={"name": "memory_write",
-                "description": "Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. `fact` entries are atomic: cite the `sources` turn ids they were drawn from. `journal` entries may cite the `refs` fact ids they are based on; a journal can only be written for a day that has already ended (next-day backfill). Does not change life state.",
+                "description": "Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. `fact` entries are atomic: cite the `sources` turn ids they were drawn from. `journal` entries may cite the `refs` fact ids they are based on and must read as a diary, never as a list of clock times; a journal can only be written for a day that has already ended (next-day backfill). Does not change life state.",
                 "parameters": {"type": "object", "properties": {
             "text": {"type": "string", "maxLength": 4000},
             "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal"], "default": "note"},

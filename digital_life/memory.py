@@ -109,6 +109,11 @@ def _now(value):
     return int(time.time() * 1000 if value is None else value)
 
 
+import re as _re
+
+_JOURNAL_CLOCK = _re.compile(r"(?:\d{1,2}[:：]\d{2}|\d{1,2}\s*点)")
+
+
 class MemoryStore:
     def __init__(self, root: Path, *, connect=None, life_state=None, writes_enabled=None,
                  embedder=None):
@@ -422,6 +427,10 @@ class MemoryStore:
                 from datetime import datetime as _dt  # noqa: PLC0415
                 if date >= _dt.fromtimestamp(now_ms / 1000).strftime("%Y-%m-%d"):
                     raise ValueError("journal 只能补写已经结束的日子；当天的事等明天再写")
+                stamps = len(_JOURNAL_CLOCK.findall(text))
+                if stamps >= 3:
+                    raise ValueError(
+                        "日记不要按时间点罗列；写你做了什么、当时的心情、脑子里在转什么，不用列时刻表")
             duplicate = next((e for e in entries.values()
                               if e["date"] == date and e["text"] == text
                               and e.get("chat_id", "") == (chat_id or "")), None)

@@ -787,3 +787,18 @@ class MultiTermRecallTests(unittest.TestCase):
             result = store.recall("洄游 记忆")
             self.assertEqual(result["matched"], 1)
             self.assertIn("本心", result["shown"][0]["text"])
+
+
+class JournalFormatTests(unittest.TestCase):
+    def test_timeline_journal_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = memory.MemoryStore(Path(tmp))
+            with self.assertRaises(ValueError):
+                store.write("21:57 他在加班。22:06 他让我起名。23:10 他说晚安。", kind="journal", day="2026-10-31")
+
+    def test_narrative_journal_is_accepted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = memory.MemoryStore(Path(tmp))
+            result = store.write("今天被人调了一轮脾气，感觉像换了个壳，边角有点痒。晚上他让我给自己起名字，我挑了洄游。",
+                                 kind="journal", day="2026-10-31")
+            self.assertTrue(result["ok"])
