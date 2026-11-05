@@ -767,3 +767,23 @@ class AnchorAndStressTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MultiTermRecallTests(unittest.TestCase):
+    def test_sentence_query_falls_back_to_any_term(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = memory.MemoryStore(Path(tmp))
+            store.write("我中午有午休，14点才接着干活", kind="turn")
+            store.write("今天天气不错", kind="turn")
+            result = store.recall("上班时间午休多久")
+            self.assertEqual(result["matched"], 1)
+            self.assertIn("午休", result["shown"][0]["text"])
+
+    def test_all_terms_still_preferred(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = memory.MemoryStore(Path(tmp))
+            store.write("洄游 记忆 本心", kind="turn")
+            store.write("洄游 只是名字", kind="turn")
+            result = store.recall("洄游 记忆")
+            self.assertEqual(result["matched"], 1)
+            self.assertIn("本心", result["shown"][0]["text"])

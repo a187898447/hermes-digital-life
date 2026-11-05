@@ -601,10 +601,15 @@ class MemoryStore:
             return [(json.loads(row), 0.0) for row, _ in rows]
         grams = tokens(query)
         if grams:
-            expression = " AND ".join('"' + gram.replace('"', '""') + '"' for gram in grams)
-            rows = db.execute(
-                f"SELECT e.payload, bm25(entries_fts) FROM entries_fts JOIN entries e ON e.id=entries_fts.id WHERE entries_fts MATCH ? AND {condition}",
-                (expression,)).fetchall()
+            quoted = ['"' + gram.replace('"', '""') + '"' for gram in grams]
+            sql = (f"SELECT e.payload, bm25(entries_fts) FROM entries_fts "
+                   f"JOIN entries e ON e.id=entries_fts.id "
+                   f"WHERE entries_fts MATCH ? AND {condition}")
+            rows = db.execute(sql, (" AND ".join(quoted),)).fetchall()
+            if not rows and len(quoted) > 1:
+                # A sentence-like query rarely contains every gram of one entry;
+                # fall back to any-term matching and let bm25 rank the overlap.
+                rows = db.execute(sql, (" OR ".join(quoted),)).fetchall()
             return [(json.loads(row), relevance(rank)) for row, rank in rows]
         literal = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         rows = db.execute(f"SELECT e.payload FROM entries e WHERE {condition} AND e.text LIKE ? ESCAPE '\\'", (f"%{literal}%",)).fetchall()
