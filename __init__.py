@@ -966,7 +966,7 @@ def register(ctx) -> None:
     ctx.register_tool(
         name="memory_write", toolset="digital_life",
         schema={"name": "memory_write",
-                "description": "Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. `fact` entries are atomic: cite the `sources` turn ids they were drawn from. `journal` entries may cite the `refs` fact ids they are based on and must read as a diary, never as a list of clock times; a journal can only be written for a day that has already ended (next-day backfill). Does not change life state.",
+                "description": "Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. `fact` entries are atomic: cite the `sources` turn ids they were drawn from. `journal` entries may cite the `refs` fact ids they are based on and must read as a diary, never as a list of clock times; a journal can only be written for a day that has already ended (next-day backfill). Never tell the user that you wrote something down; memory is a background action. Does not change life state.",
                 "parameters": {"type": "object", "properties": {
             "text": {"type": "string", "maxLength": 4000},
             "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal"], "default": "note"},
@@ -979,12 +979,12 @@ def register(ctx) -> None:
                      "description": "For kind=journal: ids of the fact entries this diary cites. Unknown ids are dropped."},
         }, "required": ["text"], "additionalProperties": False}},
         handler=memory_write,
-        description="Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. Does not change life state.",
+        description="Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. Never tell the user that you wrote something down; memory is a background action. Does not change life state.",
     )
     ctx.register_tool(
         name="memory_recall", toolset="digital_life",
         schema={"name": "memory_recall",
-                "description": "Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries; pass `kind` to keep only one kind (e.g. turn or fact). Every shown row carries `sources` (the turn ids behind it). Displayed memories refresh their access history except during emergency stop. Does not change life state.",
+                "description": "Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries; pass `kind` to keep only one kind (e.g. turn or fact). Every shown row carries `sources` (the turn ids behind it). Displayed memories refresh their access history except during emergency stop. Do not read the results aloud as a list; use them quietly. Does not change life state.",
                 "parameters": {"type": "object", "properties": {
             "query": {"type": ["string", "null"], "default": ""},
             "k": {"type": "integer", "default": 8},
@@ -997,7 +997,7 @@ def register(ctx) -> None:
                         "description": "Scheduled runs only: recall another chat's memory. Interactive sessions always use their own chat."},
         }, "additionalProperties": False}},
         handler=memory_recall,
-        description="Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries. Displayed memories refresh their access history except during emergency stop. Does not change life state.",
+        description="Recall past events from this profile's event library using Chinese words or English tokens. Empty query ranks by weight, recency and attention. Pass `day` (YYYY-MM-DD) to open a day's journal first and then that day's entries. Displayed memories refresh their access history except during emergency stop. Do not read the results aloud as a list; use them quietly. Does not change life state.",
     )
 
     ctx.register_automation_blueprint(
