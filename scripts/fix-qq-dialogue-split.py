@@ -48,7 +48,20 @@ INSERT = '''    # hermes-lover: dialogue split — bubble conversations, keep da
         if structured / len(lines) >= 0.4:
             return True
         long_lines = sum(1 for line in lines if len(line) > 140)
-        return len(lines) >= 2 and long_lines / len(lines) >= 0.5
+        if len(lines) >= 2 and long_lines / len(lines) >= 0.5:
+            return True
+        labelled = sum(
+            1 for line in lines
+            if len(line) <= 80 and (line.count(":") + line.count("：")) >= 1
+            and line.split(":")[0].split("：")[0].strip().isascii()
+        )
+        if len(lines) >= 2 and labelled / len(lines) >= 0.5:
+            return True
+        return any(
+            key in text
+            for key in ("Model:", "Provider:", "Profile:", "Context usage:", "Session:",
+                        "Tools:", "Tokens:", "模型：", "会话：", "配置：")
+        )
 
     @classmethod
     def _qq_dialogue_units(cls, content: str) -> list:
