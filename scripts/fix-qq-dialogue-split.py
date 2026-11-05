@@ -35,13 +35,14 @@ INSERT = '''    # hermes-lover: dialogue split — bubble conversations, keep da
         text = content.strip()
         if not text:
             return False
-        if text.startswith(("⏳", "⚠️")) or text.startswith("Working —"):
+        if text.startswith(("⏳", "⚠️", "♻️", "🔄", "✅ Gateway")) or text.startswith("Working —"):
             return True
         if "First-time tip" in text or "This notice won't appear again" in text:
             return True
         if text.startswith("(tip)") and "only shows once" in text:
             return True
-        if "Hermes is restarting" in text or "your current task will be interrupted" in text:
+        if ("Hermes is restarting" in text or "your current task will be interrupted" in text
+                or "Hermes is back and ready" in text or "Gateway online" in text):
             return True
         return False
 
