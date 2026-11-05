@@ -37,10 +37,10 @@ def profile_name() -> str:
     return Path(home).name if home else "hermes-lover"
 
 
-def clean_answer(text: str) -> str:
+def clean_answer(text: str, limit: int = MAX_ANSWER_CHARS) -> str:
     out = " ".join((text or "").split())
-    if len(out) > MAX_ANSWER_CHARS:
-        out = out[: MAX_ANSWER_CHARS - 1].rstrip() + "…"
+    if len(out) > limit:
+        out = out[: limit - 1].rstrip() + "…"
     return out
 
 
@@ -85,4 +85,50 @@ def spawn(
                 _ACTIVE.discard(chat_id)
 
     threading.Thread(target=_work, name=f"research-{chat_id[-6:]}", daemon=True).start()
+    return True
+
+
+TASK_TIMEOUT_SECONDS = 900
+
+
+def run_task(prompt: str) -> str:
+    """Run a multi-step job in a one-shot background session."""
+    cmd = [hermes_bin(), "-p", profile_name(), "chat", "--oneshot", "-Q", "-q", prompt]
+    env = dict(os.environ, HERMES_DISABLE_LAZY_INSTALLS="1")
+    try:
+        done = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=TASK_TIMEOUT_SECONDS, env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if done.returncode != 0:
+        return ""
+    return clean_answer(done.stdout, limit=800)
+
+
+def spawn_task(
+    prompt: str, chat_id: str, send: Callable[[str, str], None],
+    runner: Callable[[str], str] = run_task,
+) -> bool:
+    """Start a background multi-step job; its result is sent to the chat."""
+    if not prompt.strip() or not chat_id:
+        return False
+    key = f"task:{chat_id}"
+    with _LOCK:
+        if key in _ACTIVE:
+            return False
+        _ACTIVE.add(key)
+
+    def _work() -> None:
+        try:
+            answer = runner(prompt)
+            if answer:
+                send(chat_id, answer)
+        except Exception:
+            pass
+        finally:
+            with _LOCK:
+                _ACTIVE.discard(key)
+
+    threading.Thread(target=_work, name=f"task-{chat_id[-6:]}", daemon=True).start()
     return True

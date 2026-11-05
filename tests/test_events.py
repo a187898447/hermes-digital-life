@@ -352,7 +352,7 @@ class RegistrationTests(unittest.TestCase):
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)
-        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "digital_life_status"])
+        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "background_task", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "digital_life_status"])
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertEqual(set(schemas["memory_write"]) & {"sources", "refs"}, {"sources", "refs"})
         self.assertIn("kind", schemas["memory_recall"])
@@ -932,7 +932,8 @@ class ClockInjectionTests(unittest.TestCase):
         note = runtime.affect_note(1_760_000_000_000.0)
         self.assertNotIn("现在的时间", note)
         with_clock = runtime.affect_note(1_760_000_000_000.0, include_time=True)
-        self.assertIn("现在的时间", with_clock)
+        self.assertIn("现在：", with_clock)
+        self.assertIn("不主动提时间", with_clock)
 
 
 class QzoneFeedTests(unittest.TestCase):

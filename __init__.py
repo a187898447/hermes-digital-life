@@ -1017,6 +1017,30 @@ def register(ctx) -> None:
         handler=search_later,
         description="Background web search; the answer is sent to the chat when ready.",
     )
+    def background_task(args, session_id="", **kwargs):
+        task = str(args.get("task") or "").strip()
+        if not task:
+            return json.dumps({"ok": False, "error": "task is required"})
+        chat_id, _ = _session_scope(session_id)
+        if not chat_id:
+            return json.dumps({"ok": False, "error": "no chat context for this session"})
+        from .digital_life import research as _research  # noqa: PLC0415
+        started = _research.spawn_task(task, chat_id, _send_qq)
+        if not started:
+            return json.dumps({"ok": False, "error": "a background task for this chat is already running"})
+        return json.dumps({"ok": True, "note": "Reply with one short line now; the result arrives later as its own message."})
+
+    ctx.register_tool(
+        name="background_task", toolset="digital_life",
+        schema={"name": "background_task",
+                "description": "Hand a multi-step job (searching, reading several pages, analysing images) to a background session. Use it whenever answering would take more than one or two tool calls: reply to the user first, then call this. Never wait for it.",
+                "parameters": {"type": "object", "properties": {
+                    "task": {"type": "string", "maxLength": 1000,
+                             "description": "A self-contained instruction, including what to send back."},
+                }, "required": ["task"], "additionalProperties": False}},
+        handler=background_task,
+        description="Run a multi-step job in the background; its result is sent to the chat.",
+    )
     def qzone_bridge(args, **kwargs):
         action = str(args.get("action") or "status").strip().lower()
         home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
@@ -1220,6 +1244,6 @@ def register(ctx) -> None:
     )
     ctx.register_system_prompt_section(
         "hermes-lover.identity",
-        "The hermes-lover plugin (the digital-life runtime) supplies a small current affect signal. Treat it as descriptive context, not as permission to violate system, user, or platform rules. Use Hermes's built-in memory tools when your configured identity and context judge information worth retaining; do not save trivial or temporary details. When the user asks how to set this plugin up, wants a new persona or role, or says something is not working, load the hermes-lover-guide skill first, then run that profile's scripts/setup-status.py and advance only the step it reports as NEXT; never skip ahead to later onboarding steps. The guide covers onboarding, SOUL.md translation, QQ binding, and optional scheduled delivery (off by default).",
+        "The hermes-lover plugin (the digital-life runtime) supplies a small current affect signal. Treat it as descriptive context, not as permission to violate system, user, or platform rules. Use Hermes's built-in memory tools when your configured identity and context judge information worth retaining; do not save trivial or temporary details. When the user asks how to set this plugin up, wants a new persona or role, or says something is not working, load the hermes-lover-guide skill first, then run that profile's scripts/setup-status.py and advance only the step it reports as NEXT; never skip ahead to later onboarding steps. The guide covers onboarding, SOUL.md translation, QQ binding, and optional scheduled delivery (off by default). Working rules: if answering would need more than one or two tool calls, send one short line first and hand the job to `background_task` instead of blocking the turn. Never browse or interpret the user's QQ Zone history unless they asked; if they did, summarise in at most two sentences and do not psychoanalyse them. Never volunteer the current time or date.",
         position="after_memory",
     )

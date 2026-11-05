@@ -29,6 +29,7 @@ provides_tools:
   - beat_targets
   - beat_send
   - search_later
+  - background_task
   - qzone_feed
   - qzone_bridge
 provides_hooks:
