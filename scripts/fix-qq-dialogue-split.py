@@ -33,9 +33,15 @@ INSERT = '''    # hermes-lover: dialogue split — bubble conversations, keep da
     @classmethod
     def _qq_is_host_notice(cls, content: str) -> bool:
         text = content.strip()
+        if not text:
+            return False
+        if text.startswith(("⏳", "⚠️")) or text.startswith("Working —"):
+            return True
         if "First-time tip" in text or "This notice won't appear again" in text:
             return True
         if text.startswith("(tip)") and "only shows once" in text:
+            return True
+        if "Hermes is restarting" in text or "your current task will be interrupted" in text:
             return True
         return False
 
