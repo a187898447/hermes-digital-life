@@ -24,6 +24,7 @@ from .digital_life import selfheal as _selfheal
 from .digital_life import typos as _typos
 from .digital_life import compaction as _compaction
 from .digital_life import library as _library
+from .digital_life import gaps as _gaps
 from .digital_life.runtime import record_api_error, record_request, record_turn
 
 logger = logging.getLogger(__name__)
@@ -849,6 +850,19 @@ def _on_user_message(
     _TOOL_TURNS.pop(meta["session"], None)
     meta["chat_id"], meta["chat_type"] = _session_scope(meta["session"])
     _remember(_TURN_META, meta["session"], meta)
+    if meta["chat_id"]:
+        chat_scope = meta["chat_id"]
+        # Deterministic fallback for the prompt rule: a loop the assistant raised is
+        # answered by the next message in that chat, whether or not the model remembers
+        # to call close_gap.
+        def _retire_answered(state: dict[str, Any], scope: str = chat_scope) -> dict[str, Any]:
+            _gaps.close_answered(state, time.time() * 1000, chat=scope)
+            return state
+
+        try:
+            digital_life.storage.update_state(time.time() * 1000, _retire_answered)
+        except Exception:
+            logger.warning("hermes-lover could not retire answered loops", exc_info=True)
     # Only a direct chat joins the proactive rotation on its own: a group opts in by
     # asking for it, so one member cannot sign everyone else up for bot messages.
     if ((meta["platform"] or "") == "qqbot" and meta["chat_id"]

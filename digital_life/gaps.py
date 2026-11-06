@@ -221,6 +221,32 @@ def close_gap(state: dict[str, Any], *, by: str, now_ms: float, match_text: str 
     return closed
 
 
+ANSWER_GRACE_MS = 60_000
+
+
+def close_answered(state: dict[str, Any], now_ms: float, *, chat: str) -> list[str]:
+    """A loop the assistant raised is answered once the user has replied.
+
+    The next message in the same chat is the reply, whether or not it addresses the
+    question directly: asking twice is worse than letting a half-answered loop go.
+    """
+    if not chat:
+        return []
+    closed: list[str] = []
+    for gap in open_gaps(state.get("gaps") or []):
+        if str(gap.get("chat") or "") != str(chat):
+            continue
+        if gap.get("source") != "assistant_unknown_claim":
+            continue
+        if now_ms - float_or(gap.get("created_at"), now_ms) < ANSWER_GRACE_MS:
+            continue
+        hit = close_gap(state, by="answered", now_ms=now_ms, gap_id=str(gap.get("id") or ""), chat=chat)
+        closed.extend(str(item.get("id") or "") for item in hit)
+    if closed:
+        logger.info("hermes-lover closed %d answered loop(s) in %s", len(closed), chat)
+    return closed
+
+
 def fade_stale(state: dict[str, Any], now_ms: float, *, chat: str | None = None) -> list[str]:
     """Retire open loops that have been carried past their shelf life."""
     cutoff = now_ms - FADE_AFTER_HOURS * 3_600_000

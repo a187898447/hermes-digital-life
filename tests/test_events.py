@@ -919,6 +919,16 @@ class WakeHookTests(unittest.TestCase):
             self.state = next_state
         return self.state
 
+    def test_a_loop_the_bot_asked_closes_when_the_user_replies(self):
+        self.state["gaps"].append({"id": "gap-2", "summary": "价签到底是长期还是手滑", "status": "open",
+                                   "tension": 100.0, "relief": 0.0, "chat": "group-1",
+                                   "created_at": self.now - 600_000,
+                                   "source": "assistant_unknown_claim"})
+        plugin._on_user_message(user_message="嗯，换牌子了", session_id="s1")
+        gap = next(item for item in self.state["gaps"] if item["id"] == "gap-2")
+        self.assertEqual(gap["status"], "resolved")
+        self.assertEqual(gap["closed_by"], "answered")
+
     def test_disabled_by_default_has_zero_side_effects(self):
         plugin._post_llm_call(assistant_response="好的", session_id="s1")
         self.assertFalse(getattr(self.ctx, "injected", []))

@@ -292,6 +292,35 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class CloseAnsweredTests(unittest.TestCase):
+    NOW = 10_000_000_000.0
+
+    def _gap(self, gap_id, created_ms, *, source="assistant_unknown_claim", chat="chat-1"):
+        return {"id": gap_id, "summary": f"loop {gap_id}", "status": "open", "source": source,
+                "created_at": created_ms, "chat": chat, "relief": 0.0}
+
+    def test_the_claim_raised_last_turn_closes_when_the_user_replies(self):
+        state = {"gaps": [self._gap("gap-a", self.NOW - 10 * MINUTE)]}
+        closed = gaps.close_answered(state, self.NOW, chat="chat-1")
+        self.assertEqual(closed, ["gap-a"])
+        self.assertEqual(state["gaps"][0]["status"], "resolved")
+        self.assertEqual(state["gaps"][0]["closed_by"], "answered")
+
+    def test_a_loop_raised_seconds_ago_is_not_closed_yet(self):
+        state = {"gaps": [self._gap("gap-a", self.NOW - 5_000)]}
+        self.assertEqual(gaps.close_answered(state, self.NOW, chat="chat-1"), [])
+        self.assertEqual(state["gaps"][0]["status"], "open")
+
+    def test_a_search_retry_is_not_a_question_to_the_user(self):
+        state = {"gaps": [self._gap("gap-a", self.NOW - 10 * MINUTE, source="tool:web_search")]}
+        self.assertEqual(gaps.close_answered(state, self.NOW, chat="chat-1"), [])
+
+    def test_another_chat_keeps_its_loop(self):
+        state = {"gaps": [self._gap("gap-b", self.NOW - 10 * MINUTE, chat="chat-2")]}
+        self.assertEqual(gaps.close_answered(state, self.NOW, chat="chat-1"), [])
+        self.assertEqual(state["gaps"][0]["status"], "open")
+
+
 class FadeStaleTests(unittest.TestCase):
     def _state_with(self, created_ms, *, chat="chat-1"):
         return {"gaps": [{"id": "gap-old", "summary": "old question", "status": "open",
