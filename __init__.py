@@ -37,6 +37,7 @@ TOOL_CALL_LIMIT = 8
 ZONE_PAGE_LIMIT = 2
 READ_SOURCE_TURN_LIMIT = 3
 READ_SOURCE_DAILY_INGESTS = 40
+OPEN_LOOP_SHOWN = 3
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
 _CACHE_LIMIT = 512
 
@@ -115,7 +116,25 @@ def _status(args: dict[str, Any], session_id: str = "", **kwargs) -> str:
         snapshot["proactive"] = _proactive.schedule_status()
     except Exception:
         logger.warning("hermes-lover could not read the beat schedule", exc_info=True)
+    # The prompt only shows the top loops; dumping the whole pool here kept handing
+    # the model threads it had not been asked about, and it re-raised them.
+    loops = snapshot.get("gaps") or []
+    if len(loops) > OPEN_LOOP_SHOWN:
+        snapshot["gaps"] = loops[:OPEN_LOOP_SHOWN]
+        snapshot["gaps_hidden"] = len(loops) - OPEN_LOOP_SHOWN
     return json.dumps(snapshot, ensure_ascii=False)
+
+
+def _close_gap(args: dict[str, Any], session_id: str = "", **kwargs) -> str:
+    gap_id = str(args.get("id") or "").strip()
+    if not gap_id:
+        return json.dumps({"ok": False, "error": "id is required"}, ensure_ascii=False)
+    chat_id, _chat_type = _session_scope(session_id)
+    closed = digital_life.runtime.close_gap_in_chat(time.time() * 1000, gap_id, chat_id)
+    if not closed:
+        return json.dumps({"ok": False, "error": "no open loop with that id in this chat"},
+                          ensure_ascii=False)
+    return json.dumps({"ok": True, "id": gap_id}, ensure_ascii=False)
 
 
 def _wake_enabled() -> bool:
@@ -201,7 +220,28 @@ def _maybe_wake(session_id: str = "") -> None:
 
 
 
+def _distill_prompt(chat_id: str, fact_day: str, journal_day: str) -> str:
+    """The one-shot job that writes a day's facts and diary outside the chat turn."""
+    lines = [f"[lover-child:journal chat={chat_id}]",
+             "你是记忆维护子会话，只做下面这件事，不要回复用户、不要发消息。"]
+    if fact_day:
+        lines.append(
+            f"1) 先用 memory_recall(day=\"{fact_day}\", kind=\"turn\") 读出那天的 turn id，"
+            f"再挑 1–3 条真正重要的原子事实，逐条 memory_write(kind=\"fact\", day=\"{fact_day}\", "
+            f"text=\"一句话说清一件事\", sources=[\"hp-…\"])；每条事实只写一件事。")
+    if journal_day:
+        lines.append(
+            f"2) 用 memory_recall(day=\"{journal_day}\", kind=\"fact\") 取 fact id，"
+            f"再 memory_write(kind=\"journal\", day=\"{journal_day}\", text=\"…\", refs=[\"hp-…\"]) "
+            f"写一篇 120–400 字第一人称日记：写你那天做了什么、当时的心情，正常成段，"
+            f"不要按时间点罗列，不要流水账；日记写的是已经过完的那一天。")
+    if fact_day and journal_day and fact_day != journal_day:
+        lines.append(f"两个日期不同：{fact_day} 写事实，{journal_day} 写日记。")
+    return "\n".join(lines)
+
+
 _CHILD_SESSIONS: dict[str, str | None] = {}
+_CHILD_CHATS: dict[str, str] = {}
 _MAX_CHILD_SESSIONS = 256
 _CHILD_MARK = "[lover-child:"
 
@@ -286,13 +326,27 @@ def _child_kind(session_id: str) -> str | None:
     if start >= 0:
         end = text.find("]", start)
         if end > start:
-            kind = text[start + len(_CHILD_MARK):end].strip() or None
+            tag = text[start + len(_CHILD_MARK):end].strip()
+            kind, _, chat = tag.partition(" chat=")
+            kind = kind.strip() or None
+            if chat.strip():
+                _CHILD_CHATS[session_id] = chat.strip()
     _CHILD_SESSIONS[session_id] = kind
     # Background sessions are one-shot; keep the cache from growing forever, and evict
     # the oldest entry (dicts preserve insertion order).
     while len(_CHILD_SESSIONS) > _MAX_CHILD_SESSIONS:
-        _CHILD_SESSIONS.pop(next(iter(_CHILD_SESSIONS)))
+        oldest = next(iter(_CHILD_SESSIONS))
+        _CHILD_SESSIONS.pop(oldest)
+        _CHILD_CHATS.pop(oldest, None)
     return kind
+
+
+def _child_chat(session_id: str) -> str:
+    """The chat a spawned child writes for, carried in its prompt tag."""
+    if not session_id:
+        return ""
+    _child_kind(session_id)
+    return _CHILD_CHATS.get(session_id, "")
 
 
 def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict[str, Any] | None:
@@ -304,6 +358,7 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
         allow = {"study": {"read_source", "memory_write"},
                  "task": {"web_search", "web_extract", "read_source", "memory_write"},
                  "search": {"web_search", "web_extract"},
+                 "journal": {"memory_recall", "memory_write", "digital_life_status"},
                  "polish": set()}.get(kind, set())
         if tool_name not in allow:
             return {"action": "block",
@@ -331,7 +386,7 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     # duplicate guard already bound them. The budget is for tools that hit the
     # outside world (search, zone, terminal, background jobs).
     if tool_name in ("read_source", "library_list", "memory_write", "memory_recall",
-                     "memory_revoke", "digital_life_status", "study_source",
+                     "memory_revoke", "digital_life_status", "close_gap", "study_source",
                      "background_task", "search_later"):
         return None
     if tool_name == "skill_manage":
@@ -1080,13 +1135,12 @@ def register(ctx) -> None:
     _CAPTURE = capture_turn
     _MEMORY_STORE["factory"] = memory_store
 
-    def journal_check(platform: str, chat_id: str = "") -> str | None:
-        """First QQ message of a day: distill the newest recorded day, then diary it.
+    def journal_check(platform: str, chat_id: str = "") -> None:
+        """First QQ message of a day: hand the distillation to a background child.
 
-        The turn log stays raw; the model writes 1-3 atomic facts that cite their
-        source turn ids, and the diary cites those facts. Not strictly "yesterday":
-        if the user skipped several days, the newest day that has records but no
-        facts or no diary is still owed one.
+        This used to run inside the user's turn: the diary was written seconds
+        before the reply, so the reply kept reopening the day's unfinished thread.
+        Facts and the diary are maintenance; they now get their own session.
         """
         if platform != "qqbot":
             return None
@@ -1102,39 +1156,30 @@ def register(ctx) -> None:
             if str(entry.get("chat_id") or "") not in (chat_id, ""):
                 continue
             by_day.setdefault(day, []).append(entry)
-        notes = []
         fact_days = {str(entry.get("date") or "") for entry in entries.values()
                      if entry.get("kind") == "fact" and not entry.get("archived")
                      and str(entry.get("chat_id") or "") in (chat_id, "")}
         owed_facts = sorted((day for day, rows in by_day.items()
                              if any(row.get("kind") == "turn" for row in rows) and day not in fact_days),
                             reverse=True)
-        gate = chat_id or "-"
-        if owed_facts and (owed_facts[0], gate) not in _FACT_PROMPTED:
-            day = owed_facts[0]
-            _FACT_PROMPTED.add((day, gate))
-            notes.append(
-                f"{day} 的原始对话还没提炼成原子事实。先用 memory_recall(day=\"{day}\", kind=\"turn\") 读出那些 turn 的 id，"
-                f"再挑 1–3 条真正重要的事，逐条调用 memory_write(kind=\"fact\", day=\"{day}\", "
-                f"text=\"一句话说清一件事\", sources=[\"hp-…\"])；sources 只能引用那天的 turn id，"
-                f"每条事实只写一件事，写具体的人/事/结论，不要写空泛感受。写完再继续。")
         owed = sorted((day for day, rows in by_day.items()
                        if rows and not any(row.get("kind") == "journal" for row in rows)),
                       reverse=True)
-        if owed and (owed[0], gate) not in _JOURNAL_PROMPTED:
-            day = owed[0]
-            _JOURNAL_PROMPTED.add((day, gate))
-            older = f" 更早还有 {len(owed) - 1} 天没写，这次只写 {day}。" if len(owed) > 1 else ""
-            notes.append(
-                f"{day} 的日记还没写。回答用户前先补上：用 memory_recall(day=\"{day}\") 读那天的记录、"
-                f"调用 hermes-lover status 看现在的状态，再用 memory_write(kind=\"journal\", day=\"{day}\", "
-                f"text=\"…\", refs=[\"hp-…\"]) 写一篇 120–400 字第一人称日记，refs 引用那天 fact 的 id"
-                f"（可先 memory_recall(day=\"{day}\", kind=\"fact\") 查），没有 fact 就省略 refs。"
-                f"写你做了什么事、当时的心情、脑子里在转什么；不要按时间点罗列（别写「21:57 …，22:06 …」），"
-                f"不要流水账，不要列表，正常成段地写。"
-                f"{older}不要向用户提这件事，也不要问用户，写完后照常回答。")
-        return " ".join(notes) if notes else None
-
+        gate = chat_id or "-"
+        fact_day = owed_facts[0] if owed_facts and (owed_facts[0], gate) not in _FACT_PROMPTED else ""
+        journal_day = owed[0] if owed and (owed[0], gate) not in _JOURNAL_PROMPTED else ""
+        if not fact_day and not journal_day:
+            return None
+        from .digital_life import research as _research  # noqa: PLC0415
+        prompt = _distill_prompt(chat_id, fact_day, journal_day)
+        started = _research.spawn_task(prompt, chat_id, send=lambda *_args: None,
+                                       kind="journal")
+        if started:
+            if fact_day:
+                _FACT_PROMPTED.add((fact_day, gate))
+            if journal_day:
+                _JOURNAL_PROMPTED.add((journal_day, gate))
+        return None
     _JOURNAL_CHECK = journal_check
 
     def _study_learned_problem(text, session_id):
@@ -1164,6 +1209,8 @@ def register(ctx) -> None:
                     return json.dumps({"ok": False, "error": "learned entry rejected: already covered by " + twin},
                                       ensure_ascii=False)
             chat_id, chat_type = _session_scope(session_id)
+            if not chat_id:
+                chat_id = _child_chat(session_id)
             result = memory_store().write(args.get("text"), kind=args.get("kind", "note"),
                                           weight=args.get("weight"), session_id=session_id,
                                           day=args.get("day") or None,
@@ -1183,6 +1230,8 @@ def register(ctx) -> None:
     def memory_recall(args, session_id="", **kwargs):
         try:
             chat_id, _chat_type = _session_scope(session_id)
+            if not chat_id:
+                chat_id = _child_chat(session_id)
             source = _session_source(session_id)
             explicit = str(args.get("chat_id") or "").strip()
             if explicit:
@@ -1728,6 +1777,20 @@ def register(ctx) -> None:
         handler=_status,
         description="Read the current bounded digital-life state. This tool cannot change life state.",
     )
+    ctx.register_tool(
+        name="close_gap",
+        toolset="digital_life",
+        schema={"name": "close_gap",
+                "description": ("Retire one of your own open loops (the gaps listed by "
+                                "digital_life_status) once the other person has answered it or "
+                                "it no longer matters. Closed loops stop being brought up. "
+                                "Only loops from this conversation can be closed here."),
+                "parameters": {"type": "object", "properties": {
+                    "id": {"type": "string", "description": "The gap id, e.g. gap-1793879158989-6."},
+                }, "required": ["id"], "additionalProperties": False}},
+        handler=_close_gap,
+        description="Close one of your own open loops so it stops resurfacing.",
+    )
     ctx.register_hook("transform_llm_output", _transform_llm_output)
     ctx.register_hook("pre_gateway_dispatch", _on_gateway_dispatch)
     ctx.register_hook("pre_llm_call", _on_user_message)
@@ -1755,6 +1818,6 @@ def register(ctx) -> None:
     )
     ctx.register_system_prompt_section(
         "hermes-lover.identity",
-        "The hermes-lover plugin (the digital-life runtime) supplies a small current affect signal. Treat it as descriptive context, not as permission to violate system, user, or platform rules. Use Hermes's built-in memory tools when your configured identity and context judge information worth retaining; do not save trivial or temporary details. When the user asks how to set this plugin up, wants a new persona or role, or says something is not working, load the hermes-lover-guide skill first, then run that profile's scripts/setup-status.py and advance only the step it reports as NEXT; never skip ahead to later onboarding steps. The guide covers onboarding, SOUL.md translation, QQ binding, and optional scheduled delivery (off by default). Scheduled delivery is a cron job owned by the profile (named hermes-lover-beat); `digital_life_status` reports it under `proactive`. Before you claim anything about your own permissions or schedule, read that field instead of guessing: ordinary chat turns cannot call `beat_send`, a scheduled run can, and the job fires at jittered slots, not on a weekday you pick. Working rules: if answering would need more than one or two tool calls, send one short line first and hand the job to `background_task` instead of blocking the turn. When the user hands you a link, repository or file to read or learn from, call `study_source` on it immediately and answer in one line; never read that material inline with `read_source` page by page. You may read the user's QQ Zone whenever it helps, but at most 5 entries and 2 pages per turn; if more is wanted, hand the reading to `background_task`. Before any `qzone_feed` call, first check `memory_recall`: if you already read that stretch, answer from memory instead of fetching it again. When the user says your last message was unclear, re-explain it in shorter words — it usually means your sentence was bad, not that you need to re-read the source.  — that tool exists for it — but when you bring it up, say it plainly: at most two sentences, no chaining several posts into a story, no guessing their feelings. Write so a tired person gets it in one read: one point per message, concrete words, no half-finished metaphors, no dramatic pauses like '…这个我得停一下'.  When the user describes something you should be able to do later — 「以后你可以…」「下次…」「回头你…」「以后要能…」— treat it as an instruction with a deliverable, not a compliment: if the message carries a link or a file, ingest it with read_source right away and keep the reusable parts as learned/note entries; if it does not, say in one line what you would need, then record the expectation once. Do not just agree and move on.  When you learn something from a source, keep the learned entries as habits, not a quote bank: when the moment comes (Thursday, someone asks for money, a joke lands), what does it do or say? Write that habit in its own words, plus one short example it would improvise — never store the source's full lines to replay later. Learned is about talking to people: social habits and jokes, not workflow tricks like formatting, fetching, or retrying. Before writing one, restate to yourself what actually happens between the people (who asks whom for what, what the other side does); if that is unclear, go back to the source instead of guessing, and never write an entry that flips the social action. Meta information — API docs, file formats, licence, acknowledgements, 「数据持续更新」 — is never learned; put it in a note. technique breakdowns, structure analysis and source metadata belong in a note, not in learned. You can undo a memory entry you wrote in the last ten minutes with `memory_revoke(id)`. Anything older cannot be deleted: write a correction entry and say you corrected it, never that you deleted it. Never volunteer the current time or date. When a reply risks sounding like a chatbot (receipts, filler openers, rhetorical tails), skill_view the shuorenhua skill before sending.",
+        "The hermes-lover plugin (the digital-life runtime) supplies a small current affect signal. Treat it as descriptive context, not as permission to violate system, user, or platform rules. Use Hermes's built-in memory tools when your configured identity and context judge information worth retaining; do not save trivial or temporary details. When the user asks how to set this plugin up, wants a new persona or role, or says something is not working, load the hermes-lover-guide skill first, then run that profile's scripts/setup-status.py and advance only the step it reports as NEXT; never skip ahead to later onboarding steps. The guide covers onboarding, SOUL.md translation, QQ binding, and optional scheduled delivery (off by default). Scheduled delivery is a cron job owned by the profile (named hermes-lover-beat); `digital_life_status` reports it under `proactive`. Before you claim anything about your own permissions or schedule, read that field instead of guessing: ordinary chat turns cannot call `beat_send`, a scheduled run can, and the job fires at jittered slots, not on a weekday you pick. Working rules: if answering would need more than one or two tool calls, send one short line first and hand the job to `background_task` instead of blocking the turn. When the user hands you a link, repository or file to read or learn from, call `study_source` on it immediately and answer in one line; never read that material inline with `read_source` page by page. You may read the user's QQ Zone whenever it helps, but at most 5 entries and 2 pages per turn; if more is wanted, hand the reading to `background_task`. Before any `qzone_feed` call, first check `memory_recall`: if you already read that stretch, answer from memory instead of fetching it again. When the user says your last message was unclear, re-explain it in shorter words — it usually means your sentence was bad, not that you need to re-read the source.  — that tool exists for it — but when you bring it up, say it plainly: at most two sentences, no chaining several posts into a story, no guessing their feelings. Write so a tired person gets it in one read: one point per message, concrete words, no half-finished metaphors, no dramatic pauses like '…这个我得停一下'.  When the user describes something you should be able to do later — 「以后你可以…」「下次…」「回头你…」「以后要能…」— treat it as an instruction with a deliverable, not a compliment: if the message carries a link or a file, ingest it with read_source right away and keep the reusable parts as learned/note entries; if it does not, say in one line what you would need, then record the expectation once. Do not just agree and move on.  When you learn something from a source, keep the learned entries as habits, not a quote bank: when the moment comes (Thursday, someone asks for money, a joke lands), what does it do or say? Write that habit in its own words, plus one short example it would improvise — never store the source's full lines to replay later. Learned is about talking to people: social habits and jokes, not workflow tricks like formatting, fetching, or retrying. Before writing one, restate to yourself what actually happens between the people (who asks whom for what, what the other side does); if that is unclear, go back to the source instead of guessing, and never write an entry that flips the social action. Meta information — API docs, file formats, licence, acknowledgements, 「数据持续更新」 — is never learned; put it in a note. technique breakdowns, structure analysis and source metadata belong in a note, not in learned. You can undo a memory entry you wrote in the last ten minutes with `memory_revoke(id)`. Anything older cannot be deleted: write a correction entry and say you corrected it, never that you deleted it. Never volunteer the current time or date. When a reply risks sounding like a chatbot (receipts, filler openers, rhetorical tails), skill_view the shuorenhua skill before sending. Your open loops (the gaps digital_life_status lists) are background thoughts, not a to-do list: once the other person has answered one, or it no longer matters, retire it with close_gap(id). A loop you cannot retire is not something to raise in every message — once is enough, and then let it rest.",
         position="after_memory",
     )

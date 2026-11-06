@@ -193,7 +193,7 @@ class SignalDomainTests(unittest.TestCase):
             for tension, age in ((20, 60_000), (90, 86_400_000), (80, 3_600_000), (70, 1_200_000))
         ]
         text = append_open_loops("base", gaps, now)
-        self.assertTrue(text.startswith("base\n\n[open loops] tension=90"))
+        self.assertTrue(text.startswith("base\n\n[open loops] 你心里还挂着的（不是待办，别每轮都提）：tension=90"))
         self.assertIn("（1d）", text)
         self.assertIn("（1h）", text)
         self.assertIn("（20m）", text)

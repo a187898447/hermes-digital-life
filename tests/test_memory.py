@@ -117,6 +117,7 @@ class MemoryTests(unittest.TestCase):
         from test_events import plugin, RecordingContext
         import importlib
         host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        research_mod = importlib.import_module("hermes_plugins.digital_life.digital_life.research")
         ctx = RecordingContext()
         ctx.get_config = lambda key, default: True
         plugin.register(ctx)
@@ -129,13 +130,17 @@ class MemoryTests(unittest.TestCase):
             patch.object(host_storage, "plugin_db",
                          side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
             patch.object(plugin, "_TURN_META", {"s-a": {"sender": "u-a"}}),
+            patch.object(research_mod, "spawn_task", return_value=True) as spawned,
         ):
-            first = plugin._JOURNAL_CHECK("qqbot", "chat-a")
-            second = plugin._JOURNAL_CHECK("qqbot", "chat-b")
-            self.assertIn("2026-11-01", first)
-            self.assertIn("2026-11-01", second)
-            self.assertEqual(plugin._JOURNAL_CHECK("qqbot", "chat-a") or "", "")
+            self.assertIsNone(plugin._JOURNAL_CHECK("qqbot", "chat-a"))
+            self.assertIsNone(plugin._JOURNAL_CHECK("qqbot", "chat-b"))
+            self.assertIsNone(plugin._JOURNAL_CHECK("qqbot", "chat-a"))
             handlers["memory_write"]({"text": "无归属的一条"}, session_id="s-b")
+        prompts = [call.args[0] for call in spawned.call_args_list]
+        self.assertEqual(len(prompts), 2)
+        self.assertIn("2026-11-01", prompts[0])
+        self.assertIn("[lover-child:journal chat=chat-a]", prompts[0])
+        self.assertIn("[lover-child:journal chat=chat-b]", prompts[1])
         entry = next(iter(e for e in self.store.read_entries().values() if e["text"] == "无归属的一条"))
         self.assertEqual(entry.get("speaker"), "")
 
@@ -143,6 +148,7 @@ class MemoryTests(unittest.TestCase):
         from test_events import plugin, RecordingContext
         import importlib
         host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        research_mod = importlib.import_module("hermes_plugins.digital_life.digital_life.research")
         ctx = RecordingContext()
         ctx.get_config = lambda key, default: True
         plugin.register(ctx)
@@ -152,20 +158,47 @@ class MemoryTests(unittest.TestCase):
             patch.object(host_storage, "data_root", return_value=self.root),
             patch.object(host_storage, "plugin_db",
                          side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+            patch.object(research_mod, "spawn_task", return_value=True) as spawned,
         ):
             self.store.write("chat-a 的旧事", kind="turn", day="2026-11-01", chat_id="chat-a")
-            self.assertEqual(plugin._JOURNAL_CHECK("qqbot", "chat-b") or "", "")
-            self.assertIn("2026-11-01", plugin._JOURNAL_CHECK("qqbot", "chat-a"))
+            self.assertIsNone(plugin._JOURNAL_CHECK("qqbot", "chat-b"))
+            self.assertEqual(spawned.call_count, 0)
+            self.assertIsNone(plugin._JOURNAL_CHECK("qqbot", "chat-a"))
+            self.assertEqual(spawned.call_count, 1)
+            self.assertIn("2026-11-01", spawned.call_args.args[0])
         for index in range(600):
             plugin._remember(plugin._SOURCE_CACHE, f"s-{index}", "cli")
         self.assertLessEqual(len(plugin._SOURCE_CACHE), 512)
         self.assertIn("s-599", plugin._SOURCE_CACHE)
         plugin._SOURCE_CACHE.clear()
 
+    def test_a_journal_child_writes_under_the_chat_in_its_prompt_tag(self):
+        from test_events import plugin, RecordingContext
+        import importlib
+        host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default: True
+        plugin.register(ctx)
+        handlers = {tool["name"]: tool["handler"] for tool in ctx.tools}
+        with (
+            patch.object(host_storage, "data_root", return_value=self.root),
+            patch.object(host_storage, "plugin_db",
+                         side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+            patch.object(plugin, "_session_scope", lambda session_id: ("", "")),
+            patch.object(plugin, "_child_chat", lambda session_id: "chat-9"),
+        ):
+            result = json.loads(handlers["memory_write"](
+                {"text": "子会话写的一条", "kind": "fact"}, session_id="child-1"))
+        self.assertTrue(result["ok"])
+        entry = next(iter(e for e in self.store.read_entries().values()
+                          if e["text"] == "子会话写的一条"))
+        self.assertEqual(entry["chat_id"], "chat-9")
+
     def test_scheduled_runs_may_recall_a_named_chat(self):
         from test_events import plugin, RecordingContext
         import importlib
         host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        research_mod = importlib.import_module("hermes_plugins.digital_life.digital_life.research")
         ctx = RecordingContext()
         ctx.get_config = lambda key, default: True
         plugin.register(ctx)

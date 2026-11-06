@@ -404,7 +404,7 @@ class RegistrationTests(unittest.TestCase):
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)
-        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "study_source", "background_task", "read_source", "library_list", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "memory_revoke", "digital_life_status"])
+        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "study_source", "background_task", "read_source", "library_list", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "memory_revoke", "digital_life_status", "close_gap"])
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertEqual(set(schemas["memory_write"]) & {"sources", "refs"}, {"sources", "refs"})
         self.assertIn("kind", schemas["memory_recall"])
@@ -545,6 +545,8 @@ class QqBubbleTransformTests(unittest.TestCase):
             root = Path(tmp)
             ctx = RecordingContext()
             ctx.get_config = lambda key, default=None: default
+            research_mod = importlib.import_module(
+                "hermes_plugins.digital_life.digital_life.research")
             with (
                 patch.object(plugin.digital_life.storage, "data_root", return_value=root),
                 patch.object(plugin.digital_life.storage, "plugin_db",
@@ -552,6 +554,7 @@ class QqBubbleTransformTests(unittest.TestCase):
                 patch.object(plugin.digital_life.storage, "read_state",
                              return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
                 patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+                patch.object(research_mod, "spawn_task", return_value=True) as spawned,
             ):
                 plugin._JOURNAL_PROMPTED.clear()
                 plugin.register(ctx)
@@ -559,8 +562,10 @@ class QqBubbleTransformTests(unittest.TestCase):
                     "用户：今天被说胖\n助手：滚", session_id="s1", now_ms=anchor)
                 hooks = dict(ctx.hooks)
                 note = hooks["pre_llm_call"](user_message="在吗", session_id="s1", platform="qqbot")
-            self.assertIn("日记", note["context"])
-            self.assertIn(yesterday, note["context"])
+            self.assertIsNone(note)
+            prompt = spawned.call_args.args[0]
+            self.assertIn("日记", prompt)
+            self.assertIn(yesterday, prompt)
 
     def test_diary_covers_the_newest_recorded_day_after_a_gap(self):
         from datetime import datetime, timedelta
@@ -570,6 +575,8 @@ class QqBubbleTransformTests(unittest.TestCase):
             root = Path(tmp)
             ctx = RecordingContext()
             ctx.get_config = lambda key, default=None: default
+            research_mod = importlib.import_module(
+                "hermes_plugins.digital_life.digital_life.research")
             with (
                 patch.object(plugin.digital_life.storage, "data_root", return_value=root),
                 patch.object(plugin.digital_life.storage, "plugin_db",
@@ -577,6 +584,7 @@ class QqBubbleTransformTests(unittest.TestCase):
                 patch.object(plugin.digital_life.storage, "read_state",
                              return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
                 patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+                patch.object(research_mod, "spawn_task", return_value=True) as spawned,
             ):
                 plugin._JOURNAL_PROMPTED.clear()
                 plugin.register(ctx)
@@ -584,9 +592,11 @@ class QqBubbleTransformTests(unittest.TestCase):
                     "用户：隔了几天才回来\n助手：好久不见", session_id="s1", now_ms=older_anchor)
                 hooks = dict(ctx.hooks)
                 note = hooks["pre_llm_call"](user_message="在吗", session_id="s1", platform="qqbot")
-            self.assertIn("日记", note["context"])
-            self.assertIn(older, note["context"])
-            self.assertNotIn((datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"), note["context"])
+            self.assertIsNone(note)
+            prompt = spawned.call_args.args[0]
+            self.assertIn("日记", prompt)
+            self.assertIn(older, prompt)
+            self.assertNotIn((datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"), prompt)
 
     def test_missing_atomic_facts_are_requested_from_that_days_turns(self):
         from datetime import datetime, timedelta
@@ -596,6 +606,8 @@ class QqBubbleTransformTests(unittest.TestCase):
             root = Path(tmp)
             ctx = RecordingContext()
             ctx.get_config = lambda key, default=None: default
+            research_mod = importlib.import_module(
+                "hermes_plugins.digital_life.digital_life.research")
             with (
                 patch.object(plugin.digital_life.storage, "data_root", return_value=root),
                 patch.object(plugin.digital_life.storage, "plugin_db",
@@ -603,6 +615,7 @@ class QqBubbleTransformTests(unittest.TestCase):
                 patch.object(plugin.digital_life.storage, "read_state",
                              return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
                 patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+                patch.object(research_mod, "spawn_task", return_value=True) as spawned,
             ):
                 plugin._JOURNAL_PROMPTED.clear()
                 plugin._FACT_PROMPTED.clear()
@@ -611,10 +624,12 @@ class QqBubbleTransformTests(unittest.TestCase):
                     "用户：今天被说胖\n助手：滚", kind="turn", session_id="s1", now_ms=anchor)
                 hooks = dict(ctx.hooks)
                 note = hooks["pre_llm_call"](user_message="在吗", session_id="s1", platform="qqbot")
-            self.assertIn("原子事实", note["context"])
-            self.assertIn(yesterday, note["context"])
-            self.assertIn("sources", note["context"])
-            self.assertIn("refs", note["context"])
+            self.assertIsNone(note)
+            prompt = spawned.call_args.args[0]
+            self.assertIn("原子事实", prompt)
+            self.assertIn(yesterday, prompt)
+            self.assertIn("sources", prompt)
+            self.assertIn("refs", prompt)
 
     def test_fact_entries_do_not_trigger_the_fact_prompt(self):
         from datetime import datetime, timedelta
@@ -624,6 +639,8 @@ class QqBubbleTransformTests(unittest.TestCase):
             root = Path(tmp)
             ctx = RecordingContext()
             ctx.get_config = lambda key, default=None: default
+            research_mod = importlib.import_module(
+                "hermes_plugins.digital_life.digital_life.research")
             with (
                 patch.object(plugin.digital_life.storage, "data_root", return_value=root),
                 patch.object(plugin.digital_life.storage, "plugin_db",
@@ -631,6 +648,7 @@ class QqBubbleTransformTests(unittest.TestCase):
                 patch.object(plugin.digital_life.storage, "read_state",
                              return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
                 patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+                patch.object(research_mod, "spawn_task", return_value=True) as spawned,
             ):
                 plugin._JOURNAL_PROMPTED.clear()
                 plugin._FACT_PROMPTED.clear()
@@ -641,8 +659,10 @@ class QqBubbleTransformTests(unittest.TestCase):
                             day=yesterday)
                 hooks = dict(ctx.hooks)
                 note = hooks["pre_llm_call"](user_message="在吗", session_id="s1", platform="qqbot")
-            self.assertNotIn("原子事实", note["context"])
-            self.assertIn("日记", note["context"])
+            self.assertIsNone(note)
+            prompt = spawned.call_args.args[0]
+            self.assertNotIn("原子事实", prompt)
+            self.assertIn("日记", prompt)
 
 
     def test_new_from_a_non_owner_leaves_the_palace_alone(self):
@@ -984,6 +1004,39 @@ class HostSendFallbackTests(unittest.TestCase):
             plugin._send_qq("c1", "hello")
         self.assertEqual(calls, [{"action": "send", "target": "qqbot:c1", "message": "hello"}])
 
+
+
+class OpenLoopTests(unittest.TestCase):
+    def test_close_gap_retires_only_the_calling_chat(self):
+        from digital_life.domain import default_state
+        hl = sys.modules["hermes_plugins.digital_life"]
+        state = default_state(1_000_000)
+        state["gaps"] = [
+            {"id": "gap-a", "status": "open", "summary": "mine", "tension": 90,
+             "chat": "chat-1", "created_at": 1000},
+            {"id": "gap-b", "status": "open", "summary": "theirs", "tension": 90,
+             "chat": "chat-2", "created_at": 1000},
+        ]
+        with patch.object(hl.digital_life.storage, "update_state",
+                          lambda now, mutate: mutate(state)), \
+                patch.object(hl, "_session_scope", lambda session_id: ("chat-1", "dm")):
+            wrong = json.loads(hl._close_gap({"id": "gap-b"}, session_id="s1"))
+            right = json.loads(hl._close_gap({"id": "gap-a"}, session_id="s1"))
+        self.assertFalse(wrong["ok"])
+        self.assertTrue(right["ok"])
+        self.assertEqual([gap.get("status") for gap in state["gaps"]], ["resolved", "open"])
+        self.assertEqual(state["gaps"][0].get("closed_by"), "self")
+
+    def test_status_shows_only_the_top_loops(self):
+        hl = sys.modules["hermes_plugins.digital_life"]
+        gaps = [{"id": f"gap-{i}", "status": "open", "summary": str(i), "tension": 90 - i}
+                for i in range(5)]
+        snapshot = {"gaps": gaps, "open_gaps": 5}
+        with patch.object(hl.digital_life.runtime, "status_snapshot", return_value=dict(snapshot)), \
+                patch.object(hl._proactive, "schedule_status", return_value={}):
+            out = json.loads(hl._status({}))
+        self.assertEqual([gap["id"] for gap in out["gaps"]], ["gap-0", "gap-1", "gap-2"])
+        self.assertEqual(out["gaps_hidden"], 2)
 
 
 class ToolBudgetTests(unittest.TestCase):

@@ -27,6 +27,7 @@ provides_tools:
   - memory_recall
   - memory_revoke
   - digital_life_status
+  - close_gap
   - beat_targets
   - beat_send
   - search_later

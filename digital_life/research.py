@@ -26,7 +26,7 @@ PROMPT = (
 # host honours at the process boundary. ``digital_life`` still carries all thirteen
 # plugin tools, so the precise allow-list is enforced by ``_gate_tool_call``.
 TOOLSETS = {"study": "digital_life", "task": "web,digital_life", "search": "web",
-            "polish": "todo"}
+            "polish": "todo", "journal": "digital_life"}
 
 _LOCK = threading.Lock()
 _ACTIVE: set[str] = set()
@@ -126,19 +126,22 @@ def spawn(
 TASK_TIMEOUT_SECONDS = 900
 
 
-def run_task(prompt: str, *, kind: str = "task") -> str:
+def run_task(prompt: str, *, kind: str = "task",
+             extra_env: dict[str, str] | None = None) -> str:
     """Run a multi-step job in a one-shot background session."""
-    return clean_answer(spawn_child(kind, prompt, timeout=TASK_TIMEOUT_SECONDS), limit=800)
+    return clean_answer(spawn_child(kind, prompt, timeout=TASK_TIMEOUT_SECONDS,
+                                    extra_env=extra_env), limit=800)
 
 
 def spawn_task(
     prompt: str, chat_id: str, send: Callable[[str, str], None],
     runner: Callable[[str], str] | None = None, *, kind: str = "task",
+    extra_env: dict[str, str] | None = None,
 ) -> bool:
     """Start a background multi-step job; its result is sent to the chat."""
     if not prompt.strip() or not chat_id:
         return False
-    runner = runner or (lambda text: run_task(text, kind=kind))
+    runner = runner or (lambda text: run_task(text, kind=kind, extra_env=extra_env))
     if not _SLOTS.acquire(blocking=False):
         return False
     key = f"task:{chat_id}"

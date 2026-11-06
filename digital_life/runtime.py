@@ -351,7 +351,7 @@ def append_open_loops(system_text: str, gaps: list[dict[str, Any]], now_ms: floa
         for gap in open_gaps
     ]
     while entries:
-        suffix = "[open loops] " + "；".join(entries)
+        suffix = "[open loops] 你心里还挂着的（不是待办，别每轮都提）：" + "；".join(entries)
         separator = "\n\n" if system_text else ""
         if len(separator + suffix) <= 400:
             return f"{system_text}{separator}{suffix}"
@@ -386,3 +386,23 @@ def resolve_gap(now_ms: float, gap_id: str) -> bool:
     from .storage import update_state
     update_state(now_ms, mutate)
     return resolved
+
+
+def close_gap_in_chat(now_ms: float, gap_id: str, chat: str) -> bool:
+    """The assistant retiring one of its own loops, limited to that conversation."""
+    closed = False
+
+    def mutate(state):
+        nonlocal closed
+        if state["emergency_stop"]:
+            return None
+        state = settle_before_transition(state, now_ms)
+        if gap_pool.close_gap(state, by="self", now_ms=now_ms, gap_id=gap_id,
+                              chat=chat or ""):
+            closed = True
+        state["last_settled_at"] = now_ms
+        return state
+
+    from .storage import update_state
+    update_state(now_ms, mutate)
+    return closed
