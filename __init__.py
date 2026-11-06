@@ -20,6 +20,7 @@ from typing import Any, Optional
 from . import digital_life
 from .digital_life import proactive as _proactive
 from .digital_life import selfheal as _selfheal
+from .digital_life import typos as _typos
 from .digital_life.runtime import record_api_error, record_request, record_turn
 
 logger = logging.getLogger(__name__)
@@ -904,6 +905,10 @@ def register(ctx) -> None:
                                           speaker=_TURN_META.get(session_id, {}).get("sender", ""))
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
             result = {"ok": False, "error": str(exc)}
+        if result.get("ok") and args.get("kind", "note") == "journal":
+            warnings = _typos.find_suspicious(args.get("text") or "")
+            if warnings:
+                result["warnings"] = warnings
         return json.dumps(result, ensure_ascii=False)
 
     def memory_recall(args, session_id="", **kwargs):
