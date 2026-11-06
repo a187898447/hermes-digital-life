@@ -47,13 +47,37 @@ _GH_TREE = re.compile(r"https?://github\.com/([^/]+)/([^/]+)/tree/([^/]+)/?(.*)$
 _GH_REPO = re.compile(r"https?://github\.com/([^/]+)/([^/]+)/?$")
 
 
+_RAW_MIRRORS = (
+    "https://raw.githubusercontent.com/{o}/{r}/{ref}/{p}",
+    "https://cdn.jsdelivr.net/gh/{o}/{r}@{ref}/{p}",
+)
+
+
+def _raw(o: str, r: str, ref: str, p: str, fetcher) -> bytes:
+    """raw.githubusercontent is unreachable on some networks; try mirrors, then the API."""
+    last: Exception | None = None
+    for tpl in _RAW_MIRRORS:
+        try:
+            return (fetcher or _fetch)(tpl.format(o=o, r=r, ref=ref, p=p))
+        except Exception as exc:  # noqa: BLE001 - try the next mirror
+            last = exc
+    try:
+        api = f"https://api.github.com/repos/{o}/{r}/contents/{p}?ref={ref}"
+        import base64 as _b64
+        payload = json.loads((fetcher or _fetch)(api).decode("utf-8"))
+        if isinstance(payload, dict) and payload.get("content"):
+            return _b64.b64decode(payload["content"])
+    except Exception as exc:  # noqa: BLE001
+        last = exc
+    raise ValueError(f"cannot fetch {o}/{r}/{p}: {last}")
+
+
 def _github(source: str, fetcher) -> tuple[str, bytes] | None:
     """Turn a GitHub page URL into raw text (a file, a README, or a directory listing)."""
     blob = _GH_BLOB.match(source)
     if blob:
         owner, repo, ref, path = blob.groups()
-        raw = f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
-        return f"{repo}/{path}", (fetcher or _fetch)(raw)
+        return f"{repo}/{path}", _raw(owner, repo, ref, path, fetcher)
     tree = _GH_TREE.match(source)
     if tree:
         owner, repo, ref, path = tree.groups()
@@ -74,9 +98,8 @@ def _github(source: str, fetcher) -> tuple[str, bytes] | None:
         owner, name = repo.groups()
         for readme in ("README.md", "README.txt", "README"):
             for branch in ("main", "master"):
-                raw = f"https://raw.githubusercontent.com/{owner}/{name}/{branch}/{readme}"
                 try:
-                    return f"{name}/{readme}", (fetcher or _fetch)(raw)
+                    return f"{name}/{readme}", _raw(owner, name, branch, readme, fetcher)
                 except Exception:
                     continue
         raise ValueError("repo has no README on main/master")

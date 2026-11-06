@@ -84,6 +84,17 @@ class LibraryTests(unittest.TestCase):
         meta = library.ingest("https://github.com/acme/notes", fetcher=fetcher)
         self.assertIn("README.md", meta["title"])
 
+    def test_github_falls_back_when_raw_is_unreachable(self):
+        import json as _json
+        def fetcher(url):
+            if url.startswith("https://raw.githubusercontent.com/"):
+                raise OSError("blocked")
+            if url.startswith("https://cdn.jsdelivr.net/"):
+                raise OSError("blocked too")
+            return _json.dumps({"content": "IyBmYWxsYmFjaw=="}).encode()
+        meta = library.ingest("https://github.com/acme/notes/blob/main/a.md", fetcher=fetcher)
+        self.assertIn("fallback", library.read(meta, None, 200)["text"])
+
     def test_github_tree_url_lists_text_files(self):
         import json as _json
         payload = _json.dumps([
