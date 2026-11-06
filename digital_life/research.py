@@ -94,7 +94,7 @@ TASK_TIMEOUT_SECONDS = 900
 def run_task(prompt: str) -> str:
     """Run a multi-step job in a one-shot background session."""
     cmd = [hermes_bin(), "-p", profile_name(), "chat", "--oneshot", "-Q", "-q", prompt]
-    env = dict(os.environ, HERMES_DISABLE_LAZY_INSTALLS="1")
+    env = dict(os.environ, HERMES_DISABLE_LAZY_INSTALLS="1", HERMES_LOVER_STUDY="1")
     try:
         done = subprocess.run(
             cmd, capture_output=True, text=True, timeout=TASK_TIMEOUT_SECONDS, env=env,

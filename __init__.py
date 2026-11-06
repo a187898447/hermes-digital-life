@@ -985,11 +985,24 @@ def register(ctx) -> None:
 
     _JOURNAL_CHECK = journal_check
 
+    def _study_learned_problem(text, session_id):
+        from .digital_life import memory as _memory  # noqa: PLC0415
+        return _memory.study_learned_problem(text, memory_store().read_entries(), session_id)
+
+
     def memory_write(args, session_id="", **kwargs):
         try:
+            if os.environ.get("HERMES_LOVER_STUDY") == "1" and args.get("kind") in ("turn", "daily", "journal"):
+                return json.dumps({"ok": False, "error": "background reading writes learned/note only"},
+                                  ensure_ascii=False)
             if args.get("kind", "note") == "learned":
                 from .digital_life import memory as _memory  # noqa: PLC0415
 
+                if os.environ.get("HERMES_LOVER_STUDY") == "1":
+                    problem = _study_learned_problem(args.get("text"), session_id)
+                    if problem:
+                        return json.dumps({"ok": False, "error": "learned entry rejected: " + problem},
+                                          ensure_ascii=False)
                 problem = _memory.learned_problem(args.get("text"))
                 if problem:
                     return json.dumps({"ok": False, "error": "learned entry rejected: " + problem},
@@ -1182,8 +1195,9 @@ def register(ctx) -> None:
         prompt = (
             "你在后台读完一份资料，不要把原文贴回来。用 read_source 读 "
             f"{source} ，一次读不完就用 name 加 part 续读直到 finished；材料写了星期就用 applies_dow"
-            "（0=周一…3=周四…6=周日）。边读边把能在群里直接说出口的说法用 memory_write 记成 learned"
-            "（text 写成「什么时候→你会怎么说」，自己的话，别抄原文），来源和结构用 note 记。"
+            "（0=周一…3=周四…6=周日）。边读边用 memory_write 记 learned，text 写成"
+            "「什么时候→你会怎么说」（自己的话，别抄原文）；同一触发只写一条，最多两条，"
+            "补充细节并进已有那条；来源和结构用 note 记，不要写 turn。"
             "只用 read_source 和 memory_write；不要用 terminal、不要建 cron 任务、不要 web_search/web_extract。"
             "最后只回一句话：读完了、记了几条。"
         )

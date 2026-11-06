@@ -122,6 +122,20 @@ _LEARNED_META = re.compile(
 _QUOTED = re.compile(r"[「『“\"]([^」』”\"]{15,})[」』”\"]")
 
 
+def study_learned_problem(text: str, entries: dict[str, dict], session_id: str, cap: int = 2) -> str:
+    """Background reading gets at most a couple of habits, one per trigger."""
+    mine = [row for row in entries.values()
+            if row.get("kind") == "learned" and row.get("source_session_id") == session_id]
+    if len(mine) >= cap:
+        return f"already wrote {cap} habits this run; merge the rest into those"
+    def trigger(value: str) -> str:
+        return "".join(ch for ch in str(value or "").split("→")[0] if ch.isalnum())
+    seen = {trigger(row.get("text")) for row in mine}
+    if trigger(text) and trigger(text) in seen:
+        return "same trigger already covered; merge the detail into that entry"
+    return ""
+
+
 def similar_learned(text: str, entries: dict[str, dict], threshold: float = 0.8) -> str:
     """Return an existing learned id that says the same thing, if any."""
     import difflib  # noqa: PLC0415

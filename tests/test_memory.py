@@ -953,3 +953,14 @@ class SimilarLearnedTests(unittest.TestCase):
         from digital_life import memory as m
         entries = {"hp-1": {"kind": "learned", "text": "周四 → 冷不丁甩一句疯狂星期四文案给他"}}
         self.assertEqual(m.similar_learned("有人骂我 → 先接情绪不解释", entries), "")
+
+class StudyLearnedTests(unittest.TestCase):
+    def test_third_habit_is_rejected(self):
+        from digital_life import memory as m
+        entries = {f"hp-{i}": {"kind": "learned", "text": f"场景{i} → 说法{i}", "source_session_id": "s1"} for i in (1, 2)}
+        self.assertIn("already wrote 2", m.study_learned_problem("场景3 → 说法3", entries, "s1"))
+
+    def test_same_trigger_is_rejected(self):
+        from digital_life import memory as m
+        entries = {"hp-1": {"kind": "learned", "text": "周四 → 甩文案", "source_session_id": "s1"}}
+        self.assertIn("same trigger", m.study_learned_problem("周四 → 换个说法", entries, "s1"))
