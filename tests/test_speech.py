@@ -104,6 +104,18 @@ class SkillPromptTests(unittest.TestCase):
         self.assertNotIn("# 说人话", prompt)
 
 
+class ReadbackGateTests(unittest.TestCase):
+    def test_a_line_that_points_at_an_unmentioned_thing_is_checked(self):
+        self.assertTrue(speech.needs_readback(
+            ["那中午那顿就是我的记分点，粉上了没？"], [], "明早估计不吃了，等吃中午饭了"))
+
+    def test_a_plain_line_does_not_buy_another_model_call(self):
+        self.assertFalse(speech.needs_readback(["晚安，躺好了就别再摸手机。"], [], "晚安"))
+
+    def test_a_reference_the_other_side_just_made_is_fine(self):
+        self.assertFalse(speech.needs_readback(["那明天见。"], ["那明天见"], "那明天见"))
+
+
 class OperatorTicListTests(unittest.TestCase):
     """The operator's own list, normalized: long ones anywhere, short ones alone."""
 

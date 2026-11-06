@@ -368,6 +368,33 @@ READBACK_PROMPT = """你没有这个机器人的记忆，也不认识收消息�
 """
 
 
+_POINTING = ("这", "那", "它", "他", "她", "这事", "那事")
+
+
+def _shares_run(line: str, context: str, size: int = 3) -> bool:
+    if not context:
+        return False
+    for start in range(0, max(0, len(line) - size + 1)):
+        if line[start:start + size] in context:
+            return True
+    return False
+
+
+def needs_readback(lines: list[str], recent: list[str], last_user: str = "") -> bool:
+    """Cheap gate: only a bubble that points at something unmentioned is worth a check.
+
+    A sentence with 「这/那/它/他」 but no three-character run in common with what the
+    other side just said or read is the shape that produced "记分点 / 粉上了没".
+    """
+    context = "".join([last_user or "", *recent])
+    for line in lines:
+        if not any(mark in line for mark in _POINTING):
+            continue
+        if not _shares_run(line, context):
+            return True
+    return False
+
+
 def parse_readback(text: str, count: int) -> list[str] | None:
     """Return the rewrite only when the judge actually flagged something."""
     import json

@@ -1269,10 +1269,13 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
 def _readback(lines: list[str], recent: list[str], last_user: str = "") -> Optional[list[str]]:
     from .digital_life import speech
 
-    if os.environ.get("HERMES_LOVER_READBACK", "1").strip().lower() == "0":
+    mode = os.environ.get("HERMES_LOVER_READBACK", "auto").strip().lower()
+    if mode == "0":
         return None
     llm = getattr(_CTX, "llm", None)
     if llm is None or not lines:
+        return None
+    if mode != "always" and not speech.needs_readback(lines, recent, last_user):
         return None
     recent_text = "\n".join(f"- {line}" for line in recent) or "（无）"
     prompt = speech.READBACK_PROMPT.format(
