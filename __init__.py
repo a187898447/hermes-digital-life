@@ -437,8 +437,10 @@ def _learned_hint() -> str:
     if factory is None:
         return ""
     try:
+        weekday = time.localtime().tm_wday
         items = [item for item in factory().peek("learned", 10)
-                 if float(item.get("effective_weight") or 0) >= 0.45]
+                 if float(item.get("effective_weight") or 0) >= 0.45
+                 and (item.get("applies_dow") is None or item.get("applies_dow") == weekday)]
     except Exception:
         return ""
     if not items:
@@ -978,6 +980,7 @@ def register(ctx) -> None:
                                           day=args.get("day") or None,
                                           sources=args.get("sources"),
                                           refs=args.get("refs"),
+                                          applies_dow=args.get("applies_dow"),
                                           chat_id=chat_id, chat_type=chat_type,
                                           speaker=_TURN_META.get(session_id, {}).get("sender", ""))
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
@@ -1334,6 +1337,8 @@ def register(ctx) -> None:
             "weight": {"type": ["number", "null"]},
             "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
                     "description": "Anchor a journal or fact entry to the day it describes. Journals must target a past day."},
+            "applies_dow": {"type": ["integer", "null"], "minimum": 0, "maximum": 6,
+                            "description": "For a saying that only fits one weekday (0=Monday ... 3=Thursday). Leave null for everyday sayings."},
             "sources": {"type": "array", "items": {"type": "string"}, "maxItems": 20,
                         "description": "For kind=fact: ids of the turn entries this fact was distilled from. Unknown ids are dropped."},
             "refs": {"type": "array", "items": {"type": "string"}, "maxItems": 20,

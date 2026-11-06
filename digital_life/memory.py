@@ -392,7 +392,8 @@ class MemoryStore:
         return self.read_entries().get(identifier)
 
     def write(self, text, kind="note", weight=None, *, session_id="unknown", now_ms=None,
-              chat_id="", chat_type="", speaker="", day=None, sources=None, refs=None):
+              chat_id="", chat_type="", speaker="", day=None, sources=None, refs=None,
+              applies_dow=None):
         if not isinstance(text, str) or not text.strip(): raise ValueError("空的记不住")
         date_override = None
         if day is not None:
@@ -402,6 +403,9 @@ class MemoryStore:
         text = text.strip()
         if len(text) > 4000: raise ValueError("超过4000字符，请拆成几条")
         if kind not in DEFAULT_WEIGHTS: raise ValueError("Unsupported memory kind")
+        if applies_dow is not None:
+            if type(applies_dow) is not int or not 0 <= applies_dow <= 6:
+                raise ValueError("applies_dow must be 0-6 (0=Monday)")
         if weight is not None and not _number(weight): raise ValueError("weight must be a finite number")
         sources = self._ids(sources, "sources")
         refs = self._ids(refs, "refs")
@@ -448,7 +452,8 @@ class MemoryStore:
                          "kind": kind, "weight": weight, "cortisol": self._state().get("chemistry", {}).get("cortisol", 20),
                          "created_at": now_ms, "last_access_at": now_ms, "hits": 0, "source_session_id": session_id,
                          "chat_id": str(chat_id or ""), "chat_type": str(chat_type or ""), "speaker": str(speaker or ""),
-                         "sources": traced_sources, "refs": traced_refs}
+                         "sources": traced_sources, "refs": traced_refs,
+                         "applies_dow": applies_dow}
             self._require_running()
             self._append([event], now_ms)
             indexed = True
