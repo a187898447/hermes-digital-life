@@ -19,11 +19,15 @@ host injector itself lives in ``__init__.py`` so this module stays testable.
 
 from __future__ import annotations
 
+import logging
+import re
 import time
 from typing import Any
 
 from . import gaps as gap_pool
 from .domain import float_or
+
+logger = logging.getLogger(__name__)
 
 WAKE_TEXT = "..."
 WAKE_DEDUPE_MS = 1_000.0
@@ -34,6 +38,9 @@ WAKE_MIN_TENSION = 80.0
 WAKE_ECHO_MINUTES = 10.0
 WAKE_PENALTY = 10.0
 WAKE_SECTION_LIMIT = 400
+# Wake state is per chat: one group's pending nudge must not silence another's.
+WAKE_SCHEMA = 2
+MAX_CHATS = 32
 
 _RUNNING_AT = 0.0
 
@@ -50,14 +57,17 @@ def agent_running() -> bool:
 
 
 def new_wake_state() -> dict[str, Any]:
+    return {"schema": WAKE_SCHEMA, "chats": {}}
+
+
+def new_chat_wake() -> dict[str, Any]:
     return {"queue": [], "last_wake_at": 0.0, "last_gap_id": "", "active": None}
 
 
-def normalize_wake(raw: Any) -> dict[str, Any]:
-    """Never raises; drops items that are not dicts with a wake id and gap id."""
-    state = new_wake_state()
+def _clean_slot(raw: Any) -> dict[str, Any]:
+    slot = new_chat_wake()
     if not isinstance(raw, dict):
-        return state
+        return slot
     queue = raw.get("queue")
     if isinstance(queue, list):
         for item in queue[-8:]:
@@ -66,22 +76,71 @@ def normalize_wake(raw: Any) -> dict[str, Any]:
             wake_id, gap_id = item.get("id"), item.get("gap_id")
             if not isinstance(wake_id, str) or not wake_id or not isinstance(gap_id, str) or not gap_id:
                 continue
-            state["queue"].append({
+            slot["queue"].append({
                 "id": wake_id[:80], "gap_id": gap_id[:80],
                 "created_at": max(0.0, float_or(item.get("created_at"), 0.0)),
             })
-    state["last_wake_at"] = max(0.0, float_or(raw.get("last_wake_at"), 0.0))
+    slot["last_wake_at"] = max(0.0, float_or(raw.get("last_wake_at"), 0.0))
     last_gap = raw.get("last_gap_id")
-    state["last_gap_id"] = last_gap[:80] if isinstance(last_gap, str) else ""
+    slot["last_gap_id"] = last_gap[:80] if isinstance(last_gap, str) else ""
     active = raw.get("active")
     if isinstance(active, dict) and isinstance(active.get("gap_id"), str) and active.get("gap_id"):
-        state["active"] = {
+        slot["active"] = {
             "wake_id": str(active.get("wake_id") or "")[:80],
             "gap_id": active["gap_id"][:80],
             "delivered_at": max(0.0, float_or(active.get("delivered_at"), 0.0)),
             "manual": active.get("manual") is True,
         }
+    return slot
+
+
+def normalize_wake(raw: Any) -> dict[str, Any]:
+    """Never raises; keeps at most MAX_CHATS chats, each cleaned like before.
+
+    The pre-schema-2 layout kept one global slot, which has no chat owner; it is
+    dropped rather than guessed at, because a wake aimed at the wrong chat is noise.
+    """
+    if not isinstance(raw, dict):
+        return new_wake_state()
+    chats = raw.get("chats")
+    if not isinstance(chats, dict):
+        if any(key in raw for key in ("queue", "active", "last_wake_at")):
+            logger.info("hermes-lover: dropping pre-schema-2 wake state that has no chat owner")
+        return new_wake_state()
+    state = new_wake_state()
+    for chat_id, slot in chats.items():
+        key = str(chat_id)[:80]
+        if key and len(state["chats"]) < MAX_CHATS:
+            state["chats"][key] = _clean_slot(slot)
     return state
+
+
+def _wake_dict(state: dict[str, Any]) -> dict[str, Any]:
+    wake = state.get("wake")
+    if isinstance(wake, dict) and isinstance(wake.get("chats"), dict):
+        return wake
+    wake = new_wake_state()
+    state["wake"] = wake
+    return wake
+
+
+def _slot(state: dict[str, Any], chat_id: str, *, create: bool = False) -> dict[str, Any] | None:
+    chat_id = str(chat_id or "")
+    if not chat_id:
+        raise ValueError("a wake must belong to exactly one chat")
+    wake = _wake_dict(state)
+    slot = wake["chats"].get(chat_id)
+    if slot is None and create:
+        if len(wake["chats"]) >= MAX_CHATS:
+            stalest = min(wake["chats"], key=lambda key: float_or(wake["chats"][key].get("last_wake_at"), 0.0))
+            wake["chats"].pop(stalest, None)
+        slot = wake["chats"][chat_id] = new_chat_wake()
+    return slot if isinstance(slot, dict) else None
+
+
+def _wake_id(now_ms: float, chat_id: str, queue_len: int) -> str:
+    suffix = re.sub(r"[^0-9A-Za-z]", "", str(chat_id))[-8:] or "chat"
+    return f"wake-{int(now_ms)}-{queue_len}-{suffix}"
 
 
 def _open_gap(gaps: list[dict[str, Any]], gap_id: str) -> dict[str, Any] | None:
@@ -91,15 +150,18 @@ def _open_gap(gaps: list[dict[str, Any]], gap_id: str) -> dict[str, Any] | None:
     return None
 
 
-def plan_wake(state: dict[str, Any], now_ms: float, *, min_tension: float = WAKE_MIN_TENSION,
+def plan_wake(state: dict[str, Any], now_ms: float, *, chat_id: str,
+              min_tension: float = WAKE_MIN_TENSION,
               cooldown_ms: float = WAKE_COOLDOWN_MS) -> dict[str, Any] | None:
     """Queue the most pressing loop, or return ``None`` when any lock holds.
 
     The 1-second same-loop repeat is dropped before anything is written, so
     a flapping caller leaves no trace (lock 1).
     """
-    wake = state.setdefault("wake", new_wake_state())
     if agent_running():
+        return None
+    wake = _slot(state, chat_id, create=True)
+    if wake is None:
         return None
     if wake.get("active") or wake.get("queue"):
         return None
@@ -123,7 +185,7 @@ def plan_wake(state: dict[str, Any], now_ms: float, *, min_tension: float = WAKE
             best = gap
     if best is None:
         return None
-    item = {"id": f"wake-{int(now_ms)}-{len(wake['queue'])}", "gap_id": str(best["id"]),
+    item = {"id": _wake_id(now_ms, chat_id, len(wake["queue"])), "gap_id": str(best["id"]),
             "created_at": float(now_ms)}
     wake["queue"].append(item)
     return item
@@ -132,41 +194,55 @@ def plan_wake(state: dict[str, Any], now_ms: float, *, min_tension: float = WAKE
 def verify_queued(state: dict[str, Any], wake_id: str) -> bool:
     """Lock 2: the queued id must still be on disk and its loop still open."""
     wake = state.get("wake") if isinstance(state, dict) else None
-    if not isinstance(wake, dict):
+    if not isinstance(wake, dict) or not isinstance(wake.get("chats"), dict):
         return False
-    for item in wake.get("queue") or ():
-        if item.get("id") == wake_id:
-            return _open_gap(state.get("gaps") or [], str(item.get("gap_id"))) is not None
+    for slot in wake["chats"].values():
+        for item in (slot or {}).get("queue") or ():
+            if item.get("id") == wake_id:
+                return _open_gap(state.get("gaps") or [], str(item.get("gap_id"))) is not None
     return False
 
 
 def cancel(state: dict[str, Any], wake_id: str) -> bool:
     wake = state.get("wake")
-    if not isinstance(wake, dict):
+    if not isinstance(wake, dict) or not isinstance(wake.get("chats"), dict):
         return False
-    before = len(wake.get("queue") or ())
-    wake["queue"] = [item for item in wake.get("queue") or () if item.get("id") != wake_id]
-    return len(wake["queue"]) != before
+    dropped = False
+    for slot in wake["chats"].values():
+        if not isinstance(slot, dict):
+            continue
+        queue = slot.get("queue") or ()
+        kept = [item for item in queue if item.get("id") != wake_id]
+        if len(kept) != len(queue):
+            slot["queue"] = kept
+            dropped = True
+    return dropped
 
 
 def mark_delivered(state: dict[str, Any], wake_id: str, now_ms: float) -> bool:
     """Move a queued wake to ``active`` after the host accepted the bubble."""
-    wake = state.setdefault("wake", new_wake_state())
-    for item in list(wake.get("queue") or ()):
-        if item.get("id") != wake_id:
+    wake = _wake_dict(state)
+    for slot in wake["chats"].values():
+        if not isinstance(slot, dict):
             continue
-        wake["queue"] = [other for other in wake["queue"] if other.get("id") != wake_id]
-        wake["active"] = {"wake_id": wake_id, "gap_id": str(item.get("gap_id")),
-                          "delivered_at": float(now_ms), "manual": False}
-        wake["last_wake_at"] = float(now_ms)
-        wake["last_gap_id"] = str(item.get("gap_id"))
-        return True
+        for item in list(slot.get("queue") or ()):
+            if item.get("id") != wake_id:
+                continue
+            slot["queue"] = [other for other in slot["queue"] if other.get("id") != wake_id]
+            slot["active"] = {"wake_id": wake_id, "gap_id": str(item.get("gap_id")),
+                              "delivered_at": float(now_ms), "manual": False}
+            slot["last_wake_at"] = float(now_ms)
+            slot["last_gap_id"] = str(item.get("gap_id"))
+            return True
     return False
 
 
-def force_active(state: dict[str, Any], now_ms: float, *, gap_id: str | None = None) -> dict[str, Any] | None:
+def force_active(state: dict[str, Any], now_ms: float, *, chat_id: str,
+                 gap_id: str | None = None) -> dict[str, Any] | None:
     """Operator/CLI trigger: mark a loop as woken without a bubble."""
-    wake = state.setdefault("wake", new_wake_state())
+    wake = _slot(state, chat_id, create=True)
+    if wake is None:
+        return None
     gaps = state.get("gaps") or []
     chosen = _open_gap(gaps, gap_id) if gap_id else None
     if chosen is None:
@@ -181,10 +257,10 @@ def force_active(state: dict[str, Any], now_ms: float, *, gap_id: str | None = N
     return wake["active"]
 
 
-def reconcile(state: dict[str, Any], now_ms: float) -> str:
+def reconcile(state: dict[str, Any], now_ms: float, *, chat_id: str) -> str:
     """Behaviour commitment: resolved loop clears; a still-open loop presses harder."""
-    wake = state.get("wake")
-    if not isinstance(wake, dict) or not wake.get("active"):
+    wake = _slot(state, chat_id)
+    if wake is None or not wake.get("active"):
         return ""
     active = wake["active"]
     gap = next((item for item in state.get("gaps") or ()
@@ -200,10 +276,10 @@ def reconcile(state: dict[str, Any], now_ms: float) -> str:
     return "unmet"
 
 
-def section_text(state: dict[str, Any], now_ms: float) -> str:
+def section_text(state: dict[str, Any], now_ms: float, *, chat_id: str) -> str:
     """The ``digital-life:wake`` block; empty when nothing is active."""
-    wake = state.get("wake") if isinstance(state, dict) else None
-    if not isinstance(wake, dict) or not wake.get("active"):
+    wake = _slot(state, chat_id)
+    if wake is None or not wake.get("active"):
         return ""
     active = wake["active"]
     gap = next((item for item in state.get("gaps") or ()
@@ -225,9 +301,14 @@ def section_text(state: dict[str, Any], now_ms: float) -> str:
 def summary(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
     wake = state.get("wake") if isinstance(state, dict) else {}
     wake = wake if isinstance(wake, dict) else {}
-    active = wake.get("active")
+    chats = wake.get("chats") if isinstance(wake.get("chats"), dict) else {}
+    active = [(chat_id, slot.get("active")) for chat_id, slot in chats.items()
+              if isinstance(slot, dict) and isinstance(slot.get("active"), dict)]
     return {
-        "queued": len(wake.get("queue") or ()),
-        "active_gap": (active or {}).get("gap_id") if isinstance(active, dict) else None,
-        "last_wake_at": float_or(wake.get("last_wake_at"), 0.0),
+        "chats": len(chats),
+        "queued": sum(len(slot.get("queue") or ()) for slot in chats.values() if isinstance(slot, dict)),
+        "active_gap": active[0][1].get("gap_id") if len(active) == 1 else None,
+        "active_chats": [chat_id for chat_id, _ in active],
+        "last_wake_at": max((float_or(slot.get("last_wake_at"), 0.0) for slot in chats.values()
+                             if isinstance(slot, dict)), default=0.0),
     }

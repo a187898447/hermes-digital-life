@@ -127,15 +127,18 @@ def _wake_enabled() -> bool:
         return False
 
 
-def _reconcile_wake() -> None:
+def _reconcile_wake(session_id: str = "") -> None:
     """M11.6: a resolved loop clears; a still-open one presses harder by 10."""
     from .digital_life import storage, wake as _wake  # noqa: PLC0415
 
+    chat_id, _chat_type = _session_scope(session_id)
+    if not chat_id:
+        return
     now_ms = time.time() * 1000
     outcome: dict[str, str] = {}
 
     def mutate(state):
-        outcome["result"] = _wake.reconcile(state, now_ms)
+        outcome["result"] = _wake.reconcile(state, now_ms, chat_id=chat_id)
         return None
 
     storage.update_state(now_ms, mutate)
@@ -150,11 +153,14 @@ def _maybe_wake(session_id: str = "") -> None:
     ctx = _CTX
     if ctx is None or not _wake_enabled():
         return
+    chat_id, _chat_type = _session_scope(session_id)
+    if not chat_id:
+        return
     now_ms = time.time() * 1000
     plan: dict[str, object] = {}
 
     def mutate(state):
-        plan["wake"] = _wake.plan_wake(state, now_ms)
+        plan["wake"] = _wake.plan_wake(state, now_ms, chat_id=chat_id)
 
     storage.update_state(now_ms, mutate)
     item = plan.get("wake")
@@ -294,7 +300,7 @@ def _post_llm_call(assistant_response: str = "", session_id: str = "", platform:
 
     _wake.set_agent_running(False)
     try:
-        _reconcile_wake()
+        _reconcile_wake(session_id)
     except Exception:
         logger.warning("hermes-lover wake reconciliation failed", exc_info=True)
     if assistant_response:
@@ -679,7 +685,7 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     note = digital_life.runtime.affect_note(now_ms, include_time=_asks_time(request))
     # PRD M7.2 order: stress directive, then affect snapshot, then reordered memory.
     directive = digital_life.domain.stress_directive(state["chemistry"]["cortisol"])
-    wake_text = digital_life.runtime.wake_section(state, now_ms)
+    wake_text = digital_life.runtime.wake_section(state, now_ms, chat_id=scope or "")
     header = "\n\n".join(part for part in (wake_text, directive) if part)
     changed = result_temperature is not None
     result = dict(request)

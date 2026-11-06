@@ -860,6 +860,7 @@ class WakeHookTests(unittest.TestCase):
             patch.object(plugin.digital_life.storage, "update_state", self._update),
             patch.object(plugin.digital_life.storage, "read_state", lambda now_ms: self.state),
             patch.object(plugin.digital_life.runtime, "status_snapshot", lambda now_ms, scope=None: self.state),
+            patch.object(plugin, "_session_scope", lambda session_id: ("group-1", "group")),
         ]
         for patcher in self.patchers:
             patcher.start()
@@ -877,8 +878,7 @@ class WakeHookTests(unittest.TestCase):
     def test_disabled_by_default_has_zero_side_effects(self):
         plugin._post_llm_call(assistant_response="好的", session_id="s1")
         self.assertFalse(getattr(self.ctx, "injected", []))
-        self.assertEqual(self.state["wake"]["queue"], [])
-        self.assertIsNone(self.state["wake"]["active"])
+        self.assertEqual(self.state["wake"], {"schema": 2, "chats": {}})
 
     def test_enabled_wake_injects_dots_and_the_next_prompt_carries_details(self):
         self.ctx.config = {"wake.enabled": True}
@@ -886,7 +886,7 @@ class WakeHookTests(unittest.TestCase):
         self.assertEqual(len(self.ctx.injected), 1)
         self.assertEqual(self.ctx.injected[0]["content"], "...")
         self.assertEqual(self.ctx.injected[0]["role"], "user")
-        self.assertEqual(self.state["wake"]["active"]["gap_id"], "gap-1")
+        self.assertEqual(self.state["wake"]["chats"]["group-1"]["active"]["gap_id"], "gap-1")
         request = {"system": "base prompt", "messages": [{"role": "user", "content": "嗯"}]}
         result = plugin._affect_request(request)["request"]
         self.assertTrue(result["system"].startswith("[digital-life:wake]"))
@@ -896,16 +896,16 @@ class WakeHookTests(unittest.TestCase):
         self.ctx.config = {"wake.enabled": True}
         self.ctx.inject_result = False
         plugin._post_llm_call(assistant_response="好的", session_id="s1")
-        self.assertEqual(self.state["wake"]["queue"], [])
-        self.assertIsNone(self.state["wake"]["active"])
+        self.assertEqual(self.state["wake"]["chats"]["group-1"]["queue"], [])
+        self.assertIsNone(self.state["wake"]["chats"]["group-1"]["active"])
 
 
     def test_cli_wake_marks_an_active_wake_and_prints_the_section(self):
         from hermes_plugins.digital_life.digital_life import cli
         with patch("builtins.print") as out:
-            code = cli.run_command(argparse.Namespace(digital_life_action="wake", gap=""))
+            code = cli.run_command(argparse.Namespace(digital_life_action="wake", gap="", chat="group-1"))
         self.assertEqual(code, 0)
-        self.assertEqual(self.state["wake"]["active"]["gap_id"], "gap-1")
+        self.assertEqual(self.state["wake"]["chats"]["group-1"]["active"]["gap_id"], "gap-1")
         printed = "\n".join(str(call.args[0]) for call in out.call_args_list)
         self.assertIn("digital-life:wake", printed)
         self.assertIn("火星营业时间", printed)
@@ -915,7 +915,7 @@ class WakeHookTests(unittest.TestCase):
         plugin._on_user_message(user_message="在吗", session_id="s1")
         plugin._maybe_wake("s1")
         self.assertFalse(getattr(self.ctx, "injected", []))
-        self.assertEqual(self.state["wake"]["queue"], [])
+        self.assertEqual(self.state["wake"]["chats"].get("group-1", {}).get("queue", []), [])
 
 
 class PersonaSyncTests(unittest.TestCase):

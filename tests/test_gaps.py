@@ -186,9 +186,13 @@ class EpiphanyTests(unittest.TestCase):
 
     def test_retire_wake_drops_queued_entry(self):
         state = fresh_state()
-        state["wake"] = {"queue": [{"gap_id": "gap-a"}, {"gap_id": "gap-b"}]}
+        state["wake"] = {"schema": 2, "chats": {
+            "group-1": {"queue": [{"gap_id": "gap-a"}, {"gap_id": "gap-b"}]},
+            "group-2": {"queue": [{"gap_id": "gap-a"}]},
+        }}
         gaps.retire_wake(state, "gap-a")
-        self.assertEqual(state["wake"]["queue"], [{"gap_id": "gap-b"}])
+        self.assertEqual(state["wake"]["chats"]["group-1"]["queue"], [{"gap_id": "gap-b"}])
+        self.assertEqual(state["wake"]["chats"]["group-2"]["queue"], [])
 
 
 class RuntimeIntegrationTests(unittest.TestCase):

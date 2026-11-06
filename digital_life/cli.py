@@ -50,6 +50,7 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
     resolve.add_argument("gap_id")
     wake = actions.add_parser("wake", help="Manually wake for one open gap (opt-in self-wake demo)")
     wake.add_argument("--gap", default="", help="Gap identifier; defaults to the highest tension")
+    wake.add_argument("--chat", required=True, help="Chat the wake belongs to (e.g. a QQ group id)")
     doctor = actions.add_parser("doctor", help="Check the host conditions hermes-lover depends on")
     doctor.add_argument("--json", action="store_true", help="Print one JSON object instead of lines")
     doctor.add_argument("--fix", action="store_true",
@@ -107,7 +108,8 @@ def run_command(args: argparse.Namespace) -> int:
         triggered: dict[str, object] = {}
 
         def mutate(state):
-            triggered["active"] = wake_module.force_active(state, now_ms, gap_id=args.gap or None)
+            triggered["active"] = wake_module.force_active(state, now_ms, chat_id=args.chat,
+                                                           gap_id=args.gap or None)
 
         storage.update_state(now_ms, mutate)
         active = triggered.get("active")
@@ -116,7 +118,8 @@ def run_command(args: argparse.Namespace) -> int:
             return 1
         fresh = storage.read_state(now_ms)
         print(json.dumps({"active": active,
-                          "section": wake_module.section_text(fresh, now_ms)}, ensure_ascii=False, indent=2))
+                          "section": wake_module.section_text(fresh, now_ms, chat_id=args.chat)},
+                         ensure_ascii=False, indent=2))
         print("The digital-life:wake block is now part of the next turn's system prompt.")
         return 0
     if action == "resolve-gap":

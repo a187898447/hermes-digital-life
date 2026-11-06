@@ -247,11 +247,15 @@ def note_epiphany(state: dict[str, Any], now_ms: float) -> None:
 def retire_wake(state: dict[str, Any], gap_id: str) -> None:
     """M11.4 lock 3: physically drop queued wake entries when their gap closes."""
     wake = state.get("wake")
-    if not isinstance(wake, dict):
+    if not isinstance(wake, dict) or not isinstance(wake.get("chats"), dict):
         return
-    queue = wake.get("queue")
-    if isinstance(queue, list):
-        wake["queue"] = [item for item in queue if not isinstance(item, dict) or item.get("gap_id") != gap_id]
-    active = wake.get("active")
-    if isinstance(active, dict) and active.get("gap_id") == gap_id:
-        wake["active"] = None
+    for slot in wake["chats"].values():
+        if not isinstance(slot, dict):
+            continue
+        queue = slot.get("queue")
+        if isinstance(queue, list):
+            slot["queue"] = [item for item in queue
+                             if not isinstance(item, dict) or item.get("gap_id") != gap_id]
+        active = slot.get("active")
+        if isinstance(active, dict) and active.get("gap_id") == gap_id:
+            slot["active"] = None

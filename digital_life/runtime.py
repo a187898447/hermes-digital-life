@@ -57,6 +57,7 @@ def status_snapshot(now_ms: float, scope: str | None = None) -> dict[str, Any]:
         "temperament": dict(state["temperament"]),
         "open_gaps": sum(g.get("status") == "open" for g in visible),
         "emergency_stop": state["emergency_stop"],
+        "wake": state.get("wake") or {"schema": 2, "chats": {}},
         "affect_history": [dict(item) for item in state.get("affect_history", [])],
         "affect": {
             "mood": affect.label(state),
@@ -266,11 +267,13 @@ def settle_before_transition(state: dict[str, Any], now_ms: float) -> dict[str, 
     return state
 
 
-def wake_section(state: dict[str, Any], now_ms: float) -> str:
+def wake_section(state: dict[str, Any], now_ms: float, chat_id: str = "") -> str:
     """The opt-in ``digital-life:wake`` block; empty when no wake is active."""
+    if not chat_id:
+        return ""
     try:
         from . import wake as wake_module
-        return wake_module.section_text(state, now_ms)
+        return wake_module.section_text(state, now_ms, chat_id=chat_id)
     except Exception:  # noqa: BLE001 - wake context must never break a request
         return ""
 

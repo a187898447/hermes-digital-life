@@ -108,6 +108,13 @@ _CONFIG_TEMPERAMENT: dict[str, float] | None = None
 _CONFIG_STRESS = 80.0
 
 
+def wake_default() -> dict[str, Any]:
+    """Fresh wake state; imported here to keep the shape in one place."""
+    from . import wake as wake_module  # noqa: PLC0415 - lazy to keep domain import-light
+
+    return wake_module.new_wake_state()
+
+
 def configure(*, temperament: Any = None, stress_cortisol: Any = None) -> None:
     """Apply operator knobs; both are clamped and fall back to the defaults."""
     global _CONFIG_TEMPERAMENT, _CONFIG_STRESS
@@ -125,7 +132,7 @@ def default_state(now_ms: float) -> dict[str, Any]:
     return {"schema_version": 1, "chemistry": chemistry, "energy": 100.0, "temperament": temperament,
             "last_interaction_at": now_ms, "last_settled_at": now_ms, "gaps": [],
             "emergency_stop": False, "tools_succeeded": [], "last_epiphany_at": 0.0,
-            "wake": {"queue": [], "last_wake_at": 0.0, "last_gap_id": "", "active": None},
+            "wake": wake_default(),
             "affect_history": [],
             "affect_events": {"day": "", "total": 0.0, "cooldowns": {}}}
 

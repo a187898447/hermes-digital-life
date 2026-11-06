@@ -183,7 +183,7 @@ class ChemicalPoolTests(unittest.TestCase):
         self.assertNotIn("commitment", state)
         # The P4 wake queue is a new, purpose-built shape; an old ad-hoc "wake" key
         # is dropped rather than trusted.
-        self.assertEqual(state["wake"], {"queue": [], "last_wake_at": 0.0, "last_gap_id": "", "active": None})
+        self.assertEqual(state["wake"], {"schema": 2, "chats": {}})
         self.assertEqual(default_genome()["version"], 1)
 
 
