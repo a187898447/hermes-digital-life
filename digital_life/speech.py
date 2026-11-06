@@ -44,6 +44,21 @@ _HABIT_STOP = {
 }
 _HABIT_PARTICLES = set("的地得了着过吗呢吧啊哈嗯哦呀嘛")
 
+# Phrases this persona keeps falling back on, given by the operator. Long ones
+# are cut wherever they appear; the short ones only when they are the whole
+# bubble, because "行" and "稳" are also ordinary words.
+TIC_PHRASES = (
+    "但他没躲", "这句话稳", "比之前的都重", "我记得了", "我记住了", "这个账我记住了",
+    "比之前的都轻", "问别人还是问自己", "行，我认", "这句话我不接", "这句话接得漂亮",
+    "比之前的都强", "睡吧，我守着", "他记得这事", "这话我留着", "你这句话我记着",
+    "我不催你", "认下来", "声音没抖", "比刚才稳", "比刚才轻", "比刚才重", "比刚才平",
+    "这话我记下了", "这话我收下了", "说的比谁都响", "认这个", "收不回去", "认得实",
+    "你自己掂量", "没接你那句", "没接你的", "什么心思都写着", "就是认了", "我不拦",
+    "这些话我记着",
+)
+SHORT_TIC_PHRASES = ("行", "稳", "很平", "很直", "不催", "我跟", "你去", "回去睡",
+                     "我认", "认你", "你掂量")
+
 
 def repeated(lines: list[str], recent: list[str], *, size: int = _REPEAT_SIZE) -> list[tuple[int, str]]:
     """(index, phrase) for bubbles that re-say a stretch the assistant just used."""
@@ -102,6 +117,10 @@ def habit_phrases(bubbles: list[str], *, limit: int = 4) -> list[str]:
     return picked
 
 
+def _phrase_in(line: str, phrase: str) -> bool:
+    return phrase in line
+
+
 def tics(line: str) -> list[str]:
     """Named AI-flavour shapes in one bubble (empty when clean)."""
     found: list[str] = []
@@ -115,6 +134,14 @@ def tics(line: str) -> list[str]:
         found.append("service-offer")
     if _RHETORICAL.search(line):
         found.append("rhetorical-tail")
+    body = re.sub(r"[\s。！？!?…~,，;；:：]+", "", line)
+    squashed = re.sub(r"\s+", "", line)
+    for phrase in TIC_PHRASES:
+        if phrase in squashed:
+            found.append(f"tic:{phrase}")
+    for phrase in SHORT_TIC_PHRASES:
+        if body == phrase:
+            found.append(f"tic:{phrase}")
     return found
 
 
@@ -168,6 +195,11 @@ def repair(line: str) -> str:
     text = (line or "").strip()
     if not text:
         return ""
+    body = re.sub(r"[\s。！？!?…~,，;；:：]+", "", text)
+    if body in SHORT_TIC_PHRASES:
+        return ""
+    for phrase in TIC_PHRASES:
+        text = re.sub(r"\s*".join(map(re.escape, phrase)), "", text)
     stripped = _FILLER.sub("", text, count=1).lstrip("，, ")
     if stripped:
         text = stripped
@@ -274,6 +306,7 @@ def build_polish_prompt(*, count: int, body: str, recent: list[str],
             count=count, body=body,
             habits="\n".join(f"- {phrase}" for phrase in habits) or "（无）",
             recent="\n".join(f"- {line}" for line in recent) or "（无）")
+    tic_text = "、".join(TIC_PHRASES)
     recent_text = "\n".join(f"- {line}" for line in recent) or "（无）"
     habit_text = "\n".join(f"- {phrase}" for phrase in habits) or "（无）"
     return f"""你在替一个 QQ 群友改口：下面是它这一轮要发出去的消息。按《说人话》的规则把它们改成有人随口说话的样子——保留意思和具体内容，删掉不承担意思的包装、垫场和姿态。
@@ -285,6 +318,11 @@ def build_polish_prompt(*, count: int, body: str, recent: list[str],
 2. 删掉它，对话有没有损失？没损失就是垫场。
 3. 对方会不会这么说？
 任一条不对，就删掉或改成一句具体的话，不要拿近义词替换。病根是把聊天当流程处理，不是某个词。
+
+它的老毛病（下面这些说法只要出现就删掉；不要换成近义词，也不要换个说法留着）：
+{tic_text}
+
+其中这些短词只有当整条消息就是它时才算口癖，别的地方正常使用：行、稳、很平、很直、不催、我跟、你去、回去睡、我认、认你、你掂量。
 
 《说人话》规则：
 {skill}

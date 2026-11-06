@@ -95,3 +95,32 @@ class SkillPromptTests(unittest.TestCase):
             prompt = speech.build_polish_prompt(count=1, body="x", recent=[], habits=[])
         self.assertIn("你在替一个 QQ 群友改口", prompt)
         self.assertNotIn("# 说人话", prompt)
+
+
+class OperatorTicListTests(unittest.TestCase):
+    """The operator's own list, normalized: long ones anywhere, short ones alone."""
+
+    def test_a_long_tic_is_named_wherever_it_sits(self):
+        self.assertIn("tic:这句话稳", speech.tics("他今天没说话，这句话稳。"))
+
+    def test_the_same_tic_with_spaces_is_still_found(self):
+        self.assertIn("tic:这句话稳", speech.tics("这句话 稳"))
+
+    def test_a_short_tic_only_counts_when_it_is_the_whole_bubble(self):
+        self.assertIn("tic:稳", speech.tics("稳"))
+        self.assertEqual(speech.tics("他今天挺稳的"), [])
+
+    def test_repair_cuts_the_tic_clause(self):
+        self.assertEqual(speech.repair("我记得了，明天再说"), "明天再说")
+
+    def test_repair_drops_a_bubble_that_is_only_a_short_tic(self):
+        self.assertEqual(speech.repair("行。"), "")
+        self.assertEqual(speech.repair("回去睡"), "")
+
+    def test_repair_leaves_the_short_word_inside_a_real_sentence(self):
+        self.assertIn("行", speech.repair("行不通，换个法子"))
+
+    def test_the_prompt_carries_the_list(self):
+        prompt = speech.build_polish_prompt(count=1, body="甲", recent=[], habits=[])
+        self.assertIn("这句话稳", prompt)
+        self.assertIn("短词只有当整条消息就是它时", prompt)
