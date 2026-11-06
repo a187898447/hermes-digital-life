@@ -962,10 +962,19 @@ class StudyLearnedTests(unittest.TestCase):
 
     def test_large_source_allows_more(self):
         from digital_life import memory as m
-        entries = {f"hp-{i}": {"kind": "learned", "text": f"场景{i} → 说法{i}", "source_session_id": "s1"} for i in range(5)}
-        self.assertEqual("", m.study_learned_problem("场景9 → 说法9", entries, "s1", cap=8))
+        days = ["周一", "周二", "周三", "周四", "周五"]
+        entries = {f"hp-{i}": {"kind": "learned", "text": f"{d} → 说法{i}", "source_session_id": "s1"}
+                   for i, d in enumerate(days)}
+        self.assertEqual("", m.study_learned_problem("周六 → 说法9", entries, "s1", cap=8))
 
-    def test_same_trigger_is_rejected(self):
+    def test_same_occasion_is_capped(self):
         from digital_life import memory as m
-        entries = {"hp-1": {"kind": "learned", "text": "周四 → 甩文案", "source_session_id": "s1"}}
-        self.assertIn("same trigger", m.study_learned_problem("周四 → 换个说法", entries, "s1"))
+        entries = {"hp-1": {"kind": "learned", "text": "周四求姻缘 → 借疯狂星期寺要钱", "source_session_id": "s1"},
+                   "hp-2": {"kind": "learned", "text": "周四装可怜 → 天桥底下没饭吃", "source_session_id": "s1"}}
+        self.assertIn("疯四 already has 2", m.study_learned_problem("周四 → 换个说法", entries, "s1", cap=8))
+
+    def test_occasion_grouping(self):
+        from digital_life import memory as m
+        self.assertEqual("疯四", m.trigger_group("周四在群里刷疯四 → 发一条"))
+        self.assertEqual("疯四", m.trigger_group("疯狂星期四 → 写文案"))
+        self.assertNotEqual("疯四", m.trigger_group("周一早上 → 喊困"))

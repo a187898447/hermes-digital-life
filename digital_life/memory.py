@@ -122,17 +122,32 @@ _LEARNED_META = re.compile(
 _QUOTED = re.compile(r"[「『“\"]([^」』”\"]{15,})[」』”\"]")
 
 
-def study_learned_problem(text: str, entries: dict[str, dict], session_id: str, cap: int = 2) -> str:
-    """Background reading gets at most a couple of habits, one per trigger."""
+_OCCASIONS = (("疯狂星期四", "疯四"), ("疯四", "疯四"), ("星期四", "疯四"), ("周四", "疯四"),
+              ("肯德基", "kfc"), ("kfc", "kfc"), ("每周", "weekly"))
+
+
+def trigger_group(text: str) -> str:
+    """Group habits by the occasion they belong to, not by exact wording."""
+    head = "".join(str(text or "").split("→")[0].split())
+    low = head.lower()
+    for word, token in _OCCASIONS:
+        if word in low:
+            return token
+    return "".join(ch for ch in head if ch.isalnum())[:2]
+
+
+def study_learned_problem(text: str, entries: dict[str, dict], session_id: str, cap: int = 2,
+                          per_occasion: int = 2) -> str:
+    """Background reading gets at most cap habits, and a couple per occasion."""
     mine = [row for row in entries.values()
             if row.get("kind") == "learned" and row.get("source_session_id") == session_id]
     if len(mine) >= cap:
         return f"already wrote {cap} habits this run; merge the rest into those"
-    def trigger(value: str) -> str:
-        return "".join(ch for ch in str(value or "").split("→")[0] if ch.isalnum())
-    seen = {trigger(row.get("text")) for row in mine}
-    if trigger(text) and trigger(text) in seen:
-        return "same trigger already covered; merge the detail into that entry"
+    group = trigger_group(text)
+    if group:
+        same = [row for row in mine if trigger_group(row.get("text")) == group]
+        if len(same) >= per_occasion:
+            return f"{group} already has {per_occasion} habits; merge the detail into one of them"
     return ""
 
 

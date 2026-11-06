@@ -1017,9 +1017,29 @@ def register(ctx) -> None:
         except sqlite3.Error:
             return False
 
+    def _study_chars(session_id: str) -> int:
+        db = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
+        total = _STUDY_CHARS.get(session_id, 0)
+        try:
+            with sqlite3.connect(str(db), timeout=2) as conn:
+                rows = conn.execute(
+                    "SELECT content FROM messages WHERE session_id=? AND tool_name='read_source'",
+                    (session_id,)).fetchall()
+        except sqlite3.Error:
+            return total
+        for (content,) in rows:
+            try:
+                value = json.loads(content or "{}").get("chars")
+            except (TypeError, ValueError, AttributeError):
+                continue
+            if isinstance(value, int) and value > 0:
+                total += value
+        _STUDY_CHARS[session_id] = total
+        return total
+
     def _study_learned_problem(text, session_id):
         from .digital_life import memory as _memory  # noqa: PLC0415
-        chars = _STUDY_CHARS.get(session_id, 0)
+        chars = _study_chars(session_id)
         cap = max(2, min(12, chars // 6000 + 1))
         return _memory.study_learned_problem(text, memory_store().read_entries(), session_id, cap=cap)
 
