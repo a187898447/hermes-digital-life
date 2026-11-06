@@ -109,6 +109,10 @@ class ReadbackGateTests(unittest.TestCase):
         self.assertTrue(speech.needs_readback(
             ["那中午那顿就是我的记分点，粉上了没？"], [], "明早估计不吃了，等吃中午饭了"))
 
+    def test_a_question_about_an_unmentioned_thing_is_checked_too(self):
+        flagged = speech.ungrounded(["粉上了没？"], [], "明早估计不吃了")
+        self.assertEqual(flagged, ["粉上了没？"])
+
     def test_the_offending_bubble_is_the_one_named_in_the_prompt(self):
         flagged = speech.ungrounded(
             ["晚安。", "那中午那顿就是我的记分点，粉上了没？"], [], "明早估计不吃了，等吃中午饭了")

@@ -347,6 +347,7 @@ def load_skill() -> str:
 
 
 _POINTING = ("这", "那", "它", "他", "她", "这事", "那事")
+_ASKING = ("？", "?", "吗", "呢", "了没")
 
 
 def _shares_run(line: str, context: str, size: int = 3) -> bool:
@@ -365,8 +366,13 @@ def ungrounded(lines: list[str], recent: list[str], last_user: str = "") -> list
     one rewrite pass instead of buying another model call.
     """
     context = "".join([last_user or "", *recent])
-    return [line for line in lines
-            if any(mark in line for mark in _POINTING) and not _shares_run(line, context)]
+    # A question about something the thread never mentions is just as unreadable as a
+    # pronoun: "粉上了没？" assumes the other side remembers what "粉" is.
+    def points_at_nothing(line: str) -> bool:
+        pointing = any(mark in line for mark in _POINTING) or any(mark in line for mark in _ASKING)
+        return pointing and not _shares_run(line, context)
+
+    return [line for line in lines if points_at_nothing(line)]
 
 
 def needs_readback(lines: list[str], recent: list[str], last_user: str = "") -> bool:
@@ -391,7 +397,7 @@ def build_polish_prompt(*, count: int, body: str, recent: list[str],
     if flagged:
         listing = "\n".join(f"- {line}" for line in flagged)
         flag_block = (
-            "这几条在指代对方这轮没提过的东西，或者拿旧事当前提；必须让没有你记忆的人也能读懂："
+            "这几条可能在指代对方这轮没提过的东西，或者拿旧事当前提；能读懂的保持原样，读不懂的必须改到没有你记忆的人也能跟上："
             "把指代的对象写进同一句，写不进去就整句删掉，不要换近义词糊过去。\n"
             f"{listing}\n\n")
     habit_text = "\n".join(f"- {phrase}" for phrase in habits) or "（无）"
