@@ -1229,7 +1229,7 @@ def register(ctx) -> None:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
         if isinstance(page, dict) and page.get("finished"):
             page["extract"] = ("读完了。提炼成 learned 时每条只写：能在群里直接说出口的原话（一个词/半句/句式）→ 什么时候用 → "
-                               "applies_dow（材料自己写了周几就填 0-6，没写就 null）。API/格式/致谢/「数据持续更新」这类元信息不收，进 note；不写总结、不写教程。")
+                               "applies_dow（严格用这张表：0=周一 1=周二 2=周三 3=周四 4=周五 5=周六 6=周日，周四就是 3；材料没写就 null）。API/格式/排版/致谢/「数据持续更新」这类元信息不收，进 note；不写总结、不写教程。")
         return json.dumps(page, ensure_ascii=False)
 
     def library_list(args, **kwargs):
