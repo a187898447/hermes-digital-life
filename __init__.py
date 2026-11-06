@@ -1030,10 +1030,11 @@ def _remember_bubbles(key: str, lines: list[str]) -> None:
 
 
 def _polish_lines(lines: list[str], recent: list[str] | None = None) -> Optional[list[str]]:
-    """Ask a throwaway child session to smooth bubbles that read like machine output.
+    """Run the tic-and-tone pass over the bubbles of one chat reply.
 
-    The child gets only the todo toolset and a fenced copy of the lines, so even if the
-    text smuggles in an instruction the worst it can do is return a bad rewrite.
+    In-process by default: one host-owned completion on the active model, no child
+    session. Hosts without ``ctx.llm`` fall back to a throwaway child that only has
+    the todo toolset, and the lines are always fenced as text to rewrite.
     """
     from .digital_life import research as _research
     from .digital_life import speech
