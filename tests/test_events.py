@@ -957,10 +957,21 @@ class ToolBudgetTests(unittest.TestCase):
     def test_runaway_tool_loop_is_blocked(self):
         hook = self.hl._gate_tool_call
         for _ in range(8):
-            self.assertIsNone(hook(tool_name="memory_recall", session_id="s-budget"))
-        blocked = hook(tool_name="memory_recall", session_id="s-budget")
+            self.assertIsNone(hook(tool_name="terminal", session_id="s-budget"))
+        blocked = hook(tool_name="terminal", session_id="s-budget")
         self.assertEqual(blocked["action"], "block")
         self.assertIn("8 次", blocked["message"])
+
+    def test_memory_writes_do_not_consume_the_budget(self):
+        hook = self.hl._gate_tool_call
+        self.hl._TURN_META["s-mem"] = {"platform": "qqbot"}
+        for n in range(12):
+            self.assertIsNone(hook(tool_name="memory_write", session_id="s-mem",
+                                   args={"text": f"记忆 {n}"}))
+        self.assertIsNone(hook(tool_name="memory_recall", session_id="s-mem"))
+        blocked = hook(tool_name="memory_write", session_id="s-mem", args={"text": "记忆 11"})
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("刚记过", blocked["message"])
 
     def test_non_qq_session_is_exempt(self):
         self.hl._TURN_META["s-cron"] = {"platform": ""}

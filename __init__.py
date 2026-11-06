@@ -195,19 +195,10 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     meta = _TURN_META.get(session_id) or {}
     if (meta.get("platform") or _session_source(session_id) or "") != "qqbot":
         return None
-    if tool_name in ("read_source", "library_list"):
-        # Reading a document is not a loop risk: the page counter already bounds it.
-        return None
     counts = _TOOL_TURNS.setdefault(session_id, {"total": 0, "zone": 0, "recall": 0,
                                                  "last_write": ""})
     if tool_name == "memory_recall":
         counts["recall"] = counts.get("recall", 0) + 1
-    if tool_name == "qzone_feed" and counts.get("recall", 0) == 0:
-        return {"action": "block",
-                "message": "先查记忆：这段你看过没有，用 memory_recall 查一下。已经读过的直接从记忆里答，不要再抓一遍。"}
-    if tool_name == "qzone_feed" and counts["zone"] >= ZONE_PAGE_LIMIT:
-        return {"action": "block",
-                "message": "本轮空间最多翻 2 页，已经到上限。用手上的内容回答，或者把后续交给 background_task。"}
     if tool_name == "memory_write":
         payload = kwargs.get("args") or kwargs.get("arguments") or {}
         text = str(payload.get("text") or "") if isinstance(payload, dict) else ""
@@ -215,6 +206,18 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
             return {"action": "block",
                     "message": "这条你刚记过，别重复写。接着回话。"}
         counts["last_write"] = text
+    # Reading and remembering are not loop risks: pages, the daily quota and the
+    # duplicate guard already bound them. The budget is for tools that hit the
+    # outside world (search, zone, terminal, background jobs).
+    if tool_name in ("read_source", "library_list", "memory_write", "memory_recall",
+                     "memory_revoke", "digital_life_status"):
+        return None
+    if tool_name == "qzone_feed" and counts.get("recall", 0) == 0:
+        return {"action": "block",
+                "message": "先查记忆：这段你看过没有，用 memory_recall 查一下。已经读过的直接从记忆里答，不要再抓一遍。"}
+    if tool_name == "qzone_feed" and counts["zone"] >= ZONE_PAGE_LIMIT:
+        return {"action": "block",
+                "message": "本轮空间最多翻 2 页，已经到上限。用手上的内容回答，或者把后续交给 background_task。"}
     if counts["total"] >= TOOL_CALL_LIMIT:
         return {"action": "block",
                 "message": "本轮工具调用已达 8 次。先回话，把剩下的工作交给 background_task。"}
