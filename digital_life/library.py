@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import logging
 import urllib.request
 from pathlib import Path
@@ -41,14 +42,59 @@ def _fetch(url: str, timeout: float = 20.0) -> bytes:
         return response.read(MAX_BYTES + 1)
 
 
+_GH_BLOB = re.compile(r"https?://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.+)$")
+_GH_TREE = re.compile(r"https?://github\.com/([^/]+)/([^/]+)/tree/([^/]+)/?(.*)$")
+_GH_REPO = re.compile(r"https?://github\.com/([^/]+)/([^/]+)/?$")
+
+
+def _github(source: str, fetcher) -> tuple[str, bytes] | None:
+    """Turn a GitHub page URL into raw text (a file, a README, or a directory listing)."""
+    blob = _GH_BLOB.match(source)
+    if blob:
+        owner, repo, ref, path = blob.groups()
+        raw = f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
+        return f"{repo}/{path}", (fetcher or _fetch)(raw)
+    tree = _GH_TREE.match(source)
+    if tree:
+        owner, repo, ref, path = tree.groups()
+        api = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}?ref={ref}"
+        payload = json.loads((fetcher or _fetch)(api).decode("utf-8"))
+        if isinstance(payload, dict):
+            payload = [payload]
+        lines = [f"{repo}/{path or ''} 目录（{len(payload)} 项）："]
+        for item in payload:
+            if item.get("type") == "file" and item.get("name", "").lower().endswith(
+                    (".md", ".txt", ".py", ".js", ".ts", ".json", ".yaml", ".yml")):
+                lines.append(f"- {item['name']} ({item.get('size', 0)} B)")
+        if len(lines) == 1:
+            raise ValueError("no readable text files in that directory")
+        return f"{repo}/{path or 'root'} listing", "\n".join(lines).encode("utf-8")
+    repo = _GH_REPO.match(source)
+    if repo:
+        owner, name = repo.groups()
+        for readme in ("README.md", "README.txt", "README"):
+            for branch in ("main", "master"):
+                raw = f"https://raw.githubusercontent.com/{owner}/{name}/{branch}/{readme}"
+                try:
+                    return f"{name}/{readme}", (fetcher or _fetch)(raw)
+                except Exception:
+                    continue
+        raise ValueError("repo has no README on main/master")
+    return None
+
+
 def ingest(source: str, *, fetcher=None) -> dict:
     """Copy a text file or URL into the library; returns its metadata."""
     source = str(source or "").strip()
     if not source:
         raise ValueError("source is required")
     if source.startswith(("http://", "https://")):
-        raw = (fetcher or _fetch)(source)
-        title = source.rsplit("/", 1)[-1] or "web-page"
+        github = _github(source, fetcher)
+        if github is not None:
+            title, raw = github
+        else:
+            raw = (fetcher or _fetch)(source)
+            title = source.rsplit("/", 1)[-1] or "web-page"
     else:
         path = Path(source).expanduser()
         if not path.is_file():

@@ -68,6 +68,35 @@ class LibraryTests(unittest.TestCase):
         page = library.read(meta, 0, 500)
         self.assertIn("一章", page["text"])
 
+    def test_github_blob_url_reads_the_raw_file(self):
+        meta = library.ingest("https://github.com/acme/notes/blob/main/docs/a.md",
+                              fetcher=lambda url: ("# 标题\n正文" if "raw.githubusercontent.com" in url
+                                                   else b"wrong").encode())
+        self.assertIn("a.md", meta["title"])
+        self.assertIn("正文", library.read(meta, None, 500)["text"])
+        self.assertEqual(meta["source"], "https://github.com/acme/notes/blob/main/docs/a.md")
+
+    def test_github_repo_url_falls_back_to_the_readme(self):
+        def fetcher(url):
+            if url.endswith("/main/README.md"):
+                return b"# readme"
+            raise OSError("404")
+        meta = library.ingest("https://github.com/acme/notes", fetcher=fetcher)
+        self.assertIn("README.md", meta["title"])
+
+    def test_github_tree_url_lists_text_files(self):
+        import json as _json
+        payload = _json.dumps([
+            {"type": "file", "name": "a.md", "size": 10},
+            {"type": "file", "name": "b.bin", "size": 99},
+            {"type": "dir", "name": "src"},
+        ]).encode()
+        meta = library.ingest("https://github.com/acme/notes/tree/main/docs",
+                              fetcher=lambda url: payload)
+        text = library.read(meta, None, 800)["text"]
+        self.assertIn("a.md", text)
+        self.assertNotIn("b.bin", text)
+
     def test_books_lists_every_ingested_source(self):
         library.ingest(str(self.write("one.txt", "第一本")))
         library.ingest(str(self.write("two.txt", "第二本")))
