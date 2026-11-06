@@ -1227,6 +1227,9 @@ def register(ctx) -> None:
                                 int(args.get("max_chars") or 4000))
         except (ValueError, OSError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+        if isinstance(page, dict) and page.get("finished"):
+            page["extract"] = ("读完了。提炼成 learned 时每条只写：原话（一个词/半句/句式）→ 什么时候用 → "
+                               "applies_dow（材料自己写了周几就填 0-6，没写就 null）。不写总结、不写教程。")
         return json.dumps(page, ensure_ascii=False)
 
     def library_list(args, **kwargs):
