@@ -1355,3 +1355,25 @@ class BridgeProcessTests(unittest.TestCase):
         with patch.dict(os.environ, env):
             self.assertFalse(plugin._stop_old_bridge(self.tmp))
         self.assertIsNone(proc.poll())
+
+
+class VoiceLlmTests(unittest.TestCase):
+    def test_voice_pass_uses_the_host_llm_facade(self):
+        class _Llm:
+            def __init__(self):
+                self.calls = []
+
+            def complete(self, messages, **kwargs):
+                self.calls.append((messages, kwargs))
+                return types.SimpleNamespace(text="行，价签那事不说了。")
+
+        llm = _Llm()
+        previous = plugin._CTX
+        plugin._CTX = types.SimpleNamespace(llm=llm)
+        try:
+            with patch.dict(os.environ, {"HERMES_LOVER_POLISH": "always"}):
+                out = plugin._polish_lines(["价签这事还没完。"], [])
+        finally:
+            plugin._CTX = previous
+        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(out, ["行，价签那事不说了。"])

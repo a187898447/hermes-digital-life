@@ -1038,19 +1038,38 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None) -> Optional
     from .digital_life import research as _research
     from .digital_life import speech
 
-    if os.environ.get("HERMES_LOVER_POLISH", "1") == "0":
+    # "always" runs the tone pass on every chat reply; "auto" only when lint fires.
+    if os.environ.get("HERMES_LOVER_POLISH_CHILD") == "1":
+        return None
+    mode = os.environ.get("HERMES_LOVER_POLISH", "always").strip().lower()
+    if mode == "0":
         return None
     recent = list(recent or [])
-    if not speech.lint(lines, recent) or os.environ.get("HERMES_LOVER_POLISH_CHILD") == "1":
+    if sum(len(line) for line in lines) <= 4:
         return None
-    prompt = _research.child_marker("polish") + " " + speech.POLISH_PROMPT.format(
+    if mode != "always" and not speech.lint(lines, recent):
+        return None
+    prompt = speech.POLISH_PROMPT.format(
         count=len(lines), body="\n---\n".join(lines),
         recent="\n".join(f"- {line}" for line in recent) or "（无）")
-    try:
-        out = _research.spawn_child("polish", prompt, timeout=45,
-                                    extra_env={"HERMES_LOVER_POLISH_CHILD": "1"})
-    except Exception:
-        return None
+    out = ""
+    llm = getattr(_CTX, "llm", None)
+    if llm is not None:
+        try:
+            done = llm.complete([{"role": "user", "content": prompt}],
+                                max_tokens=max(120, len(lines) * 90), timeout=20,
+                                temperature=0.3, purpose="hermes-lover.voice")
+            out = str(getattr(done, "text", "") or "").strip()
+        except Exception:
+            logger.debug("hermes-lover: in-process voice pass failed", exc_info=True)
+            out = ""
+    if not out:  # older hosts without ctx.llm: fall back to a throwaway child
+        try:
+            out = _research.spawn_child(
+                "polish", _research.child_marker("polish") + " " + prompt, timeout=45,
+                extra_env={"HERMES_LOVER_POLISH_CHILD": "1"})
+        except Exception:
+            return None
     if not out:
         return None
     parts = speech.parse_polish(out, len(lines))
