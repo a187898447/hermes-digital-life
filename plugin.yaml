@@ -33,6 +33,7 @@ provides_tools:
   - digital_life_status
   - close_gap
   - share_video
+  - make_video
   - beat_targets
   - beat_send
   - search_later

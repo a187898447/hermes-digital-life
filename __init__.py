@@ -38,6 +38,7 @@ ZONE_PAGE_LIMIT = 2
 READ_SOURCE_TURN_LIMIT = 3
 READ_SOURCE_DAILY_INGESTS = 40
 VIDEO_PER_DAY = 2
+VIDEO_GEN_PER_DAY = 3
 OPEN_LOOP_SHOWN = 3
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
 _CACHE_LIMIT = 512
@@ -423,6 +424,7 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     # outside world (search, zone, terminal, background jobs).
     if tool_name in ("read_source", "library_list", "memory_write", "memory_recall",
                      "memory_revoke", "digital_life_status", "close_gap", "share_video",
+                     "make_video",
                      "study_source", "background_task", "search_later"):
         return None
     if tool_name == "skill_manage":
@@ -717,6 +719,88 @@ def _share_video(args, session_id="", **kwargs):
         return json.dumps({"ok": False, "error": str(result["error"])[:200]},
                           ensure_ascii=False)
     return json.dumps({"ok": True, "sent": path.name, "caption": caption},
+                      ensure_ascii=False)
+
+
+_VIDEO_JOBS: "set[object]" = set()
+_VIDEO_JOBS_LOCK = threading.Lock()
+
+
+def _deliver_video(chat_id: str, task_id: str, prompt: str) -> None:
+    """Wait for one Hailuo task, save it, and send it to the chat that asked."""
+    from .digital_life import budget as _budget, hailuo  # noqa: PLC0415
+
+    send = _host_send_message_tool()
+    try:
+        file_id = hailuo.wait(task_id)
+        path = hailuo.download(file_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hermes-lover video task %s failed", task_id, exc_info=True)
+        if send is not None:
+            try:
+                send({"action": "send", "target": f"qqbot:{chat_id}",
+                      "message": f"视频没做出来：{str(exc)[:120]}"})
+            except Exception:
+                logger.warning("hermes-lover could not report a failed video", exc_info=True)
+        return
+    if send is None:
+        return
+    caption = " ".join(str(prompt or "").split())[:60]
+    message = f"做好了：{caption}\nMEDIA:{path}" if caption else f"MEDIA:{path}"
+    try:
+        send({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
+    except Exception:  # noqa: BLE001
+        logger.warning("hermes-lover could not send a generated video", exc_info=True)
+
+
+def _make_video(args, session_id="", **kwargs):
+    from .digital_life import budget as _budget, hailuo  # noqa: PLC0415
+
+    chat_id, _chat_type = _session_scope(session_id) or ("", "")
+    if not chat_id:
+        return json.dumps({"ok": False, "error": "no chat to send to"}, ensure_ascii=False)
+    platform = (_TURN_META.get(session_id) or {}).get("platform") or _session_source(session_id)
+    if platform != "qqbot":
+        return json.dumps({"ok": False, "error": "videos only go to QQ chats"},
+                          ensure_ascii=False)
+    prompt = " ".join(str(args.get("prompt") or "").split())
+    if not prompt:
+        return json.dumps({"ok": False, "error": "describe the video first"},
+                          ensure_ascii=False)
+    try:
+        duration = int(args.get("duration") or 6)
+    except (TypeError, ValueError):
+        duration = 6
+    if not _budget.spend(f"videogen:{chat_id}", VIDEO_GEN_PER_DAY):
+        return json.dumps({"ok": False,
+                           "error": f"今天已经做过 {VIDEO_GEN_PER_DAY} 个视频了，明天再说。"},
+                          ensure_ascii=False)
+    try:
+        task_id = hailuo.create(prompt, duration=duration,
+                                resolution=str(args.get("resolution") or "768P"))
+    except Exception as exc:  # noqa: BLE001
+        _budget.refund(f"videogen:{chat_id}")
+        return json.dumps({"ok": False, "error": str(exc)[:200]}, ensure_ascii=False)
+    def _run() -> None:
+        try:
+            _deliver_video(chat_id, task_id, prompt)
+        finally:
+            with _VIDEO_JOBS_LOCK:
+                _VIDEO_JOBS.discard(worker)
+
+    with _VIDEO_JOBS_LOCK:
+        busy = len(_VIDEO_JOBS) >= 2
+        if not busy:
+            worker = threading.Thread(target=_run, name="hermes-lover-video", daemon=True)
+            _VIDEO_JOBS.add(worker)
+    if busy:
+        _budget.refund(f"videogen:{chat_id}")
+        return json.dumps({"ok": False,
+                           "error": "已经有两个视频在做了，等它们发完再说。"},
+                          ensure_ascii=False)
+    worker.start()
+    return json.dumps({"ok": True, "task_id": task_id,
+                       "note": "生成要几分钟，做好了我直接发到聊天里。"},
                       ensure_ascii=False)
 
 
@@ -1957,6 +2041,24 @@ def register(ctx) -> None:
                 }, "required": ["name"], "additionalProperties": False}},
         handler=_share_video,
         description="Send one finished video from the outbox folder.",
+    )
+    ctx.register_tool(
+        name="make_video",
+        toolset="digital_life",
+        schema={"name": "make_video",
+                "description": ("Generate a short video from a text description with MiniMax "
+                                "Hailuo and send it to this chat when it is done. Takes a few "
+                                "minutes; the reply is delivered later, so do not wait. At most "
+                                "three per chat per day."),
+                "parameters": {"type": "object", "properties": {
+                    "prompt": {"type": "string", "maxLength": 1500,
+                               "description": "What should be in the video: subject, motion, camera, style."},
+                    "duration": {"type": "integer", "enum": [6, 10], "default": 6,
+                                 "description": "Length in seconds."},
+                    "resolution": {"type": "string", "enum": ["768P", "1080P"], "default": "768P"},
+                }, "required": ["prompt"], "additionalProperties": False}},
+        handler=_make_video,
+        description="Generate a short video and send it to the chat.",
     )
     ctx.register_hook("transform_llm_output", _transform_llm_output)
     ctx.register_hook("pre_gateway_dispatch", _on_gateway_dispatch)

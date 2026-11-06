@@ -405,7 +405,7 @@ class RegistrationTests(unittest.TestCase):
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)
-        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "study_source", "background_task", "read_source", "library_list", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "memory_revoke", "digital_life_status", "close_gap", "share_video"])
+        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "study_source", "background_task", "read_source", "library_list", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "memory_revoke", "digital_life_status", "close_gap", "share_video", "make_video"])
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertEqual(set(schemas["memory_write"]) & {"sources", "refs"}, {"sources", "refs"})
         self.assertIn("kind", schemas["memory_recall"])
@@ -1114,6 +1114,76 @@ class ShareVideoTests(unittest.TestCase):
             out = json.loads(hl._share_video({"name": "clip.mp4"}, session_id="s-video"))
         self.assertFalse(out["ok"])
         self.assertEqual(refunds, ["video:chat-1"])
+
+
+class MakeVideoTests(unittest.TestCase):
+    def setUp(self):
+        import importlib
+        hl = sys.modules["hermes_plugins.digital_life"]
+        self.hl = hl
+        self.budget = importlib.import_module("hermes_plugins.digital_life.digital_life.budget")
+        self.hailuo = importlib.import_module("hermes_plugins.digital_life.digital_life.hailuo")
+        self.sent = []
+        hl._TURN_META["s-make"] = {"platform": "qqbot"}
+        self.addCleanup(hl._TURN_META.pop, "s-make", None)
+        self.patches = [
+            patch.object(hl, "_session_scope", lambda session_id: ("chat-1", "dm")),
+            patch.object(hl, "_host_send_message_tool", lambda: self.sent.append),
+        ]
+        for item in self.patches:
+            item.start()
+            self.addCleanup(item.stop)
+
+    def test_a_request_starts_the_task_and_answers_at_once(self):
+        hl = self.hl
+        with patch.object(self.hailuo, "create", return_value="task-7"), \
+                patch.object(hl, "_deliver_video") as deliver, \
+                patch.object(self.budget, "spend", return_value=True):
+            out = json.loads(hl._make_video({"prompt": "海边的鲸鱼"}, session_id="s-make"))
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["task_id"], "task-7")
+        deliver.assert_called_once_with("chat-1", "task-7", "海边的鲸鱼")
+
+    def test_a_refused_quota_or_platform_never_calls_the_api(self):
+        hl = self.hl
+        with patch.object(self.hailuo, "create") as create, \
+                patch.object(self.budget, "spend", return_value=False):
+            out = json.loads(hl._make_video({"prompt": "x"}, session_id="s-make"))
+        self.assertFalse(out["ok"])
+        create.assert_not_called()
+        hl._TURN_META["s-make"] = {"platform": "cli"}
+        with patch.object(self.hailuo, "create") as create, \
+                patch.object(self.budget, "spend", return_value=True):
+            out = json.loads(hl._make_video({"prompt": "x"}, session_id="s-make"))
+        self.assertFalse(out["ok"])
+        create.assert_not_called()
+
+    def test_a_failed_submit_returns_the_quota(self):
+        hl = self.hl
+        refunds = []
+        with patch.object(self.hailuo, "create", side_effect=self.hailuo.HailuoError("no key")), \
+                patch.object(self.budget, "spend", return_value=True), \
+                patch.object(self.budget, "refund", lambda name: refunds.append(name)):
+            out = json.loads(hl._make_video({"prompt": "x"}, session_id="s-make"))
+        self.assertFalse(out["ok"])
+        self.assertEqual(refunds, ["videogen:chat-1"])
+
+    def test_the_worker_delivers_the_finished_clip(self):
+        hl = self.hl
+        with patch.object(self.hailuo, "wait", return_value="file-3"), \
+                patch.object(self.hailuo, "download", return_value="/tmp/made.mp4"):
+            hl._deliver_video("chat-1", "task-3", "海边的鲸鱼")
+        self.assertTrue(self.sent)
+        self.assertEqual(self.sent[0]["target"], "qqbot:chat-1")
+        self.assertIn("MEDIA:/tmp/made.mp4", self.sent[0]["message"])
+
+    def test_the_worker_reports_a_failure_as_text(self):
+        hl = self.hl
+        with patch.object(self.hailuo, "wait", side_effect=self.hailuo.HailuoError("still Processing after 900s")):
+            hl._deliver_video("chat-1", "task-4", "x")
+        self.assertTrue(self.sent)
+        self.assertIn("没做出来", self.sent[0]["message"])
+        self.assertNotIn("MEDIA:", self.sent[0]["message"])
 
 
 class ToolBudgetTests(unittest.TestCase):
