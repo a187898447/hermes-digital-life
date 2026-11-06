@@ -363,3 +363,36 @@ def set_beats_enabled(enabled: bool) -> int:
                 jobs.pause_job(job["id"], "paused by the operator")
             changed += 1
     return changed
+
+def schedule_status() -> dict[str, Any]:
+    """Facts about the beat job, so "设好了"/"没开" are checkable, not guessed."""
+    profile = _home()
+    job: dict[str, Any] | None = None
+    try:
+        import json as _json
+
+        jobs = _json.loads((profile / "cron" / "jobs.json").read_text()).get("jobs") or []
+        job = next((item for item in jobs if item.get("name") == BEAT_JOB_NAME), None)
+    except (OSError, ValueError):
+        job = None
+    fired: list[str] = []
+    try:
+        import json as _json
+
+        state = _json.loads((profile / "cron" / f"{BEAT_JOB_NAME}.json").read_text())
+        if state.get("date") == time.strftime("%Y-%m-%d"):
+            fired = list(state.get("fired") or [])
+    except (OSError, ValueError):
+        pass
+    if job is None:
+        return {"scheduled": False, "schedule": None, "fired_today": [],
+                "note": "没有定时任务；此刻跑着的这轮不能承诺到点发消息。"}
+    schedule = (job.get("schedule") or {}).get("display")
+    return {
+        "scheduled": bool(job.get("enabled")),
+        "schedule": schedule,
+        "fired_today": fired,
+        "sends_only_in_scheduled_runs": True,
+        "note": "定时任务按随机时段触发；普通聊天轮里 beat_send 会被拒，这不表示主动消息没开。",
+    }
+
