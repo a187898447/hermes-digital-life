@@ -839,6 +839,8 @@ class LearnedProblemTests(unittest.TestCase):
 
     def test_meta_is_rejected(self):
         self.assertTrue(memory.learned_problem("仓库里有四百多条，问出处就给地址"))
+        self.assertTrue(memory.learned_problem("有人问哪来的，我说公开网上收集的"))
+        self.assertTrue(memory.learned_problem("批量要就给 /random 和 v50.json"))
 
     def test_long_is_rejected(self):
         self.assertTrue(memory.learned_problem("周四有人提疯狂星期四我就把这一周最倒霉的事情编成一个倒霉蛋的小故事，先认真讲越讲越离谱，最后一句才转到V我50上面去，这样比较自然"))

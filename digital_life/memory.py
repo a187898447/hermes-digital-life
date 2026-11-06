@@ -116,7 +116,7 @@ _JOURNAL_CLOCK = _re.compile(r"(?:\d{1,2}[:：]\d{2}|\d{1,2}\s*点)")
 
 _LEARNED_META = re.compile(
     r"仓库|授权|版权|协议|许可证|API|接口|README|文档|格式|排版|抓取|镜像|"
-    r"更新|维护|数据源|数据持续|来源地址",
+    r"更新|维护|数据源|数据持续|来源地址|来源|出处|收集|公开|授权|json|api|/random|/list",
     re.IGNORECASE,
 )
 _QUOTED = re.compile(r"[「『“\"]([^」』”\"]{15,})[」』”\"]")
