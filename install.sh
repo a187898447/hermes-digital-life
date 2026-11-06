@@ -102,7 +102,7 @@ hermes -p "$PROFILE" config set cron.wrap_response false >/dev/null 2>&1 || true
 # `qq-bind.py` / `gateway setup` never opens the full hermes-qqbot bundle.
 # An operator-set value is preserved.
 if ! hermes -p "$PROFILE" config get platform_toolsets.qqbot >/dev/null 2>&1; then
-  hermes -p "$PROFILE" config set platform_toolsets.qqbot '["web","vision","todo","digital_life","no_mcp"]'
+  hermes -p "$PROFILE" config set platform_toolsets.qqbot '["web","vision","todo","skills","digital_life","no_mcp"]'
   printf '已设置 QQ 工具集: web/vision/todo/digital_life（不含自带 memory，终端与写文件关闭，MCP 关闭）\n'
 fi
 if [[ "$(hermes -p "$PROFILE" config get human_delay.mode 2>/dev/null)" == "off" ]]; then
