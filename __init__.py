@@ -195,7 +195,11 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     meta = _TURN_META.get(session_id) or {}
     if (meta.get("platform") or _session_source(session_id) or "") != "qqbot":
         return None
-    counts = _TOOL_TURNS.setdefault(session_id, {"total": 0, "zone": 0, "recall": 0})
+    if tool_name in ("read_source", "library_list"):
+        # Reading a document is not a loop risk: the page counter already bounds it.
+        return None
+    counts = _TOOL_TURNS.setdefault(session_id, {"total": 0, "zone": 0, "recall": 0,
+                                                 "last_write": ""})
     if tool_name == "memory_recall":
         counts["recall"] = counts.get("recall", 0) + 1
     if tool_name == "qzone_feed" and counts.get("recall", 0) == 0:
@@ -204,6 +208,13 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     if tool_name == "qzone_feed" and counts["zone"] >= ZONE_PAGE_LIMIT:
         return {"action": "block",
                 "message": "本轮空间最多翻 2 页，已经到上限。用手上的内容回答，或者把后续交给 background_task。"}
+    if tool_name == "memory_write":
+        payload = kwargs.get("args") or kwargs.get("arguments") or {}
+        text = str(payload.get("text") or "") if isinstance(payload, dict) else ""
+        if text and text == counts.get("last_write"):
+            return {"action": "block",
+                    "message": "这条你刚记过，别重复写。接着回话。"}
+        counts["last_write"] = text
     if counts["total"] >= TOOL_CALL_LIMIT:
         return {"action": "block",
                 "message": "本轮工具调用已达 8 次。先回话，把剩下的工作交给 background_task。"}
@@ -1313,10 +1324,10 @@ def register(ctx) -> None:
     ctx.register_tool(
         name="memory_write", toolset="digital_life",
         schema={"name": "memory_write",
-                "description": "Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. `fact` entries are atomic: cite the `sources` turn ids they were drawn from. `journal` entries may cite the `refs` fact ids they are based on and must read as a diary, never as a list of clock times; a journal can only be written for a day that has already ended (next-day backfill). Never tell the user that you wrote something down; memory is a background action. Does not change life state.",
+                "description": "Remember a meaningful event, experience, decision, or a piece of wording worth reusing (kind=learned, with the situation where it fits) in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. `fact` entries are atomic: cite the `sources` turn ids they were drawn from. `journal` entries may cite the `refs` fact ids they are based on and must read as a diary, never as a list of clock times; a journal can only be written for a day that has already ended (next-day backfill). Never tell the user that you wrote something down; memory is a background action. Does not change life state.",
                 "parameters": {"type": "object", "properties": {
             "text": {"type": "string", "maxLength": 4000},
-            "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal"], "default": "note"},
+            "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal", "learned"], "default": "note"},
             "weight": {"type": ["number", "null"]},
             "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
                     "description": "Anchor a journal or fact entry to the day it describes. Journals must target a past day."},
