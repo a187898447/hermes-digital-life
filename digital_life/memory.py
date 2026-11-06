@@ -114,6 +114,32 @@ import re as _re
 _JOURNAL_CLOCK = _re.compile(r"(?:\d{1,2}[:：]\d{2}|\d{1,2}\s*点)")
 
 
+_LEARNED_META = re.compile(
+    r"仓库|授权|版权|协议|许可证|API|接口|README|文档|格式|排版|抓取|镜像|"
+    r"更新|维护|数据源|数据持续|来源地址",
+    re.IGNORECASE,
+)
+_QUOTED = re.compile(r"[「『“\"]([^」』”\"]{15,})[」』”\"]")
+
+
+def learned_problem(text: str) -> str:
+    """Return why a learned entry is unfit, or "" when it is fine.
+
+    The gate is about shape, not topic: a habit has to fit in a breath and must
+    not smuggle in source prose or bookkeeping about where it came from.
+    """
+    body = str(text or "").strip()
+    if not body:
+        return "empty"
+    if len(body) > 60:
+        return "too long for a habit (60 chars)"
+    if _QUOTED.search(body):
+        return "do not quote the source; say it in your own words"
+    if _LEARNED_META.search(body):
+        return "that is bookkeeping about the source, not a habit; put it in a note"
+    return ""
+
+
 class MemoryStore:
     def __init__(self, root: Path, *, connect=None, life_state=None, writes_enabled=None,
                  embedder=None):

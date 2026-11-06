@@ -830,6 +830,20 @@ class AnchorAndStressTests(unittest.TestCase):
         loose = store.write("随便哪天都能说", kind="learned", now_ms=1_000_000)
         self.assertIsNone(store.read_entries()[loose["id"]]["applies_dow"])
 
+class LearnedProblemTests(unittest.TestCase):
+    def test_good_habit_passes(self):
+        self.assertEqual(memory.learned_problem("周四有人说 v我50，我就跟着编一条新的"), "")
+
+    def test_quotes_are_rejected(self):
+        self.assertTrue(memory.learned_problem("看到「刚给女朋友洗完衣服黄金鸡块谁请我吃」这种"))
+
+    def test_meta_is_rejected(self):
+        self.assertTrue(memory.learned_problem("仓库里有四百多条，问出处就给地址"))
+
+    def test_long_is_rejected(self):
+        self.assertTrue(memory.learned_problem("周四有人提疯狂星期四我就把这一周最倒霉的事情编成一个倒霉蛋的小故事，先认真讲越讲越离谱，最后一句才转到V我50上面去，这样比较自然"))
+
+
 if __name__ == "__main__":
     unittest.main()
 
