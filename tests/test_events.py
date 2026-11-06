@@ -1526,3 +1526,61 @@ class VoiceLlmTests(unittest.TestCase):
             plugin._CTX = previous
         self.assertEqual(len(llm.calls), 1)
         self.assertEqual(out, ["行，价签那事不说了。"])
+
+
+class TaskReceiptTests(unittest.TestCase):
+    def _register(self, root):
+        """Register once, then hand back a context manager that keeps storage sandboxed."""
+        stack = [
+            patch.object(plugin.digital_life.storage, "data_root", return_value=root),
+            patch.object(plugin.digital_life.storage, "plugin_db",
+                         side_effect=lambda name, filename: sqlite3.connect(root / filename)),
+            patch.object(plugin.digital_life.storage, "read_state",
+                         return_value={"emergency_stop": False, "chemistry": {"cortisol": 20}}),
+            patch.object(plugin.digital_life.storage, "update_state", return_value=None),
+            patch.object(plugin, "_session_scope", lambda sid: ("chat-1", "dm")),
+        ]
+        for item in stack:
+            item.start()
+        ctx = RecordingContext()
+        plugin.register(ctx)
+        return {tool["name"]: tool["handler"] for tool in ctx.tools}, stack
+
+    def test_a_finished_reading_records_a_note_and_closes_its_loop(self):
+        research_mod = importlib.import_module(
+            "hermes_plugins.digital_life.digital_life.research")
+        runtime_mod = importlib.import_module(
+            "hermes_plugins.digital_life.digital_life.runtime")
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            handlers, stack = self._register(root)
+            self.addCleanup(lambda: [item.stop() for item in stack])
+            with (
+                patch.object(research_mod, "spawn_task", return_value=True) as spawned,
+                patch.object(runtime_mod, "close_gap_in_chat", return_value=True) as closed,
+            ):
+                answer = json.loads(handlers["study_source"]({"source": "https://example.com/a", "loop_id": "gap-9"}))
+                self.assertTrue(answer["ok"])
+                on_done = spawned.call_args.kwargs["on_done"]
+                on_done(True, "读完了")
+                closed.assert_called_once()
+                self.assertEqual(closed.call_args.args[1], "gap-9")
+                store = plugin._MEMORY_STORE["factory"]()
+                notes = [e for e in store.read_entries().values() if e.get("kind") == "note"]
+                self.assertTrue(any("读完了" in e["text"] for e in notes))
+
+    def test_a_failed_reading_keeps_the_loop_open(self):
+        research_mod = importlib.import_module(
+            "hermes_plugins.digital_life.digital_life.research")
+        runtime_mod = importlib.import_module(
+            "hermes_plugins.digital_life.digital_life.runtime")
+        with tempfile.TemporaryDirectory() as tmp:
+            handlers, stack = self._register(Path(tmp))
+            self.addCleanup(lambda: [item.stop() for item in stack])
+            with (
+                patch.object(research_mod, "spawn_task", return_value=True) as spawned,
+                patch.object(runtime_mod, "close_gap_in_chat", return_value=True) as closed,
+            ):
+                handlers["background_task"]({"task": "查一下", "loop_id": "gap-9"}, session_id="s1")
+                spawned.call_args.kwargs["on_done"](False, "")
+            closed.assert_not_called()

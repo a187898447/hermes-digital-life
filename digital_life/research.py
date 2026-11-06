@@ -137,6 +137,7 @@ def spawn_task(
     prompt: str, chat_id: str, send: Callable[[str, str], None],
     runner: Callable[[str], str] | None = None, *, kind: str = "task",
     extra_env: dict[str, str] | None = None,
+    on_done: Callable[[bool, str], None] | None = None,
 ) -> bool:
     """Start a background multi-step job; its result is sent to the chat."""
     if not prompt.strip() or not chat_id:
@@ -152,13 +153,20 @@ def spawn_task(
         _ACTIVE.add(key)
 
     def _work() -> None:
+        answer, ok = "", False
         try:
             answer = runner(prompt)
+            ok = True
             if answer:
                 send(chat_id, answer)
         except Exception:
-            pass
+            ok = False
         finally:
+            if on_done:
+                try:
+                    on_done(ok, answer)
+                except Exception:
+                    pass
             with _LOCK:
                 _ACTIVE.discard(key)
             _SLOTS.release()
