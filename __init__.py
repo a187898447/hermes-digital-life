@@ -49,6 +49,8 @@ _CTX = None
 _JOURNAL_PROMPTED: set[tuple[str, str]] = set()
 _FACT_PROMPTED: set[tuple[str, str]] = set()
 _MEMORY_STORE: dict[str, object] = {}
+# Recall results are summaries for the model, not a dump of the palace.
+RECALL_SNIPPET_CHARS = 220
 
 
 def _session_scope(session_id: str) -> tuple[str, str]:
@@ -835,7 +837,7 @@ def register(ctx) -> None:
             return
         chat_id, chat_type = _session_scope(session)
         store = memory_store()
-        store.capture(f"用户：{user}\n助手：{assistant_response[:1500]}",
+        store.capture(f"用户：{user[:600]}\n助手：{assistant_response[:600]}",  # context budget
                       session_id=session, chat_id=chat_id, chat_type=chat_type,
                       speaker=meta.get("sender", ""))
 
@@ -929,11 +931,23 @@ def register(ctx) -> None:
                 chat_id = explicit
             elif not chat_id and session_id and (source is None or source in ("", "qqbot")):
                 raise ValueError("cannot verify the calling session; refusing an unscoped recall")
-            result = memory_store().recall(args.get("query", ""), k=args.get("k", 8),
+            try:
+                wanted = int(args.get("k", 8) or 8)
+            except (TypeError, ValueError):
+                wanted = 8
+            store_factory = _MEMORY_STORE.get("factory") or memory_store
+            result = store_factory().recall(args.get("query", ""), k=max(1, min(wanted, 10)),
                                            include_cold=args.get("include_cold", False),
                                            chat_id=chat_id or None,
                                            day=args.get("day") or None,
                                            kind=args.get("kind") or None)
+            # Context budget: recall is a lookup, not a history dump. Turn entries can be
+            # kilobytes each, so cap every returned excerpt no matter how long the entry is.
+            for item in result.get("shown") or []:
+                text = str(item.get("text") or "")
+                if len(text) > RECALL_SNIPPET_CHARS:
+                    item["text"] = text[:RECALL_SNIPPET_CHARS].rstrip() + "…"
+                    item["truncated"] = True
         except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
             result = {"ok": False, "error": str(exc)}
         return json.dumps(result, ensure_ascii=False)

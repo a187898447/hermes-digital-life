@@ -342,6 +342,28 @@ class RegistrationTests(unittest.TestCase):
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertIn("chat_id", schemas["memory_recall"])
 
+    def test_recall_caps_k_and_truncates_long_entries(self):
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        plugin.register(ctx)
+        handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["memory_recall"]
+        fake = {"ok": True, "total": 1, "matched": 1, "returned": 1,
+                "shown": [{"id": "hp-1", "text": "旧" * 400}]}
+        store = type("S", (), {"recall": lambda self, *a, **k: fake})()
+        with patch.object(plugin, "_MEMORY_STORE", {"factory": lambda: store}), \
+                patch.object(plugin, "_session_source", return_value="cron"):
+            result = json.loads(handler({"query": "旧", "k": 999, "chat_id": "c1"},
+                                        session_id="s-cron"))
+            self.assertEqual(store.calls, None) if hasattr(store, "calls") else None
+            self.assertLessEqual(len(result["shown"][0]["text"]), plugin.RECALL_SNIPPET_CHARS + 1)
+            self.assertTrue(result["shown"][0]["truncated"])
+        captured = {}
+        store2 = type("S", (), {"recall": lambda self, q, k=8, **kw: captured.update(k=k) or fake})()
+        with patch.object(plugin, "_MEMORY_STORE", {"factory": lambda: store2}), \
+                patch.object(plugin, "_session_source", return_value="cron"):
+            handler({"query": "旧", "k": 999, "chat_id": "c1"}, session_id="s-cron")
+        self.assertEqual(captured["k"], 10)
+
     def test_unreadable_session_store_fails_closed(self):
         import os
         plugin._SOURCE_CACHE.clear()
