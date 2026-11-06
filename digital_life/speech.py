@@ -35,8 +35,9 @@ def lint(lines: list[str]) -> list[tuple[int, str]]:
             issues.append((index, "dangling-connector"))
         if _LEAD_PRONOUN.match(line):
             issues.append((index, "unclear-pronoun"))
-        suffixes = sum(line.count(word) for word in _ABSTRACT)
-        if suffixes >= 3 and len(body) > 16:
+        kinds = sum(1 for word in _ABSTRACT if word in line)
+        total = sum(line.count(word) for word in _ABSTRACT)
+        if kinds >= 2 and total >= 3 and len(body) > 16:
             issues.append((index, "abstract-noun-pile"))
     return issues
 
@@ -51,8 +52,9 @@ POLISH_PROMPT = """\
 要求：
 1. 每条都改成正常中文口语，读一遍能听懂，不绕、不端着。
 2. 保持原意和原说话人的口气，不增加信息，不解释，不客套。
-3. 每条一行，用单独一行 --- 分隔，不要编号、不要 Markdown、不要引号。
+3. 只输出 {count} 条，每条一行，用单独一行 --- 分隔；不要编号、不要 Markdown、不要引号。
 4. 改不动就原样保留那一行。
+5. 不要旁白、不要自评、不要“我改完了”这类话，除了改写结果什么都不要输出。
 
 消息：
 {body}
@@ -64,9 +66,9 @@ def parse_polish(output: str, expected: int) -> list[str] | None:
     parts = [part.strip() for part in re.split(r"\n\s*---\s*\n", (output or "").strip()) if part.strip()]
     if not parts:
         return None
-    if len(parts) != expected:
-        # A model that merged or added bubbles would change the reply's shape.
+    if len(parts) < expected:
         return None
+    parts = parts[:expected]
     if any(len(part) > 220 for part in parts):
         return None
     return parts

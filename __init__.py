@@ -798,7 +798,7 @@ def _polish_lines(lines: list[str]) -> Optional[list[str]]:
     profile = Path(os.environ.get("HERMES_HOME", "")).name
     if not hermes or not profile:
         return None
-    prompt = speech.POLISH_PROMPT.format(body="\n---\n".join(lines))
+    prompt = speech.POLISH_PROMPT.format(count=len(lines), body="\n---\n".join(lines))
     env = dict(os.environ, HERMES_LOVER_POLISH_CHILD="1", HERMES_DISABLE_LAZY_INSTALLS="1")
     try:
         proc = subprocess.run([hermes, "-p", profile, "chat", "--oneshot", "-Q", "-q", prompt],

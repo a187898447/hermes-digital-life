@@ -22,7 +22,8 @@ class SpeechLintTests(unittest.TestCase):
         self.assertTrue(speech.lint(["我我明天再去"]))
 
     def test_parse_polish_requires_same_shape(self):
-        self.assertIsNone(speech.parse_polish("a\n---\nb\n---\nc", 2))
+        self.assertEqual(speech.parse_polish("a\n---\nb\n---\n闲聊", 2), ["a", "b"])
+        self.assertIsNone(speech.parse_polish("a", 2))
         self.assertEqual(speech.parse_polish("a\n---\nb", 2), ["a", "b"])
 
 
