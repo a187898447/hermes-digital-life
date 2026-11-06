@@ -149,3 +149,25 @@ def render(state: dict[str, Any], now_ms: float | None = None) -> str:
             hours = (now_ms - last_at) / 3_600_000
             lines.append(f"（上次对话是 {hours:.0f} 小时前，上面的变化不代表刚才发生了什么）")
     return "\n".join(lines)
+
+
+def refresh(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
+    """Keep one mood stamp next to the numeric history: label, when it started, frame."""
+    current = state.get("mood") if isinstance(state.get("mood"), dict) else {}
+    next_label = label(state)
+    if current.get("label") != next_label:
+        current = {"label": next_label, "since": float(now_ms)}
+    else:
+        current = dict(current)
+        current.setdefault("since", float(now_ms))
+    current["valence"] = valence(state)
+    current["arousal"] = arousal(state)
+    state["mood"] = current
+    return current
+
+
+def mood_since(state: dict[str, Any], now_ms: float) -> float:
+    """Minutes the current mood has lasted (0 when unknown)."""
+    current = state.get("mood") if isinstance(state.get("mood"), dict) else {}
+    since = _num(current.get("since"), 0.0)
+    return round(max(0.0, now_ms - since) / 60_000.0, 1) if since else 0.0

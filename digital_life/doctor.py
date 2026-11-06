@@ -560,9 +560,42 @@ def inspect(
         _check_soul(home),
         _sync_check("sync.scripts", _script_pairs(repo, home)),
         _sync_check("sync.skills", _skill_pairs(repo, home)),
+        _check_heartbeat(home),
         _check_memory(home),
     ]
 
+
+
+LIFE_STALE_MINUTES = 30
+
+
+def _check_heartbeat(home: Path) -> Check:
+    """Read-only: did the day record say anything walked it forward recently?"""
+    db = home / "plugin-data" / PLUGIN_NAME / "data.db"
+    if not db.is_file():
+        return Check("life.tick", SKIP, "还没有生活记录，插件启动后才会开始")
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            row = conn.execute("SELECT payload FROM life_state LIMIT 1").fetchone()
+        finally:
+            conn.close()
+        state = json.loads(row[0]) if row else {}
+    except (sqlite3.Error, ValueError, OSError):
+        return Check("life.tick", SKIP, "读不到生活记录")
+    life = state.get("life") if isinstance(state, dict) else None
+    if not isinstance(life, dict):
+        return Check("life.tick", SKIP, "还没有生活日程")
+    last = float(life.get("last_tick_at") or 0.0)
+    if not last:
+        return Check("life.tick", SKIP, "心跳还没跑过")
+    minutes = max(0.0, (time.time() * 1000 - last) / 60000)
+    if minutes > LIFE_STALE_MINUTES:
+        return Check("life.tick", WARN,
+                     f"{minutes:.0f} 分钟没有心跳；网关可能在休眠，或者 life.enabled 关了")
+    current = life.get("current") or {}
+    return Check("life.tick", OK,
+                 f"{minutes:.0f} 分钟前刚走过 · {current.get('title') or '空档'}")
 
 
 MEMORY_WARN_BYTES = 50 * 1024 * 1024

@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 # The QQ rewrite may hand bubbles to a child session for polishing; the real call is
 # covered by test_research, and unit tests must not reach the model.
 os.environ.setdefault("HERMES_LOVER_POLISH", "0")
+os.environ.setdefault("HERMES_LOVER_TICK", "0")  # the heartbeat is covered by test_tick
 _db_dir = tempfile.TemporaryDirectory()
 _db_path = Path(_db_dir.name) / "plugin.db"
 core_plugins = types.ModuleType("plugins")

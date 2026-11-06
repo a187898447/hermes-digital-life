@@ -51,6 +51,9 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
     wake = actions.add_parser("wake", help="Manually wake for one open gap (opt-in self-wake demo)")
     wake.add_argument("--gap", default="", help="Gap identifier; defaults to the highest tension")
     wake.add_argument("--chat", required=True, help="Chat the wake belongs to (e.g. a QQ group id)")
+    tick = actions.add_parser("tick", help="Step the day forward once (same code the gateway heartbeat runs)")
+    tick.add_argument("--force", action="store_true", help="Ignore the 60-second guard")
+    tick.add_argument("--json", action="store_true", help="Print one JSON object instead of lines")
     doctor = actions.add_parser("doctor", help="Check the host conditions hermes-lover depends on")
     doctor.add_argument("--json", action="store_true", help="Print one JSON object instead of lines")
     doctor.add_argument("--fix", action="store_true",
@@ -64,6 +67,24 @@ def run_command(args: argparse.Namespace) -> int:
     if action == "doctor":
         from . import doctor
         return doctor.run(fix=args.fix, as_json=args.json)
+    if action == "tick":
+        from . import tick as heartbeat
+
+        try:
+            result = heartbeat.once(now_ms, force=args.force)
+        except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
+            print(f"Tick failed: {exc}")
+            return 1
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False))
+        elif result.get("ran"):
+            life = result.get("life") or {}
+            mood = result.get("mood") or {}
+            print(f"Stepped: {life.get('phase', '')} · {life.get('current') or '空档'}"
+                  f" · mood {mood.get('label', '')} · traces {len(result.get('traces') or [])}")
+        else:
+            print(f"Skipped: {result.get('reason', '')}")
+        return 0
     if action == "memory-rebuild":
         from . import storage
         from .memory import MemoryStore

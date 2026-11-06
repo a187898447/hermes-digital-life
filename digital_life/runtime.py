@@ -8,6 +8,7 @@ from typing import Any
 from . import affect
 from . import events
 from . import gaps as gap_pool
+from . import life as life_module
 from .chemical_pool import ChemicalPool
 from .domain import clamp, decay_chemistry, float_or, reorder_formatted_memory_blocks, settle_rest
 
@@ -66,6 +67,13 @@ def status_snapshot(now_ms: float, scope: str | None = None) -> dict[str, Any]:
             "deltas": affect.deltas(state),
             "hint": affect.hint(state),
         },
+        "mood": {
+            "label": affect.label(state),
+            "since": float_or((state.get("mood") or {}).get("since"), now_ms),
+            "minutes": affect.mood_since(state, now_ms),
+            "valence": affect.valence(state),
+        },
+        "life": life_module.summary(state, now_ms),
         "updated_at": state["last_settled_at"],
         "gaps": sorted(
             (dict(gap, tension=_gap_tension(gap, now_ms)) for gap in visible),

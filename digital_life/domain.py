@@ -129,10 +129,14 @@ def stress_threshold() -> float:
 def default_state(now_ms: float) -> dict[str, Any]:
     temperament = dict(_CONFIG_TEMPERAMENT or DEFAULT_TEMPERAMENT)
     chemistry = ChemicalPool().initial_chemistry(temperament)
+    from . import life as life_module  # noqa: PLC0415 - life imports library, keep state creation light
+
     return {"schema_version": 1, "chemistry": chemistry, "energy": 100.0, "temperament": temperament,
             "last_interaction_at": now_ms, "last_settled_at": now_ms, "gaps": [],
             "emergency_stop": False, "tools_succeeded": [], "last_epiphany_at": 0.0,
             "wake": wake_default(),
+            "life": life_module.new_life_state(now_ms),
+            "mood": {"label": "平常", "since": now_ms, "valence": 0.0, "arousal": 0.0},
             "affect_history": [],
             "affect_events": {"day": "", "total": 0.0, "cooldowns": {}}}
 
@@ -176,9 +180,19 @@ def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
         "cooldowns": {str(k): float_or(v, 0.0) for k, v in (book.get("cooldowns") or {}).items()
                       if isinstance(v, (int, float))} if isinstance(book.get("cooldowns"), dict) else {},
     }
+    from . import life as life_module  # noqa: PLC0415
     from . import wake as wake_module  # noqa: PLC0415 - lazy to keep domain import-light
 
     state["wake"] = wake_module.normalize_wake(raw.get("wake"))
+    state["life"] = life_module.normalize_life(raw.get("life"))
+    mood = raw.get("mood")
+    if isinstance(mood, dict):
+        state["mood"] = {
+            "label": str(mood.get("label") or "平常")[:8],
+            "since": max(0.0, float_or(mood.get("since"), now_ms)),
+            "valence": clamp(float_or(mood.get("valence"), 0.0), -1.0, 1.0),
+            "arousal": clamp(float_or(mood.get("arousal"), 0.0), 0.0, 1.0),
+        }
     return state
 
 

@@ -171,9 +171,18 @@ QQ 会话里模型能调用的工具分几组，权限和预算都不一样：
 预算：QQ 每一轮最多 8 次外部工具调用（搜索、抓取、空间、终端、写文件等）；记忆类、读源类、状态、
 后台任务不计入。超了会先让模型回话，把余下工作交给后台。
 
-口吻闸门：QQ 发送前，`digital_life/speech.py` 先标出回执腔、结算腔、填充词、客服腔和反问尾巴；
-命中就让子会话改写（`HERMES_LOVER_POLISH_CHILD=1`），仍不合格按分句删，删光回「嗯」。
-相关规则也写在人格卡与 `shuorenhua` skill 里。
+口吻闸门：每条 QQ 回复发出前，`digital_life/speech.py` 标出回执腔、结算腔、填充词、客服腔、反问尾巴，
+以及"这个 chat 最近 8 条里出现过的 6 字以上片段"；默认（`HERMES_LOVER_POLISH=always`）每条都过一遍，
+在宿主进程内用 `ctx.llm` 改写（`HERMES_LOVER_POLISH_CHILD=1` 防递归；取不到 llm 才回落子会话），
+失败按分句删，删光回「嗯」；`=auto` 只在标出问题时改，`=0` 关。相关规则也写在人格卡与
+`shuorenhua` skill 里。
+
+生活层：网关进程里有一个五分钟心跳（`digital_life/tick.py`），把"今天"往前推一格——读一页书、
+想一个没结的执念、记一笔、歇一会儿；做完留下痕迹（记忆 `kind=life`），并给情绪投一点脉冲。
+对话轮会收到一行 `[现在] 周六 15:20 · 白天 · 读《夜航西飞》 · 心情平常`，用来知道此刻在做什么，
+但生活是背景不是话题。配置在 `life`（`enabled`、`tick_minutes`），手动推进用
+`hermes hermes-lover tick --force`，整体关掉是 `life.enabled: false`。详见
+[docs/life-layers.md](docs/life-layers.md)。
 
 已学（`kind=learned`）只收「什么场合 → 你会怎么做」的社会习惯：可带 `applies_dow`（0=周一…6=周日）
 限定星期；超过 60 字、引用原文 ≥15 字、带元信息词（仓库/API/格式/文档…）会被拒；同一事由只留一条，
@@ -187,6 +196,7 @@ QQ 会话里模型能调用的工具分几组，权限和预算都不一样：
 - [docs/memory-comparison.md](docs/memory-comparison.md)：与腾讯 Agent Memory 的取舍对比。
 - [docs/missing-modules-plan.md](docs/missing-modules-plan.md)：化学/基因组/间隙等模块的补齐计划与偏差记录。
 - [docs/host-fragility-plan.md](docs/host-fragility-plan.md)：宿主升级会踩到的坑与降级策略。
+- [docs/life-layers.md](docs/life-layers.md)：对话/生活/情绪三层怎么分工，心跳、日程、痕迹与 mood 的边界。
 
 ## 宿主补丁
 

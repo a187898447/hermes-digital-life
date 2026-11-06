@@ -18,6 +18,10 @@ config_schema:
     type: dict
     default: {sensitivity: 1.0, resilience: 1.0, enthusiasm: 50.0, metabolism: 1.0}
     description: "Four operator knobs, clamped: sensitivity 0.5-2.0, resilience 0.5-2.0, enthusiasm 20-80, metabolism 0.5-2.0."
+  life:
+    type: dict
+    default: {enabled: true, tick_minutes: 5}
+    description: "Your own small day: a five-minute heartbeat builds a short agenda (read, think over an open loop, a note, rest) from material the process can actually reach, leaves traces in memory, and refreshes the mood stamp. enabled: false freezes it without touching anything else; tick_minutes 1-60."
   stress_cortisol:
     type: number
     default: 80
