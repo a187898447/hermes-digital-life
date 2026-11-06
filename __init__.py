@@ -845,7 +845,11 @@ def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs)
         return None
     lines = [line for line in rewritten.split("\n") if line.strip()]
     polished = _polish_lines(lines)
-    return "\n".join(polished) if polished else rewritten
+    final = polished or lines
+    from .digital_life import speech as _speech
+    repaired = [_speech.repair(line) for line in final]
+    repaired = [line for line in repaired if line.strip()]
+    return "\n".join(repaired) if repaired else "嗯"
 
 
 def _sync_persona_card(root: Path | None = None) -> None:

@@ -75,6 +75,23 @@ def lint(lines: list[str]) -> list[tuple[int, str]]:
     return issues
 
 
+_CLAUSE = re.compile(r"[^，。！？!?；;]+[，。！？!?；;]?")
+
+
+def repair(line: str) -> str:
+    """Deterministic last pass: drop tic clauses instead of sending them."""
+    text = (line or "").strip()
+    if not text:
+        return ""
+    stripped = _FILLER.sub("", text, count=1).lstrip("，, ")
+    if stripped:
+        text = stripped
+    kept = [c for c in _CLAUSE.findall(text) if not _RECEIPT.search(c) and not _SETTLE.search(c)
+            and not _RHETORICAL.search(c)]
+    out = "".join(kept).strip().rstrip("，,、；;")
+    return out
+
+
 def needs_polish(text: str, splitter) -> bool:
     lines = [part for part in splitter(text).split("\n") if part.strip()]
     return bool(lines) and bool(lint(lines))

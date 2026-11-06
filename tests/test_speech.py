@@ -52,3 +52,17 @@ class TicTests(unittest.TestCase):
         from digital_life import speech
         self.assertEqual(speech.tics("那就周四再说，我等着"), [])
         self.assertEqual(speech.tics("V我50"), [])
+
+class RepairTests(unittest.TestCase):
+    def test_receipt_clause_is_dropped(self):
+        from digital_life import speech
+        self.assertEqual(speech.repair("规则我记着：周四发一次。"), "")
+        self.assertEqual(speech.repair("规则我记着：周四发一次。V我50呢？"), "V我50呢？")
+
+    def test_filler_prefix_is_dropped(self):
+        from digital_life import speech
+        self.assertEqual(speech.repair("说实话，我也没想明白。"), "我也没想明白。")
+
+    def test_settlement_clause_is_dropped(self):
+        from digital_life import speech
+        self.assertEqual(speech.repair("行，这账平了。那就周四。"), "行，那就周四。")
