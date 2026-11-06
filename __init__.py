@@ -262,9 +262,13 @@ def _distill_prompt(chat_id: str, fact_day: str, journal_day: str) -> str:
             f"text=\"一句话说清一件事\", sources=[\"hp-…\"])；每条事实只写一件事。")
     if journal_day:
         lines.append(
+            f"先 memory_recall(day=\"{journal_day}\", kind=\"life\", k=8) 看那天你自己做过什么"
+            f"（读的哪几页、想了什么）。那些是你做过的事，不是对方说的话：写日记时要用上，"
+            f"写事实时不要跟聊天内容混成一件。")
+        lines.append(
             f"2) 用 memory_recall(day=\"{journal_day}\", kind=\"fact\") 取 fact id，"
             f"再 memory_write(kind=\"journal\", day=\"{journal_day}\", text=\"…\", refs=[\"hp-…\"]) "
-            f"写一篇 120–400 字第一人称日记：写你那天做了什么、当时的心情，正常成段，"
+            f"写一篇 120–400 字第一人称日记：写你那天做了什么（包括自己读的、想的）、当时的心情，正常成段，"
             f"不要按时间点罗列，不要流水账；日记写的是已经过完的那一天。")
     if fact_day and journal_day and fact_day != journal_day:
         lines.append(f"两个日期不同：{fact_day} 写事实，{journal_day} 写日记。")

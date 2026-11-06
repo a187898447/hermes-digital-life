@@ -70,6 +70,32 @@ class AgendaTests(unittest.TestCase):
         self.assertNotIn("rest", [item["kind"] for item in agenda])
 
 
+class ShelfTests(unittest.TestCase):
+    def test_an_unfinished_book_wins_over_a_finished_one(self):
+        books = [{"file": "a.md", "title": "读完了", "position": 3, "pages": 3},
+                 {"file": "b.md", "title": "读到一半", "position": 1, "pages": 3}]
+        self.assertEqual(life._next_book(books)["file"], "b.md")
+
+    def test_without_an_unfinished_book_the_first_one_is_used(self):
+        books = [{"file": "a.md", "title": "读完了", "position": 3, "pages": 3}]
+        self.assertEqual(life._next_book(books)["file"], "a.md")
+        self.assertIsNone(life._next_book([]))
+
+    def test_reading_resumes_at_the_stored_bookmark(self):
+        state = {"life": life.new_life_state(), "gaps": [], "chemistry": {}}
+        item = {"id": "act-1", "kind": "read", "title": "读《夜航西飞》", "minutes": 25,
+                "status": "running", "started_at": NOW, "done_at": 0.0,
+                "source": {"type": "library", "file": "a.md"}}
+        state["life"].update({"day": life.local_day(NOW), "agenda": [item], "current": "act-1"})
+        result = {"text": "下一页", "progress": "2/10", "part": 1, "finished": False}
+        with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS), \
+                mock.patch.object(life.library, "read", return_value=result) as read:
+            out = life.step(state, LATER)
+        read.assert_called_once()
+        self.assertNotIn("part", read.call_args.kwargs)
+        self.assertIn("2/10", out["traces"][0]["text"])
+
+
 class StepTests(unittest.TestCase):
     def _state(self):
         return {"life": life.new_life_state(), "gaps": [], "chemistry": {}}

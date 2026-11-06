@@ -62,6 +62,12 @@ settle（化学衰减/休息恢复）
   `traces` 里，由 beat 轮挑着说；`share=false` 的只留给模型自己看。
 - 痕迹写进记忆宫殿的 `kind=life`（权重 0.7，attention 0.8），所以"今天读了什么"可以被
   `memory_recall` 找到，但不会压过 fact/journal。
+- **阅读用的是同一个书架**：`read_source`/`study_source` 收进来的书就是 `library`，生活层挑书时
+  优先挑没读完的，并且 `library.read` 不带 `part` 续读——书签存在书的 meta 里，工具读书和生活层
+  读书共用同一个进度，不会各读各的。
+- **日记会吸收生活痕迹**：每天第一条 QQ 消息触发的蒸馏子会话，会先
+  `memory_recall(day=…, kind="life")` 看那天自己读过什么、想过什么，再写 fact 和 journal。
+  所以日记里除了"我们聊了什么"，还有"我那天做了什么"，但两者不会被混成一件。
 - 每天的化学脉冲总预算 `LIFE_PULSE_CAP=20`，超出的按比例缩放，避免一天里把情绪刷到顶。
 
 ## 情绪层：从三值到 mood

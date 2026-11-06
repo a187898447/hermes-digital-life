@@ -102,12 +102,12 @@ def build_agenda(now_ms: float, *, mood_label: str = "平常", books: Iterable[d
                  gaps: Iterable[dict] | None = None) -> list[dict[str, Any]]:
     """Deterministic agenda for one local day: no model call, same input same plan."""
     size = max(1, min(MAX_AGENDA, agenda_size(mood_label)))
-    shelf = [book for book in (books or []) if isinstance(book, dict) and book.get("file")]
+    book = _next_book(books)
     open_gaps = [gap for gap in (gaps or []) if isinstance(gap, dict) and gap.get("status") == "open"]
     rest = 0 if phase(now_ms) == "sleep" else 1
     plan: list[tuple[str, str, Any]] = []
-    if shelf:
-        plan.append(("read", f"读《{str(shelf[0].get('title') or '那本书')[:20]}》", shelf[0]))
+    if book is not None:
+        plan.append(("read", f"读《{str(book.get('title') or '那本书')[:20]}》", book))
     if open_gaps:
         gap = open_gaps[0]
         plan.append(("think", f"想想「{str(gap.get('summary') or '')[:18]}」", gap))
@@ -123,9 +123,19 @@ def build_agenda(now_ms: float, *, mood_label: str = "平常", books: Iterable[d
             for index, (kind, title, extra) in enumerate(plan[:size])]
 
 
+def _next_book(books: Iterable[dict] | None) -> dict[str, Any] | None:
+    """Pick one shelf book, preferring the ones that are not finished yet."""
+    shelf = [book for book in (books or []) if isinstance(book, dict) and book.get("file")]
+    if not shelf:
+        return None
+    unfinished = [book for book in shelf
+                  if int(book.get("position") or 0) + 1 < int(book.get("pages") or 1)]
+    return (unfinished or shelf)[0]
+
+
 def _source(kind: str, extra: Any) -> dict[str, Any]:
     if kind == "read" and isinstance(extra, dict):
-        return {"type": "library", "file": str(extra.get("file") or ""), "part": int(extra.get("position") or 0)}
+        return {"type": "library", "file": str(extra.get("file") or "")}
     if kind == "think" and isinstance(extra, dict):
         return {"type": "gap", "id": str(extra.get("id") or "")}
     return {}
@@ -225,7 +235,9 @@ def _finish_read(item: dict[str, Any], source: dict[str, Any], now_ms: float) ->
     if meta is None:
         return None
     try:
-        result = library.read(dict(meta), part=int(source.get("part") or 0), max_chars=1200)
+        # Omit ``part``: the library resumes at the stored position, so reading in the
+        # day and reading through read_source stay on the same bookmark.
+        result = library.read(dict(meta), max_chars=1200)
     except (OSError, ValueError, KeyError):
         return None
     text = str(result.get("text") or "")

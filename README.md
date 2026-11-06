@@ -180,7 +180,8 @@ QQ 会话里模型能调用的工具分几组，权限和预算都不一样：
 生活层：网关进程里有一个五分钟心跳（`digital_life/tick.py`），把"今天"往前推一格——读一页书、
 想一个没结的执念、记一笔、歇一会儿；做完留下痕迹（记忆 `kind=life`），并给情绪投一点脉冲。
 对话轮会收到一行 `[现在] 周六 15:20 · 白天 · 读《夜航西飞》 · 心情平常`，用来知道此刻在做什么，
-但生活是背景不是话题。配置在 `life`（`enabled`、`tick_minutes`），手动推进用
+但生活是背景不是话题。它读的是 `read_source`/`study_source` 收进来的同一个书架、同一个书签；
+每天的日记子会话也会先把当天的 `kind=life` 痕迹读进去，所以日记里既有聊天，也有"我那天读了什么"。配置在 `life`（`enabled`、`tick_minutes`），手动推进用
 `hermes hermes-lover tick --force`，整体关掉是 `life.enabled: false`。详见
 [docs/life-layers.md](docs/life-layers.md)。
 
