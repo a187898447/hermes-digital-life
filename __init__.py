@@ -974,6 +974,13 @@ def register(ctx) -> None:
 
     def memory_write(args, session_id="", **kwargs):
         try:
+            if args.get("kind", "note") == "learned":
+                from .digital_life import memory as _memory  # noqa: PLC0415
+
+                problem = _memory.learned_problem(args.get("text"))
+                if problem:
+                    return json.dumps({"ok": False, "error": "learned entry rejected: " + problem},
+                                      ensure_ascii=False)
             chat_id, chat_type = _session_scope(session_id)
             result = memory_store().write(args.get("text"), kind=args.get("kind", "note"),
                                           weight=args.get("weight"), session_id=session_id,
