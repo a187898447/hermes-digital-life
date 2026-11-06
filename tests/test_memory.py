@@ -607,6 +607,33 @@ class CompactTests(unittest.TestCase):
             self.assertEqual(sorted(entries[target]["sources"]), sorted(group))
         self.assertEqual(entries[live]["compacted_into"], "")
 
+    def test_compact_turns_folds_only_old_live_turns(self):
+        old_a = self.store.write("十月的旧对话一", kind="turn", day="2026-10-01", chat_id="qq:1")["id"]
+        old_b = self.store.write("十月的旧对话二", kind="turn", day="2026-10-01", chat_id="qq:1")["id"]
+        recent = self.store.write("前几天的对话", kind="turn", day="2026-12-28", chat_id="qq:1",
+                                  now_ms=self.later - 2 * DAY)["id"]
+        result = self.store.compact_turns(days=30, now_ms=self.later)
+        self.assertEqual(result, {"ok": True, "groups": 1, "summaries": 1, "compacted": 2})
+        entries = self.store.read_entries()
+        summary_id = entries[old_a]["compacted_into"]
+        self.assertTrue(summary_id)
+        summary = entries[summary_id]
+        self.assertEqual(summary["kind"], "summary")
+        self.assertFalse(summary["archived"])
+        self.assertEqual(sorted(summary["sources"]), sorted([old_a, old_b]))
+        for identifier in (old_a, old_b):
+            self.assertTrue(entries[identifier]["archived"])
+        self.assertEqual(entries[recent]["compacted_into"], "")
+        self.assertFalse(entries[recent]["archived"])
+        recalled = self.store.recall("十月的旧对话", k=5)
+        self.assertIn(summary_id, [row["id"] for row in recalled["shown"]])
+
+    def test_compact_turns_validates_days(self):
+        with self.assertRaises(ValueError):
+            self.store.compact_turns(days=0)
+        with self.assertRaises(ValueError):
+            self.store.compact_turns(days=True)
+
     def test_compact_summary_cites_every_member_past_twenty(self):
         ids = [self.store.write(f"十月的旧事第{index}条", day="2026-10-01",
                                 session_id=f"s-{index}", now_ms=NOW)["id"]

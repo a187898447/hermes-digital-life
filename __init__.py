@@ -21,6 +21,7 @@ from . import digital_life
 from .digital_life import proactive as _proactive
 from .digital_life import selfheal as _selfheal
 from .digital_life import typos as _typos
+from .digital_life import compaction as _compaction
 from .digital_life.runtime import record_api_error, record_request, record_turn
 
 logger = logging.getLogger(__name__)
@@ -415,6 +416,7 @@ def _on_user_message(
     from .digital_life import wake as _wake  # noqa: PLC0415
 
     _selfheal.once()
+    _compaction.once(memory_store)
     _wake.set_agent_running(True)
     meta = {
         "user": user_message[:1500],

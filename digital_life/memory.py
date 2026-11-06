@@ -545,6 +545,65 @@ class MemoryStore:
             body = body[:room - 1] + "…"
         return (head + body + tail)[:200]
 
+    def compact_turns(self, days=30, *, now_ms=None):
+        """Fold *live* turn entries older than ``days`` into one retrievable daily summary.
+
+        ``compact`` only touches archived entries; turns are never archived by design, so
+        without this the palace grows a permanent tail. The summary stays live (recallable),
+        while the folded turns are archived and point at it through ``compacted_into``.
+        """
+        if type(days) is not int or not 1 <= days <= 3650:
+            raise ValueError("days must be an integer between 1 and 3650")
+        now_ms = _now(now_ms)
+        cutoff = now_ms - days * DAY_MS
+        with self._locked():
+            self._require_running()
+            self._append([], now_ms)
+            entries, digest = self._replay()
+            try:
+                self._sync(entries, digest)
+            except (sqlite3.Error, RuntimeError, OSError):
+                logger.warning("Memory index unavailable before compact_turns", exc_info=True)
+            groups: dict[tuple[str, str], list[dict]] = {}
+            for entry in entries.values():
+                if entry.get("kind") != "turn" or entry.get("archived"):
+                    continue
+                if entry.get("compacted_into") or entry.get("created_at", 0) >= cutoff:
+                    continue
+                groups.setdefault((entry["date"], entry.get("chat_id", "")), []).append(entry)
+            if not groups:
+                return {"ok": True, "groups": 0, "summaries": 0, "compacted": 0}
+            seqs: dict[str, int] = {}
+            events = []
+            for date, chat_id in sorted(groups):
+                rows = sorted(groups[(date, chat_id)], key=lambda row: (row["created_at"], row["id"]))
+                seq = seqs.get(date)
+                if seq is None:
+                    seq = max((int(e["id"].rsplit("-", 1)[1]) for e in entries.values() if e["date"] == date),
+                              default=0) + 1
+                seqs[date] = seq + 1
+                summary_id = f"hp-{date.replace('-', '')}-{seq:04d}"
+                ids = [row["id"] for row in rows]
+                events.append({
+                    "op": "add", "id": summary_id, "text": self._summary_text(rows, date, chat_id),
+                    "kind": "summary", "weight": DEFAULT_WEIGHTS["summary"],
+                    "cortisol": self._state().get("chemistry", {}).get("cortisol", 20),
+                    "created_at": now_ms, "last_access_at": now_ms, "hits": 0,
+                    "source_session_id": "compact-turns", "chat_id": chat_id,
+                    "chat_type": rows[0].get("chat_type", ""), "speaker": "",
+                    "sources": ids, "refs": []})
+                events.extend({"op": "forget", "id": identifier, "archived_at": now_ms} for identifier in ids)
+                events.extend({"op": "compact", "id": identifier, "into": summary_id, "at": now_ms}
+                              for identifier in ids)
+            self._append(events, now_ms)
+            try:
+                entries, digest = self._replay()
+                self._save_index(entries, digest)
+            except (sqlite3.Error, RuntimeError, OSError):
+                logger.warning("Turn summaries persisted but index update failed", exc_info=True)
+            return {"ok": True, "groups": len(groups), "summaries": len(groups),
+                    "compacted": sum(len(rows) for rows in groups.values())}
+
     def compact(self, days=30, *, now_ms=None):
         """Fold archived entries untouched for `days` into one cold summary per (date, chat).
 
