@@ -1172,6 +1172,7 @@ def register(ctx) -> None:
             f"{source} ，一次读不完就用 name 加 part 续读直到 finished；材料写了星期就用 applies_dow"
             "（0=周一…3=周四…6=周日）。边读边把能在群里直接说出口的说法用 memory_write 记成 learned"
             "（text 写成「什么时候→你会怎么说」，自己的话，别抄原文），来源和结构用 note 记。"
+            "只用 read_source 和 memory_write；不要用 terminal、不要建 cron 任务、不要 web_search/web_extract。"
             "最后只回一句话：读完了、记了几条。"
         )
         started = _research.spawn_task(prompt, chat_id, _send_qq)
