@@ -375,6 +375,30 @@ def ungrounded(lines: list[str], recent: list[str], last_user: str = "") -> list
     return [line for line in lines if points_at_nothing(line)]
 
 
+def _is_question(line: str) -> bool:
+    return line.rstrip().endswith(("？", "?")) or "吗" in line
+
+
+def drop_unreadable(original: list[str], rewritten: list[str],
+                    recent: list[str], last_user: str = "") -> list[str]:
+    """Last resort: a sentence that still assumes memory gets deleted, not sent.
+
+    Only statements qualify — a question with no anchor is often just a follow-up the
+    other side will still parse — and the reply always keeps at least one bubble.
+    """
+    if len(rewritten) != len(original):
+        return rewritten
+    kept: list[str] = []
+    flagged = set(ungrounded(original, recent, last_user))
+    for index, line in enumerate(rewritten):
+        source = original[index] if index < len(original) else ""
+        unchanged = line.strip() == source.strip()
+        if unchanged and source in flagged and not _is_question(source):
+            continue
+        kept.append(line)
+    return kept or rewritten
+
+
 def needs_readback(lines: list[str], recent: list[str], last_user: str = "") -> bool:
     return bool(ungrounded(lines, recent, last_user))
 
@@ -397,7 +421,7 @@ def build_polish_prompt(*, count: int, body: str, recent: list[str],
     if flagged:
         listing = "\n".join(f"- {line}" for line in flagged)
         flag_block = (
-            "这几条可能在指代对方这轮没提过的东西，或者拿旧事当前提；能读懂的保持原样，读不懂的必须改到没有你记忆的人也能跟上："
+            "这几条可能在指代对方这轮没提过的东西，或者拿旧事当前提；能读懂的保持原样，读不懂的必须改到没有你记忆的人也能跟上——原样留下的陈述句会被直接删掉："
             "把指代的对象写进同一句，写不进去就整句删掉，不要换近义词糊过去。\n"
             f"{listing}\n\n")
     habit_text = "\n".join(f"- {phrase}" for phrase in habits) or "（无）"

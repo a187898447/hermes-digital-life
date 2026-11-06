@@ -1260,7 +1260,7 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
     parts = speech.parse_polish(out, len(lines))
     if not parts or speech.lint(parts, recent):
         return None
-    return parts
+    return speech.drop_unreadable(lines, parts, recent, last_user)
 
 
 def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs) -> Optional[str]:

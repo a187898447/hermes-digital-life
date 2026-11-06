@@ -104,6 +104,29 @@ class SkillPromptTests(unittest.TestCase):
         self.assertNotIn("# 说人话", prompt)
 
 
+class DropUnreadableTests(unittest.TestCase):
+    def test_an_unchanged_statement_that_assumes_memory_is_dropped(self):
+        original = ["晚安。", "那中午那顿就是我的记分点。"]
+        self.assertEqual(
+            speech.drop_unreadable(original, list(original), [], "明早不吃了"),
+            ["晚安。"])
+
+    def test_a_question_is_kept_even_when_it_assumes_memory(self):
+        original = ["粉上了没？"]
+        self.assertEqual(speech.drop_unreadable(original, list(original), [], "明早不吃了"),
+                         ["粉上了没？"])
+
+    def test_a_rewritten_bubble_is_kept(self):
+        original = ["晚安。", "那中午那顿就是我的记分点。"]
+        rewritten = ["晚安。", "中午还是在食堂吃。"]
+        self.assertEqual(speech.drop_unreadable(original, rewritten, [], "明早不吃了"), rewritten)
+
+    def test_the_reply_never_ends_up_empty(self):
+        original = ["那中午那顿就是我的记分点。"]
+        self.assertEqual(speech.drop_unreadable(original, list(original), [], "明早不吃了"),
+                         original)
+
+
 class ReadbackGateTests(unittest.TestCase):
     def test_a_line_that_points_at_an_unmentioned_thing_is_checked(self):
         self.assertTrue(speech.needs_readback(
