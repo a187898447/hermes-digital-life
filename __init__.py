@@ -1175,7 +1175,8 @@ def register(ctx) -> None:
                 if not matches:
                     return json.dumps({"ok": False, "error": "没有这本书；先用 source 指定文件或链接"})
                 meta = matches[0]
-            page = library.read(meta, int(args.get("part") or 0),
+            part = args.get("part")
+            page = library.read(meta, None if part is None else int(part),
                                 int(args.get("max_chars") or 4000))
         except (ValueError, OSError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
@@ -1192,13 +1193,13 @@ def register(ctx) -> None:
         name="read_source", toolset="digital_life",
         schema={"name": "read_source",
                 "description": ("Read a local .txt/.md file or http(s) link page by page and study it. "
-                                "Pass source once to load it, then repeat with name + part to continue. "
-                                "After reading, record what stuck with memory_write(kind='learned') "
-                                "and one note summarising the source."),
+                                "Pass source once to load it; afterwards call with name and no part to "
+                                "resume where you stopped. Keep reading while the turn has tool budget, "
+                                "and record what stuck with memory_write(kind='learned') as you go."),
                 "parameters": {"type": "object", "properties": {
                     "source": {"type": ["string", "null"], "description": "Path or URL to load."},
                     "name": {"type": ["string", "null"], "description": "A title from library_list."},
-                    "part": {"type": "integer", "default": 0},
+                    "part": {"type": ["integer", "null"], "description": "Omit to resume where reading stopped."},
                     "max_chars": {"type": "integer", "default": 4000},
                 }, "additionalProperties": False}},
         handler=read_source,

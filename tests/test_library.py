@@ -37,6 +37,21 @@ class LibraryTests(unittest.TestCase):
             self.assertIn(f"第{index}段", joined)
         self.assertGreater(len(seen), 1)
 
+    def test_read_without_part_resumes_where_it_stopped(self):
+        meta = library.ingest(str(self.write("book.txt", "\n".join(f"第{i}段" + "字" * 50 for i in range(10)))))
+        first = library.read(meta, 0, 400)
+        self.assertEqual(first["part"], 0)
+        second = library.read(meta, None, 400)
+        self.assertEqual(second["part"], 1)
+        self.assertEqual(second["progress"], "2/" + str(second["pages"]))
+        self.assertNotEqual(first["text"], second["text"])
+
+    def test_read_reports_finished_at_the_end(self):
+        meta = library.ingest(str(self.write("short.txt", "只有一页")))
+        page = library.read(meta, None, 1000)
+        self.assertTrue(page["finished"])
+        self.assertIsNone(page["next_part"])
+
     def test_ingest_rejects_unsupported_file_and_missing_path(self):
         with self.assertRaises(ValueError):
             library.ingest(str(self.write("a.pdf", "%PDF-1.4")))

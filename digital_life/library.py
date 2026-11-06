@@ -72,8 +72,13 @@ def ingest(source: str, *, fetcher=None) -> dict:
     if not book.exists():
         book.write_text(text, "utf-8")
     pages = max(1, -(-len(text) // MAX_CHARS))
-    meta = {"title": title, "source": source, "file": book.name, "chars": len(text),
-            "pages": pages, "digest": digest}
+    try:
+        meta = json.loads(meta_path.read_text("utf-8"))
+    except (OSError, ValueError):
+        meta = {}
+    meta.update({"title": title, "source": source, "file": book.name, "chars": len(text),
+                 "pages": pages, "digest": digest})
+    meta.setdefault("position", 0)
     meta_path.write_text(json.dumps(meta, ensure_ascii=False), "utf-8")
     return meta
 
@@ -98,17 +103,34 @@ def _pages(text: str, width: int) -> list[str]:
     return pages
 
 
-def read(meta: dict, part: int = 0, max_chars: int = MAX_CHARS) -> dict:
-    """Return one page of a previously ingested source."""
+def read(meta: dict, part: int | None = None, max_chars: int = MAX_CHARS) -> dict:
+    """Return the next page of a source and remember where reading stopped.
+
+    ``part`` omitted resumes at the stored position, so the agent can simply keep
+    calling this while it still has room in the turn instead of asking the user.
+    """
     width = max(500, min(int(max_chars), MAX_CHARS))
     text = (root() / meta["file"]).read_text("utf-8")
     pages = _pages(text, width)
+    if part is None:
+        part = int(meta.get("position") or 0)
     part = max(0, min(int(part), len(pages) - 1))
     page = pages[part]
+    meta["position"] = min(part + 1, len(pages) - 1)
+    try:
+        (root() / (Path(meta["file"]).stem + ".json")).write_text(
+            json.dumps(meta, ensure_ascii=False), "utf-8")
+    except OSError:
+        pass
+    done = part + 1 >= len(pages)
     return {"ok": True, "title": meta.get("title", ""), "part": part, "pages": len(pages),
             "chars": len(text), "page_chars": len(page), "text": page,
-            "next_part": part + 1 if part + 1 < len(pages) else None,
-            "hint": "读完后用 memory_write 记 1-3 条 kind=learned 的说法，再写一条 note 概括本体。"}
+            "next_part": None if done else part + 1, "finished": done,
+            "progress": f"{part + 1}/{len(pages)}",
+            "hint": ("读完了。用 memory_write 记 1-3 条 kind=learned 的说法，再写一条 note 概括。"
+                     if done else
+                     "还没读完：本轮还有工具额度就接着读 next_part；每读一两页先记一条 learned，"
+                     "别一口气吞完整本。")}
 
 
 def books() -> list[dict]:
