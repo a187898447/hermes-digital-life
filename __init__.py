@@ -1248,13 +1248,13 @@ def register(ctx) -> None:
             return json.dumps({"ok": False, "error": "no chat context for this session"})
         from .digital_life import research as _research  # noqa: PLC0415
         prompt = (
-            "你在后台读完一份资料，不要把原文贴回来。用 read_source 读 "
+            "[study-task] 你在后台读完一份资料，不要把原文贴回来。用 read_source 读 "
             f"{source} ，一次读不完就用 name 加 part 续读直到 finished；材料写了星期就用 applies_dow"
             "（0=周一…3=周四…6=周日）。边读边用 memory_write 记 learned，text 写成"
             "「什么时候→你会怎么说」（自己的话，别抄原文）；按读到的内容量写（大约每 6k 字一条），同一触发只写一条，"
             "补充细节并进已有那条；来源和结构用 note 记，不要写 turn。"
             "只用 read_source 和 memory_write；不要用 terminal、不要建 cron 任务、不要 web_search/web_extract。"
-            "最后只回一句话：读完了、记了几条。"
+            "最后只回一句话：说一句你读到什么值得记的，不要报页数或条数。"
         )
         started = _research.spawn_task(prompt, chat_id, _send_qq)
         if not started:
