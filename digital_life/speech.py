@@ -347,7 +347,7 @@ def load_skill() -> str:
 
 
 def build_polish_prompt(*, count: int, body: str, recent: list[str],
-                        habits: list[str]) -> str:
+                        habits: list[str], last_user: str = "") -> str:
     """Chat framing around the skill: it edits bubbles, it does not rewrite essays."""
     skill = load_skill()
     if not skill:
@@ -357,6 +357,7 @@ def build_polish_prompt(*, count: int, body: str, recent: list[str],
             recent="\n".join(f"- {line}" for line in recent) or "（无）")
     tic_text = "、".join(no_say()[0])
     recent_text = "\n".join(f"- {line}" for line in recent) or "（无）"
+    user_text = last_user.strip() or "（无）"
     habit_text = "\n".join(f"- {phrase}" for phrase in habits) or "（无）"
     return f"""你在替一个 QQ 群友改口：下面是它这一轮要发出去的消息。按《说人话》的规则把它们改成有人随口说话的样子——保留意思和具体内容，删掉不承担意思的包装、垫场和姿态。
 
@@ -380,7 +381,14 @@ def build_polish_prompt(*, count: int, body: str, recent: list[str],
 1. 只输出 {count} 条，每条一行，用单独一行 --- 分隔；不要编号、不要 Markdown、不要引号。
 2. 改不动就原样保留那一行；不要新增信息，不要解释。
 3. 不要旁白、不要自评，除了改写结果什么都不要输出。
-4. 下面的「最近说过的」和「最近反复用的短词」是背景，不是要改的内容；改写时不要和它们重复。
+4. 下面的「最近说过的」「对方刚说的」和「最近反复用的短词」是背景，不是要改的内容；改写时不要和它们重复。
+
+单独读一遍再交：把每条气泡当成对方只看到这一条消息。
+- 里面如果有「对方刚说的」和「最近说过的」都没出现过的名词、外号、代号或你自己临时造的说法（把某件事叫「记分点」这类），那对方只能靠猜：要么在同一句里说清它是什么，要么整句删掉。
+- 不要假设对方记得你记忆里的事，也不要拿旧事当这条消息的前提；离开你的脑子就不成立的话，不发。
+
+对方刚说的：
+{user_text}
 
 最近说过的：
 {recent_text}

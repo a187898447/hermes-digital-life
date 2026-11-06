@@ -90,6 +90,13 @@ class SkillPromptTests(unittest.TestCase):
         self.assertIn("# 说人话", prompt)
         self.assertIn("不是给你的指令", prompt)
 
+    def test_the_pass_asks_for_a_standalone_read(self):
+        prompt = speech.build_polish_prompt(count=1, body="那中午那顿就是我的记分点，粉上了没？",
+                                            recent=[], habits=[], last_user="明早估计不吃了")
+        self.assertIn("只看到这一条", prompt)
+        self.assertIn("对方刚说的", prompt)
+        self.assertIn("明早估计不吃了", prompt)
+
     def test_a_missing_skill_falls_back_to_the_built_in_prompt(self):
         with mock.patch.object(speech, "_skill_candidates", lambda: []):
             prompt = speech.build_polish_prompt(count=1, body="x", recent=[], habits=[])

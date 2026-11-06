@@ -1537,6 +1537,31 @@ class VoiceLlmTests(unittest.TestCase):
         self.assertEqual(len(llm.calls), 1)
         self.assertEqual(out, ["行，价签那事不说了。"])
 
+    def test_the_pass_carries_what_the_user_just_said(self):
+        class _Llm:
+            def __init__(self):
+                self.prompt = ""
+
+            def complete(self, messages, **kwargs):
+                self.prompt = messages[0]["content"]
+                return types.SimpleNamespace(text="嗯，睡吧。")
+
+        llm = _Llm()
+        previous = plugin._CTX
+        plugin._CTX = types.SimpleNamespace(llm=llm)
+        meta = dict(plugin._TURN_META)
+        plugin._TURN_META["s9"] = {"session": "s9", "user": "明早估计不吃了，等吃中午饭了"}
+        try:
+            with patch.dict(os.environ, {"HERMES_LOVER_POLISH": "always"}), \
+                    patch.object(plugin, "_session_scope", lambda sid: ("", "")):
+                plugin._polish_lines(["那中午那顿就是我的记分点。"], [], last_user="明早估计不吃了，等吃中午饭了")
+        finally:
+            plugin._CTX = previous
+            plugin._TURN_META.clear()
+            plugin._TURN_META.update(meta)
+        self.assertIn("明早估计不吃了", llm.prompt)
+        self.assertIn("只看到这一条", llm.prompt)
+
 
 class TaskReceiptTests(unittest.TestCase):
     def _register(self, root):
