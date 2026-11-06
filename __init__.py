@@ -1004,6 +1004,10 @@ def register(ctx) -> None:
         except sqlite3.Error:
             return False
 
+    def _study_learned_problem(text, session_id):
+        from .digital_life import memory as _memory  # noqa: PLC0415
+        return _memory.study_learned_problem(text, memory_store().read_entries(), session_id)
+
     def memory_write(args, session_id="", **kwargs):
         try:
             study = _is_study_session(session_id)
