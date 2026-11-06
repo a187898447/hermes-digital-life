@@ -22,6 +22,7 @@ from .digital_life import proactive as _proactive
 from .digital_life import selfheal as _selfheal
 from .digital_life import typos as _typos
 from .digital_life import compaction as _compaction
+from .digital_life import library as _library
 from .digital_life.runtime import record_api_error, record_request, record_turn
 
 logger = logging.getLogger(__name__)
@@ -1159,6 +1160,57 @@ def register(ctx) -> None:
         return json.dumps({"ok": bool(current and current.get("ok")),
                            "running": bool(current and current.get("ok")),
                            "logged_in": (current or {}).get("logged_in")})
+
+    def read_source(args, **kwargs):
+        from .digital_life import library  # noqa: PLC0415
+
+        name = str(args.get("name") or "").strip()
+        source = str(args.get("source") or "").strip()
+        try:
+            if source:
+                meta = library.ingest(source)
+            else:
+                matches = [book for book in library.books()
+                           if name and (book.get("title") == name or book.get("file") == name)]
+                if not matches:
+                    return json.dumps({"ok": False, "error": "没有这本书；先用 source 指定文件或链接"})
+                meta = matches[0]
+            page = library.read(meta, int(args.get("part") or 0),
+                                int(args.get("max_chars") or 4000))
+        except (ValueError, OSError) as exc:
+            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+        return json.dumps(page, ensure_ascii=False)
+
+    def library_list(args, **kwargs):
+        from .digital_life import library  # noqa: PLC0415
+
+        return json.dumps({"ok": True, "books": [
+            {"title": book.get("title"), "chars": book.get("chars"), "pages": book.get("pages")}
+            for book in library.books()]}, ensure_ascii=False)
+
+    ctx.register_tool(
+        name="read_source", toolset="digital_life",
+        schema={"name": "read_source",
+                "description": ("Read a local .txt/.md file or http(s) link page by page and study it. "
+                                "Pass source once to load it, then repeat with name + part to continue. "
+                                "After reading, record what stuck with memory_write(kind='learned') "
+                                "and one note summarising the source."),
+                "parameters": {"type": "object", "properties": {
+                    "source": {"type": ["string", "null"], "description": "Path or URL to load."},
+                    "name": {"type": ["string", "null"], "description": "A title from library_list."},
+                    "part": {"type": "integer", "default": 0},
+                    "max_chars": {"type": "integer", "default": 4000},
+                }, "additionalProperties": False}},
+        handler=read_source,
+        description="Read one page of a text source and return the next cursor.",
+    )
+    ctx.register_tool(
+        name="library_list", toolset="digital_life",
+        schema={"name": "library_list", "description": "List sources already loaded into the library.",
+                "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
+        handler=library_list,
+        description="List loaded text sources.",
+    )
 
     ctx.register_tool(
         name="qzone_bridge", toolset="digital_life",

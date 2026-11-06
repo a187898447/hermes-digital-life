@@ -32,6 +32,8 @@ provides_tools:
   - background_task
   - qzone_feed
   - qzone_bridge
+  - read_source
+  - library_list
 provides_hooks:
   - pre_llm_call
   - pre_tool_call
