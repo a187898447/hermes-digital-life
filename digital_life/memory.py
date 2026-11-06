@@ -229,18 +229,28 @@ class MemoryStore:
         if op == "add":
             if identifier in entries:
                 raise ValueError("duplicate id")
-            if event["kind"] not in DEFAULT_WEIGHTS or not isinstance(event["text"], str) or not event["text"].strip():
+            if event.get("kind") not in DEFAULT_WEIGHTS or not isinstance(event.get("text"), str) or not event["text"].strip():
                 raise ValueError("invalid content")
-            for key in ("weight", "created_at", "last_access_at"):
-                if not _number(event[key]): raise ValueError("invalid number")
+            # Entries written by older versions lack some fields; fill them in
+            # rather than dropping the memory on replay.
+            created_at = event.get("created_at")
+            if not _number(created_at):
+                raise ValueError("invalid number")
+            weight = event.get("weight", 1.0)
+            last_access_at = event.get("last_access_at", created_at)
+            hits = event.get("hits", 0)
+            source_session_id = event.get("source_session_id", "")
+            if not _number(weight) or not _number(last_access_at): raise ValueError("invalid number")
             cortisol = event.get("cortisol", 50.0)
             if not _number(cortisol): raise ValueError("invalid number")
-            if not 0.2 <= event["weight"] <= 3 or not 0 <= cortisol <= 100:
+            if not 0.2 <= weight <= 3 or not 0 <= cortisol <= 100:
                 raise ValueError("invalid weight/cortisol")
-            if type(event["hits"]) is not int or event["hits"] < 0 or not isinstance(event["source_session_id"], str):
+            if type(hits) is not int or hits < 0 or not isinstance(source_session_id, str):
                 raise ValueError("invalid access metadata")
-            entries[identifier] = {k: (event[k] if k != "cortisol" else cortisol) for k in (
-                "id", "kind", "text", "weight", "cortisol", "created_at", "last_access_at", "hits", "source_session_id")}
+            entries[identifier] = {"id": identifier, "kind": event["kind"], "text": event["text"],
+                                   "weight": weight, "cortisol": cortisol, "created_at": created_at,
+                                   "last_access_at": last_access_at, "hits": hits,
+                                   "source_session_id": source_session_id}
             for field in ("chat_id", "chat_type", "speaker"):
                 value = event.get(field, "")
                 if not isinstance(value, str):
@@ -264,6 +274,8 @@ class MemoryStore:
             date = identifier.split("-")[1]
             entries[identifier].update(date=f"{date[:4]}-{date[4:6]}-{date[6:]}", archived=False)
         elif op == "touch":
+            if identifier not in entries:
+                return
             row = entries[identifier]
             if not _number(event["last_access_at"]) or type(event["hits"]) is not int or event["hits"] < row["hits"]:
                 raise ValueError("invalid touch")
@@ -274,7 +286,9 @@ class MemoryStore:
                 changes["weight"] = event["weight"]
             row.update(changes)
         elif op == "forget":
-            if not _number(event["archived_at"]): raise ValueError("invalid archive time")
+            if identifier not in entries:
+                return
+            if not _number(event.get("archived_at")): raise ValueError("invalid archive time")
             entries[identifier].update(archived=True, archived_at=event["archived_at"])
         elif op == "purge":
             if not _number(event.get("purged_at")): raise ValueError("invalid purge time")
