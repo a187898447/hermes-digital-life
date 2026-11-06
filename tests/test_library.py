@@ -12,12 +12,15 @@ class LibraryTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.root = Path(self.tmp.name) / "library"
         self.root.mkdir(parents=True)
-        patcher = mock.patch.object(library, "root", return_value=self.root)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.inbox = Path(self.tmp.name) / "inbox"
+        self.inbox.mkdir()
+        for name, value in (("root", self.root), ("inbox_root", self.inbox)):
+            patcher = mock.patch.object(library, name, return_value=value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def write(self, name, text):
-        path = Path(self.tmp.name) / name
+        path = self.inbox / name
         path.write_text(text, "utf-8")
         return path
 
@@ -114,6 +117,37 @@ class LibraryTests(unittest.TestCase):
         text = library.read(meta, None, 800)["text"]
         self.assertIn("a.md", text)
         self.assertNotIn("b.bin", text)
+
+    def test_local_source_outside_the_inbox_is_refused(self):
+        outside = Path(self.tmp.name) / "secret.txt"
+        outside.write_text("不该被读到", "utf-8")
+        with self.assertRaises(ValueError) as caught:
+            library.ingest(str(outside))
+        self.assertIn("收件目录", str(caught.exception))
+
+    def test_relative_name_is_read_from_the_inbox(self):
+        (self.inbox / "draft.md").write_text("# 草稿", "utf-8")
+        meta = library.ingest("draft.md")
+        self.assertEqual(meta["title"], "draft.md")
+
+    def test_symlink_escaping_the_inbox_is_refused(self):
+        outside = Path(self.tmp.name) / "secret.txt"
+        outside.write_text("不该被读到", "utf-8")
+        link = self.inbox / "link.txt"
+        try:
+            link.symlink_to(outside)
+        except OSError:
+            self.skipTest("symlinks unavailable")
+        with self.assertRaises(ValueError):
+            library.ingest(str(link))
+
+    def test_loopback_url_is_refused_before_any_request(self):
+        with self.assertRaises(ValueError):
+            library.ingest("http://127.0.0.1:8765/feed")
+
+    def test_non_http_scheme_is_refused(self):
+        with self.assertRaises(ValueError):
+            library.ingest("file:///etc/passwd")
 
     def test_books_lists_every_ingested_source(self):
         library.ingest(str(self.write("one.txt", "第一本")))

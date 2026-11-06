@@ -34,6 +34,8 @@ _TURN_META: dict[str, dict[str, str]] = {}
 _TOOL_TURNS: dict[str, dict[str, int]] = {}
 TOOL_CALL_LIMIT = 8
 ZONE_PAGE_LIMIT = 2
+READ_SOURCE_TURN_LIMIT = 3
+READ_SOURCE_DAILY_INGESTS = 40
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
 _CACHE_LIMIT = 512
 
@@ -235,6 +237,9 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
         counts["recall"] = counts.get("recall", 0) + 1
     if tool_name == "read_source":
         counts["read"] = counts.get("read", 0) + 1
+        if counts["read"] > READ_SOURCE_TURN_LIMIT:
+            return {"action": "block",
+                    "message": "本轮最多读 3 页。剩下的一本书交给 study_source 后台读，先回话。"}
     if tool_name == "memory_write":
         payload = kwargs.get("args") or kwargs.get("arguments") or {}
         text = str(payload.get("text") or "") if isinstance(payload, dict) else ""
@@ -1331,13 +1336,17 @@ def register(ctx) -> None:
                            "running": bool(current and current.get("ok")),
                            "logged_in": (current or {}).get("logged_in")})
 
-    def read_source(args, **kwargs):
-        from .digital_life import library  # noqa: PLC0415
+    def read_source(args, session_id="", **kwargs):
+        from .digital_life import budget, library  # noqa: PLC0415
 
         name = str(args.get("name") or "").strip()
         source = str(args.get("source") or "").strip()
         try:
             if source:
+                if not budget.spend("read_source_ingest", READ_SOURCE_DAILY_INGESTS):
+                    return json.dumps({"ok": False,
+                                       "error": "今天读进来的新东西够多了，先用库里已有的书。"},
+                                      ensure_ascii=False)
                 meta = library.ingest(source)
             else:
                 matches = [book for book in library.books()

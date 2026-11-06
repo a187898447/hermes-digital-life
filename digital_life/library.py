@@ -12,8 +12,9 @@ import hashlib
 import json
 import re
 import logging
-import urllib.request
 from pathlib import Path
+
+from . import netguard
 
 logger = logging.getLogger("hermes-lover.library")
 
@@ -31,15 +32,52 @@ def root() -> Path:
     return path
 
 
+def inbox_root() -> Path:
+    """Where the operator drops files for the agent to read.
+
+    The chat can only ingest text from here: the model is talked to by strangers, so
+    "read this path" must not reach the rest of the host filesystem.
+    """
+    from plugins.plugin_storage import plugin_data_dir  # noqa: PLC0415
+
+    path = Path(plugin_data_dir("hermes-lover")) / "inbox"
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _local_path(source: str) -> Path:
+    """Resolve a local source inside the inbox; refuse anything outside it."""
+    root = inbox_root().resolve()
+    path = Path(source).expanduser()
+    if not path.is_absolute():
+        path = root / path
+    if path.is_symlink():
+        raise ValueError(f"不能读符号链接：{source}")
+    try:
+        real = path.resolve()
+    except OSError:
+        raise ValueError(f"not a readable file: {source}") from None
+    try:
+        real.relative_to(root)
+    except ValueError:
+        raise ValueError(
+            f"只能读收件目录里的文件：先把文件放进 {root}，再用文件名调用。"
+            "收件目录以外的路径属于宿主系统，聊天里不能读。") from None
+    if not real.is_file():
+        raise ValueError(f"not a readable file: {source}")
+    return real
+
+
 def _slug(title: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch in "-_" else "-" for ch in title)[:40].strip("-")
     return cleaned or "source"
 
 
 def _fetch(url: str, timeout: float = 20.0) -> bytes:
-    request = urllib.request.Request(url, headers={"User-Agent": "hermes-lover/1.0"})
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        return response.read(MAX_BYTES + 1)
+    body, _final, truncated = netguard.fetch_public(url, max_bytes=MAX_BYTES, timeout=timeout)
+    if truncated:
+        raise ValueError(f"source is larger than {MAX_BYTES // 1000} KB; split it first")
+    return body
 
 
 _GH_BLOB = re.compile(r"https?://github\.com/([^/]+)/([^/]+)/blob/([^/]+)/(.+)$")
@@ -137,10 +175,15 @@ def _github_listing(owner: str, repo: str, path: str, fetcher) -> str:
 
 
 def ingest(source: str, *, fetcher=None) -> dict:
-    """Copy a text file or URL into the library; returns its metadata."""
+    """Copy a text file or URL into the library; returns its metadata.
+
+    ``fetcher`` is a test seam: passing one means the caller owns URL validation.
+    """
     source = str(source or "").strip()
     if not source:
         raise ValueError("source is required")
+    if "://" in source and not source.startswith(("http://", "https://")):
+        raise ValueError("only http(s) links can be read")
     if source.startswith(("http://", "https://")):
         github = _github(source, fetcher)
         if github is not None:
@@ -149,9 +192,7 @@ def ingest(source: str, *, fetcher=None) -> dict:
             raw = (fetcher or _fetch)(source)
             title = source.rsplit("/", 1)[-1] or "web-page"
     else:
-        path = Path(source).expanduser()
-        if not path.is_file():
-            raise ValueError(f"not a readable file: {source}")
+        path = _local_path(source)
         if path.suffix.lower() not in TEXT_SUFFIXES:
             raise ValueError(f"unsupported file type: {path.suffix or '(none)'} — only txt/md")
         raw = path.read_bytes()

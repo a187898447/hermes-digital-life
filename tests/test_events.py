@@ -973,6 +973,14 @@ class ToolBudgetTests(unittest.TestCase):
         self.assertEqual(blocked["action"], "block")
         self.assertIn("刚记过", blocked["message"])
 
+    def test_fourth_page_in_one_turn_is_blocked(self):
+        hook = self.hl._gate_tool_call
+        for _ in range(3):
+            self.assertIsNone(hook(tool_name="read_source", session_id="s-budget"))
+        blocked = hook(tool_name="read_source", session_id="s-budget")
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("3 页", blocked["message"])
+
     def test_non_qq_session_is_exempt(self):
         self.hl._TURN_META["s-cron"] = {"platform": ""}
         try:
