@@ -135,6 +135,8 @@ def learned_problem(text: str) -> str:
         return "too long for a habit (60 chars)"
     if _QUOTED.search(body):
         return "do not quote the source; say it in your own words"
+    if re.search(r"(?:^|[，。；\s])例[：:]", body):
+        return "no worked examples in a habit; say what you would do"
     if _LEARNED_META.search(body):
         return "that is bookkeeping about the source, not a habit; put it in a note"
     return ""

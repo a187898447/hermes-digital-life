@@ -1235,7 +1235,7 @@ def register(ctx) -> None:
         except (ValueError, OSError) as exc:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
         if isinstance(page, dict) and page.get("finished"):
-            page["extract"] = ("读完了。提炼成 learned 时写成习惯，不要抄库存句子：什么时候 → 你会怎么做/怎么说（用自己的话）+ 一个你自己现编的短例 → "
+            page["extract"] = ("读完了。提炼成 learned 时写成习惯，不要抄库存句子，也不要举例：什么时候 → 你会怎么做/怎么说（用自己的话）→ "
                                "applies_dow（0=周一 1=周二 2=周三 3=周四 4=周五 5=周六 6=周日，周四=3；材料没写就 null）。只收跟人说话有关的习惯：什么场合、玩什么梗、自己会怎么接；排版/抓取/重试这类做法不收。不抄原文整句。别在条目里解释梗的含义或笑点，只记场合和你自己的接法。")
         return json.dumps(page, ensure_ascii=False)
 
