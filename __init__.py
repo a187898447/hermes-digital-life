@@ -1236,7 +1236,7 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
     habits = speech.habit_phrases(recent)
     prompt = speech.build_polish_prompt(
         count=len(lines), body="\n---\n".join(lines), recent=recent, habits=habits,
-        last_user=last_user)
+        last_user=last_user, flagged=speech.ungrounded(lines, recent, last_user))
     out = ""
     llm = getattr(_CTX, "llm", None)
     if llm is not None:
@@ -1260,40 +1260,7 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
     parts = speech.parse_polish(out, len(lines))
     if not parts or speech.lint(parts, recent):
         return None
-    # Second, narrower pass: a reader with none of the model's memory must still follow
-    # each bubble on its own. Only a flag comes back as a rewrite; silence keeps `parts`.
-    checked = _readback(parts, recent, last_user)
-    return checked or parts
-
-
-def _readback(lines: list[str], recent: list[str], last_user: str = "") -> Optional[list[str]]:
-    from .digital_life import speech
-
-    mode = os.environ.get("HERMES_LOVER_READBACK", "auto").strip().lower()
-    if mode == "0":
-        return None
-    llm = getattr(_CTX, "llm", None)
-    if llm is None or not lines:
-        return None
-    if mode != "always" and not speech.needs_readback(lines, recent, last_user):
-        return None
-    recent_text = "\n".join(f"- {line}" for line in recent) or "（无）"
-    prompt = speech.READBACK_PROMPT.format(
-        last_user=(last_user or "").strip() or "（无）",
-        recent=recent_text,
-        body="\n---\n".join(lines))
-    try:
-        done = llm.complete([{"role": "user", "content": prompt}],
-                            max_tokens=max(120, len(lines) * 90), timeout=15,
-                            temperature=0.0, purpose="hermes-lover.readback")
-        text = str(getattr(done, "text", "") or "")
-    except Exception:
-        logger.debug("hermes-lover: readback pass failed", exc_info=True)
-        return None
-    picked = speech.parse_readback(text, len(lines))
-    if picked:
-        logger.info("hermes-lover: readback rewrote %d bubble(s) that assumed memory", len(lines))
-    return picked
+    return parts
 
 
 def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs) -> Optional[str]:

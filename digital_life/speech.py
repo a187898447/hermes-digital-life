@@ -346,28 +346,6 @@ def load_skill() -> str:
     return ""
 
 
-READBACK_PROMPT = """你没有这个机器人的记忆，也不认识收消息的人。下面每条消息是它这一轮要单独发出去的气泡。
-只做一件事：判断一个刚刚只看到这一条消息的人，能不能读懂它。
-
-读不懂的情况就两种：
-1. 里面有他这轮没提过的名词、外号、代号，或者机器人自己临时造的说法（例如把一顿饭叫「记分点」）；
-2. 整句的前提是几天前的旧事，而这条消息里没有交代。
-
-输出 JSON，不要多余文字：
-{{"confusing": [读不懂的下标，从 0 开始], "rewrite": [按原顺序的改后消息，每条一项]}}
-
-改写规则：只改读不懂的那几条，在原意上把缺的交代补进同一句；补不进去就换成一句不需要前情的话；能读懂的原样返回，不要顺手改文风。条数必须和原文一致。
-
-对方刚说的：{last_user}
-
-最近说过的：
-{recent}
-
-消息：
-{body}
-"""
-
-
 _POINTING = ("这", "那", "它", "他", "她", "这事", "那事")
 
 
@@ -380,44 +358,24 @@ def _shares_run(line: str, context: str, size: int = 3) -> bool:
     return False
 
 
-def needs_readback(lines: list[str], recent: list[str], last_user: str = "") -> bool:
-    """Cheap gate: only a bubble that points at something unmentioned is worth a check.
+def ungrounded(lines: list[str], recent: list[str], last_user: str = "") -> list[str]:
+    """Bubbles that point at something this thread never mentioned.
 
-    A sentence with 「这/那/它/他」 but no three-character run in common with what the
-    other side just said or read is the shape that produced "记分点 / 粉上了没".
+    The check is mechanical on purpose: it costs nothing, and a hit only sharpens the
+    one rewrite pass instead of buying another model call.
     """
     context = "".join([last_user or "", *recent])
-    for line in lines:
-        if not any(mark in line for mark in _POINTING):
-            continue
-        if not _shares_run(line, context):
-            return True
-    return False
+    return [line for line in lines
+            if any(mark in line for mark in _POINTING) and not _shares_run(line, context)]
 
 
-def parse_readback(text: str, count: int) -> list[str] | None:
-    """Return the rewrite only when the judge actually flagged something."""
-    import json
-
-    start, end = text.find("{"), text.rfind("}")
-    if start < 0 or end <= start:
-        return None
-    try:
-        payload = json.loads(text[start:end + 1])
-    except Exception:
-        return None
-    confusing = payload.get("confusing")
-    rewrite = payload.get("rewrite")
-    if not isinstance(confusing, list) or not confusing:
-        return None
-    if not isinstance(rewrite, list) or len(rewrite) != count:
-        return None
-    lines = [str(item or "").strip() for item in rewrite]
-    return [line for line in lines if line] or None
+def needs_readback(lines: list[str], recent: list[str], last_user: str = "") -> bool:
+    return bool(ungrounded(lines, recent, last_user))
 
 
 def build_polish_prompt(*, count: int, body: str, recent: list[str],
-                        habits: list[str], last_user: str = "") -> str:
+                        habits: list[str], last_user: str = "",
+                        flagged: list[str] | None = None) -> str:
     """Chat framing around the skill: it edits bubbles, it does not rewrite essays."""
     skill = load_skill()
     if not skill:
@@ -428,6 +386,14 @@ def build_polish_prompt(*, count: int, body: str, recent: list[str],
     tic_text = "、".join(no_say()[0])
     recent_text = "\n".join(f"- {line}" for line in recent) or "（无）"
     user_text = last_user.strip() or "（无）"
+    flagged = [line for line in (flagged or []) if line.strip()]
+    flag_block = ""
+    if flagged:
+        listing = "\n".join(f"- {line}" for line in flagged)
+        flag_block = (
+            "这几条在指代对方这轮没提过的东西，或者拿旧事当前提；必须让没有你记忆的人也能读懂："
+            "把指代的对象写进同一句，写不进去就整句删掉，不要换近义词糊过去。\n"
+            f"{listing}\n\n")
     habit_text = "\n".join(f"- {phrase}" for phrase in habits) or "（无）"
     return f"""你在替一个 QQ 群友改口：下面是它这一轮要发出去的消息。按《说人话》的规则把它们改成有人随口说话的样子——保留意思和具体内容，删掉不承担意思的包装、垫场和姿态。
 
@@ -457,7 +423,7 @@ def build_polish_prompt(*, count: int, body: str, recent: list[str],
 - 里面如果有「对方刚说的」和「最近说过的」都没出现过的名词、外号、代号或你自己临时造的说法（把某件事叫「记分点」这类），那对方只能靠猜：要么在同一句里说清它是什么，要么整句删掉。
 - 不要假设对方记得你记忆里的事，也不要拿旧事当这条消息的前提；离开你的脑子就不成立的话，不发。
 
-对方刚说的：
+{flag_block}对方刚说的：
 {user_text}
 
 最近说过的：
