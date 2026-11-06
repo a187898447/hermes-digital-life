@@ -274,7 +274,24 @@ def _api_error(error: dict[str, Any] | None = None, retryable: bool | None = Non
     record_api_error(now_ms, error_type=error_type, retryable=retryable)
 
 
+_STUDY_CHARS: dict[str, int] = {}
+
+
+def _note_study_read(session_id: str, result: str) -> None:
+    if os.environ.get("HERMES_LOVER_STUDY") != "1" or not session_id:
+        return
+    try:
+        payload = json.loads(result or "{}")
+    except (TypeError, ValueError):
+        return
+    chars = payload.get("chars") if isinstance(payload, dict) else None
+    if isinstance(chars, int) and chars > 0:
+        _STUDY_CHARS[session_id] = _STUDY_CHARS.get(session_id, 0) + chars
+
+
 def _post_tool_call(tool_name: str = "", args: dict[str, Any] | None = None, result: str = "", **kwargs) -> None:
+    if tool_name == "read_source":
+        _note_study_read(str(kwargs.get("session_id") or ""), result)
     chat_id, _chat_type = _session_scope(str(kwargs.get("session_id") or ""))
     digital_life.runtime.observe_tool_result(time.time() * 1000, tool_name=tool_name, args=args or {},
                                              result=result, chat=chat_id)
@@ -987,7 +1004,9 @@ def register(ctx) -> None:
 
     def _study_learned_problem(text, session_id):
         from .digital_life import memory as _memory  # noqa: PLC0415
-        return _memory.study_learned_problem(text, memory_store().read_entries(), session_id)
+        chars = _STUDY_CHARS.get(session_id, 0)
+        cap = max(2, min(12, chars // 6000 + 1))
+        return _memory.study_learned_problem(text, memory_store().read_entries(), session_id, cap=cap)
 
 
     def memory_write(args, session_id="", **kwargs):
@@ -1196,7 +1215,7 @@ def register(ctx) -> None:
             "你在后台读完一份资料，不要把原文贴回来。用 read_source 读 "
             f"{source} ，一次读不完就用 name 加 part 续读直到 finished；材料写了星期就用 applies_dow"
             "（0=周一…3=周四…6=周日）。边读边用 memory_write 记 learned，text 写成"
-            "「什么时候→你会怎么说」（自己的话，别抄原文）；同一触发只写一条，最多两条，"
+            "「什么时候→你会怎么说」（自己的话，别抄原文）；按读到的内容量写（大约每 6k 字一条），同一触发只写一条，"
             "补充细节并进已有那条；来源和结构用 note 记，不要写 turn。"
             "只用 read_source 和 memory_write；不要用 terminal、不要建 cron 任务、不要 web_search/web_extract。"
             "最后只回一句话：读完了、记了几条。"

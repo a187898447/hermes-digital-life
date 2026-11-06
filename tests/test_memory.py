@@ -958,7 +958,12 @@ class StudyLearnedTests(unittest.TestCase):
     def test_third_habit_is_rejected(self):
         from digital_life import memory as m
         entries = {f"hp-{i}": {"kind": "learned", "text": f"场景{i} → 说法{i}", "source_session_id": "s1"} for i in (1, 2)}
-        self.assertIn("already wrote 2", m.study_learned_problem("场景3 → 说法3", entries, "s1"))
+        self.assertIn("already wrote 2", m.study_learned_problem("场景3 → 说法3", entries, "s1", cap=2))
+
+    def test_large_source_allows_more(self):
+        from digital_life import memory as m
+        entries = {f"hp-{i}": {"kind": "learned", "text": f"场景{i} → 说法{i}", "source_session_id": "s1"} for i in range(5)}
+        self.assertEqual("", m.study_learned_problem("场景9 → 说法9", entries, "s1", cap=8))
 
     def test_same_trigger_is_rejected(self):
         from digital_life import memory as m
