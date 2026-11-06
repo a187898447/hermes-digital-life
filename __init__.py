@@ -192,10 +192,40 @@ def _maybe_wake(session_id: str = "") -> None:
 
 
 
+_STUDY_SESSIONS: dict[str, bool] = {}
+
+
+def _study_session(session_id: str) -> bool:
+    """True when this session is a background study run (tagged by study_source).
+
+    Those runs are hosted by the gateway like any local session, so they see the
+    full toolset; restricting them here is the only enforcement that actually
+    holds when the model decides to go debug something instead of reading.
+    """
+    if not session_id:
+        return False
+    if session_id in _STUDY_SESSIONS:
+        return _STUDY_SESSIONS[session_id]
+    db = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
+    try:
+        with sqlite3.connect(str(db), timeout=2) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM messages WHERE session_id=? AND role='user' AND content LIKE '%[study-task]%' LIMIT 1",
+                (session_id,)).fetchone()
+        found = bool(row)
+    except sqlite3.Error:
+        return False
+    _STUDY_SESSIONS[session_id] = found
+    return found
+
+
 def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict[str, Any] | None:
     """Veto runaway tool loops inside one QQ turn (hard limit, not a prompt hint)."""
     if not tool_name or not session_id:
         return None
+    if _study_session(session_id) and tool_name not in ("read_source", "memory_write"):
+        return {"action": "block",
+                "message": "后台阅读理解只做两件事：read_source 读、memory_write 记。读不完就停，回一句结论，不要排查代码或跑命令。"}
     meta = _TURN_META.get(session_id) or {}
     if (meta.get("platform") or _session_source(session_id) or "") != "qqbot":
         return None
