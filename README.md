@@ -157,7 +157,9 @@ QQ 会话里模型能调用的工具分几组，权限和预算都不一样：
 - **记忆**：`memory_write` / `memory_recall` / `memory_revoke`（只能撤 10 分钟内）/ `memory-compact` CLI。
   自动捕获按轮写 `turn`；每天第一条 QQ 消息会先补前一天的 `fact` 和 `journal`。
 - **读源**：`read_source` 单页最多 6000 字，书没读完时返回自动续读提示，支持 GitHub blob/repo/tree；
-  `library_list` 列出 `plugin-data/<profile>/library/` 里的书（每本 ≤2MB）；`study_source` 把长链接交给
+  本地文件只能读操作者的收件目录 `plugin-data/hermes-lover/inbox/`（先放文件再让模型读），公网 URL 只认
+  可达的 http(s)；QQ 里每轮最多读 3 页、每天最多 40 次新读；`library_list` 列出
+  `plugin-data/<profile>/library/` 里的书（每本 ≤2MB）；`study_source` 把长链接交给
   后台会话，后台只能用 `read_source` 和 `memory_write`（`pre_tool_call` 硬拦 terminal/搜索/代码执行），
   读完给会话回一句结论。
 - **空间**：`qzone_feed` 每轮最多 2 页、5 条，且调用前必须先 `memory_recall` 查这段是否读过。

@@ -351,3 +351,38 @@
   - 退订后发一条消息，beat 不再发给该 chat。
   - `/forget` 后 `memory_recall` 仍能命中全局条目，回复里显示剩余计数。
 - 回滚：每批一个 commit，回滚 = `git revert` + `/restart`；state 迁移只增不改（wake 的 schema 2 保留旧键读取），保证回滚后旧代码不崩。
+
+---
+
+## 9. 实施记录（2026-11-06）
+
+分支 `fix/run-4`，每个批次一个 commit；批 0 之后测试从 329 增至 395。
+
+| 项 | 状态 | commit | 与计划的偏差 |
+|---|---|---|---|
+| 批 0 | 完成 | `51bdfcd` | 仓库根改为工作区本身；删掉重复镜像目录、根 `test_events.py`、旧索引 |
+| F1 | 完成 | `911c42a` | `library.ingest` 不加 `scope` 参数：边界对所有调用方一致，配额只在 handler；`fetcher` 仍是测试缝 |
+| F2/F10 | 完成 | `127571d` | 子会话工具集用 `-t` + 精确白名单 hook；polish 子会话 `-t todo`、正文加围栏 |
+| F3/F9 | 完成 | `74be786` | revoke 失败一律同一条错误；/restart 两步确认 + 60s 冷却；/forget 无 chat 直接跳过 |
+| F4 | 完成 | `8939dc3` | 每轮仍 `_replay()` 做权威读，只是索引改为逐条更新、不再全量重建；轮转按 `YYYY-MM` |
+| F5 | 完成 | `17a66b3` | 旧单例 wake 状态直接丢弃并记日志，不猜测归属；`status_snapshot` 补上 wake 投影 |
+| F6 | 完成 | `2e2338b` | 退订与静音拆开：墓碑挡自动入列，`can_send` 管 beat；群聊不再自动订阅（NV-c） |
+| F7 | 完成 | `2e2338b` | `peek` 默认 `include_global=True`，只有群聊调用点传 False |
+| F8 | 完成 | `2e2338b` | selfheal 只把 `status == "FIX"` 的检查记成 pending，不自动修 |
+| F11 | 完成 | `6cae059` | 桥没有独立 `/image` 端点，图片在 `/feed` 内联抓取，所以只给 `/feed`、`/health` 加 token |
+| F12 | 完成 | `6cae059` | 已打过的宿主保持原样；新安装默认不打，doctor 只给提示（WARN，不参与 `--fix`） |
+
+### 回滚兼容
+
+- wake：旧代码 `normalize_wake(schema-2)` 返回空 wake，不抛异常；回滚后唤醒状态被清空，但不会崩。
+- 记忆：新增的 `purge`、`archive` 只是事件与文件，旧代码 `_replay` 会跳过未知事件类型之外的已知 op；
+  `rotate_turns` 只把已摘要且超 30 天的 turn 移出，摘要仍在 live 索引里。
+- 订阅/发送状态：`proactive-muted.json`、`proactive-sent.json` 与新字段都是增量，旧代码读不到就按默认处理。
+
+### 遗留
+
+- 宿主上有一个已解包但没打 QQ 拆分补丁的旧环境
+  （`~/.hermes/installs/7c4632d288741914/environments/8a8a7dfc.../adapter.py`），
+  `doctor` 因此报 FIX；它不影响当前运行实例，属于宿主环境清理，不在本次范围。
+- S1 的"handler 参数静态扫描"没有做成测试（误报率高），S2、S3 已落成
+  `tests/test_scoping_guards.py`。
