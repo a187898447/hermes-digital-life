@@ -400,7 +400,7 @@ class RegistrationTests(unittest.TestCase):
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)
-        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "background_task", "read_source", "library_list", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "digital_life_status"])
+        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "background_task", "read_source", "library_list", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "memory_revoke", "digital_life_status"])
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertEqual(set(schemas["memory_write"]) & {"sources", "refs"}, {"sources", "refs"})
         self.assertIn("kind", schemas["memory_recall"])

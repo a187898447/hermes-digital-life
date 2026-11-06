@@ -501,6 +501,31 @@ class MemoryStore:
                 logger.warning("Memory event persisted but index update failed", exc_info=True)
             return {"ok": True, "id": event["id"], "date": date}
 
+    def revoke(self, identifier, *, window_ms=10 * 60 * 1000, now_ms=None):
+        """Undo a just-written entry (default: 10 minutes). Older entries can only be corrected."""
+        stamp = time.time() * 1000 if now_ms is None else now_ms
+        with self._locked():
+            self._require_running()
+            entries = self.read_entries()
+            entry = entries.get(identifier)
+            if entry is None:
+                return {"ok": False, "error": f"no entry {identifier}"}
+            if entry.get("archived"):
+                return {"ok": False, "error": "that entry is already archived"}
+            created = int(entry.get("created_at") or 0)
+            if not created or stamp - created > window_ms:
+                return {"ok": False,
+                        "error": "only entries written in the last 10 minutes can be revoked; "
+                                 "write a correction entry instead"}
+            self._append([{"version": 1, "id": identifier, "op": "forget",
+                           "archived_at": stamp}], stamp)
+            try:
+                entries, digest = self._replay()
+                self._sync(entries, digest)
+            except (sqlite3.Error, RuntimeError, OSError):
+                logger.warning("Memory index unavailable after revoke", exc_info=True)
+            return {"ok": True, "id": identifier, "revoked": True}
+
     def clear(self, chat_id=None, *, now_ms=None):
         """Archive every live entry (optionally only one chat). Returns how many were archived."""
         stamp = time.time() * 1000 if now_ms is None else now_ms

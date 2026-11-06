@@ -809,6 +809,19 @@ class AnchorAndStressTests(unittest.TestCase):
         self.assertEqual(self.store.recall("", now_ms=NOW)["attention"]["crisis"], 3.0)
 
 
+
+    def test_revoke_only_undoes_recent_entries(self):
+        store = self.store
+        first = store.write("刚写错的", kind="note", now_ms=1_000_000)
+        old = store.write("很久以前写的", kind="note", now_ms=999_000)
+        result = store.revoke(first["id"], now_ms=1_000_000 + 60_000)
+        self.assertTrue(result["ok"])
+        self.assertTrue(store.read_entries()[first["id"]].get("archived"))
+        stale = store.revoke(old["id"], now_ms=1_000_000 + 20 * 60_000)
+        self.assertFalse(stale["ok"])
+        self.assertIn("correct", stale["error"])
+        self.assertFalse(store.read_entries()[old["id"]].get("archived"))
+
 if __name__ == "__main__":
     unittest.main()
 

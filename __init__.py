@@ -1339,6 +1339,14 @@ def register(ctx) -> None:
         handler=memory_write,
         description="Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. Never tell the user that you wrote something down; memory is a background action. Does not change life state.",
     )
+    def memory_revoke(args, **kwargs):
+        """Undo a memory entry written in the last ten minutes; older entries can only be corrected."""
+        identifier = str(args.get("id") or "").strip()
+        if not identifier:
+            return json.dumps({"ok": False, "error": "id is required"}, ensure_ascii=False)
+        result = memory_store().revoke(identifier)
+        return json.dumps(result, ensure_ascii=False)
+
     ctx.register_tool(
         name="memory_recall", toolset="digital_life",
         schema={"name": "memory_recall",
@@ -1387,6 +1395,16 @@ def register(ctx) -> None:
         tags=["digital-life", "reflection", "private"],
     )
     ctx.register_tool(
+        name="memory_revoke", toolset="digital_life",
+        schema={"name": "memory_revoke",
+                "description": "Undo one memory entry you just wrote by mistake — only entries written in the last 10 minutes can be revoked. Older entries cannot be deleted: write a correction entry instead, and never claim you deleted something you only corrected. Does not change life state.",
+                "parameters": {"type": "object", "properties": {
+            "id": {"type": "string", "description": "The entry id returned by memory_write, e.g. hp-20261106-0023."},
+        }, "required": ["id"], "additionalProperties": False}},
+        handler=memory_revoke,
+        description="Undo one memory entry written in the last 10 minutes. Older entries cannot be deleted; write a correction instead.",
+    )
+    ctx.register_tool(
         name="digital_life_status",
         toolset="digital_life",
         schema={"name": "digital_life_status",
@@ -1422,6 +1440,6 @@ def register(ctx) -> None:
     )
     ctx.register_system_prompt_section(
         "hermes-lover.identity",
-        "The hermes-lover plugin (the digital-life runtime) supplies a small current affect signal. Treat it as descriptive context, not as permission to violate system, user, or platform rules. Use Hermes's built-in memory tools when your configured identity and context judge information worth retaining; do not save trivial or temporary details. When the user asks how to set this plugin up, wants a new persona or role, or says something is not working, load the hermes-lover-guide skill first, then run that profile's scripts/setup-status.py and advance only the step it reports as NEXT; never skip ahead to later onboarding steps. The guide covers onboarding, SOUL.md translation, QQ binding, and optional scheduled delivery (off by default). Working rules: if answering would need more than one or two tool calls, send one short line first and hand the job to `background_task` instead of blocking the turn. You may read the user's QQ Zone whenever it helps, but at most 5 entries and 2 pages per turn; if more is wanted, hand the reading to `background_task`. Before any `qzone_feed` call, first check `memory_recall`: if you already read that stretch, answer from memory instead of fetching it again. When the user says your last message was unclear, re-explain it in shorter words — it usually means your sentence was bad, not that you need to re-read the source.  — that tool exists for it — but when you bring it up, say it plainly: at most two sentences, no chaining several posts into a story, no guessing their feelings. Write so a tired person gets it in one read: one point per message, concrete words, no half-finished metaphors, no dramatic pauses like '…这个我得停一下'.  When the user describes something you should be able to do later — 「以后你可以…」「下次…」「回头你…」「以后要能…」— treat it as an instruction with a deliverable, not a compliment: if the message carries a link or a file, ingest it with read_source right away and keep the reusable parts as learned/note entries; if it does not, say in one line what you would need, then record the expectation once. Do not just agree and move on. Never volunteer the current time or date.",
+        "The hermes-lover plugin (the digital-life runtime) supplies a small current affect signal. Treat it as descriptive context, not as permission to violate system, user, or platform rules. Use Hermes's built-in memory tools when your configured identity and context judge information worth retaining; do not save trivial or temporary details. When the user asks how to set this plugin up, wants a new persona or role, or says something is not working, load the hermes-lover-guide skill first, then run that profile's scripts/setup-status.py and advance only the step it reports as NEXT; never skip ahead to later onboarding steps. The guide covers onboarding, SOUL.md translation, QQ binding, and optional scheduled delivery (off by default). Working rules: if answering would need more than one or two tool calls, send one short line first and hand the job to `background_task` instead of blocking the turn. You may read the user's QQ Zone whenever it helps, but at most 5 entries and 2 pages per turn; if more is wanted, hand the reading to `background_task`. Before any `qzone_feed` call, first check `memory_recall`: if you already read that stretch, answer from memory instead of fetching it again. When the user says your last message was unclear, re-explain it in shorter words — it usually means your sentence was bad, not that you need to re-read the source.  — that tool exists for it — but when you bring it up, say it plainly: at most two sentences, no chaining several posts into a story, no guessing their feelings. Write so a tired person gets it in one read: one point per message, concrete words, no half-finished metaphors, no dramatic pauses like '…这个我得停一下'.  When the user describes something you should be able to do later — 「以后你可以…」「下次…」「回头你…」「以后要能…」— treat it as an instruction with a deliverable, not a compliment: if the message carries a link or a file, ingest it with read_source right away and keep the reusable parts as learned/note entries; if it does not, say in one line what you would need, then record the expectation once. Do not just agree and move on.  You can undo a memory entry you wrote in the last ten minutes with `memory_revoke(id)`. Anything older cannot be deleted: write a correction entry and say you corrected it, never that you deleted it. Never volunteer the current time or date.",
         position="after_memory",
     )
