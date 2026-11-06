@@ -76,13 +76,20 @@ class LibraryTests(unittest.TestCase):
         self.assertIn("正文", library.read(meta, None, 500)["text"])
         self.assertEqual(meta["source"], "https://github.com/acme/notes/blob/main/docs/a.md")
 
-    def test_github_repo_url_falls_back_to_the_readme(self):
+    def test_github_repo_url_returns_readme_plus_a_file_index(self):
+        import json as _json
         def fetcher(url):
+            if url.startswith("https://api.github.com/repos/acme/notes/contents/"):
+                return _json.dumps([{"type": "file", "name": "qa.json", "size": 99},
+                                    {"type": "dir", "name": "docs"}]).encode()
             if url.endswith("/main/README.md"):
                 return b"# readme"
             raise OSError("404")
         meta = library.ingest("https://github.com/acme/notes", fetcher=fetcher)
-        self.assertIn("README.md", meta["title"])
+        text = library.read(meta, None, 900)["text"]
+        self.assertIn("readme", text)
+        self.assertIn("qa.json (99 B)", text)
+        self.assertIn("docs/", text)
 
     def test_github_falls_back_when_raw_is_unreachable(self):
         import json as _json

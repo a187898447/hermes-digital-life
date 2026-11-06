@@ -96,14 +96,44 @@ def _github(source: str, fetcher) -> tuple[str, bytes] | None:
     repo = _GH_REPO.match(source)
     if repo:
         owner, name = repo.groups()
+        body = b""
         for readme in ("README.md", "README.txt", "README"):
             for branch in ("main", "master"):
                 try:
-                    return f"{name}/{readme}", _raw(owner, name, branch, readme, fetcher)
+                    body = _raw(owner, name, branch, readme, fetcher)
+                    break
                 except Exception:
                     continue
-        raise ValueError("repo has no README on main/master")
+            if body:
+                break
+        listing = _github_listing(owner, name, "", fetcher)
+        if not body and not listing:
+            raise ValueError("repo has no README and no readable files")
+        text = body.decode("utf-8", "replace") if body else ""
+        if listing:
+            text += "\n\n---\n仓库里的文本文件（要读某个文件，把它的 blob 链接再交给 read_source）：\n" + listing
+        return f"{name} (repo)", text.encode("utf-8")
     return None
+
+
+def _github_listing(owner: str, repo: str, path: str, fetcher) -> str:
+    """Names and sizes of readable text files at one directory level (best effort)."""
+    try:
+        api = f"https://api.github.com/repos/{owner}/{repo}/contents/{path}"
+        payload = json.loads((fetcher or _fetch)(api).decode("utf-8"))
+    except Exception:  # noqa: BLE001 - the listing is a bonus, not a requirement
+        return ""
+    if isinstance(payload, dict):
+        payload = [payload]
+    lines = []
+    for item in payload if isinstance(payload, list) else []:
+        name, kind = item.get("name", ""), item.get("type", "")
+        if kind == "file" and name.lower().endswith(
+                (".md", ".txt", ".json", ".csv", ".py", ".js", ".ts", ".yaml", ".yml")):
+            lines.append(f"- {name} ({item.get('size', 0)} B)")
+        elif kind == "dir" and len(lines) < 12:
+            lines.append(f"- {name}/")
+    return "\n".join(lines)
 
 
 def ingest(source: str, *, fetcher=None) -> dict:
