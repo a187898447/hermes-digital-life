@@ -44,10 +44,10 @@ _HABIT_STOP = {
 }
 _HABIT_PARTICLES = set("的地得了着过吗呢吧啊哈嗯哦呀嘛")
 
-# Phrases this persona keeps falling back on, given by the operator. Long ones
-# are cut wherever they appear; the short ones only when they are the whole
-# bubble, because "行" and "稳" are also ordinary words.
-TIC_PHRASES = (
+# Chat tics that are banned for every persona live in the skill next to the
+# editing rules (references/no-say.md), so a new persona inherits them. The
+# tuples below only keep the pass working when that file is missing.
+_BUILTIN_LONG = (
     "但他没躲", "这句话稳", "比之前的都重", "我记得了", "我记住了", "这个账我记住了",
     "比之前的都轻", "问别人还是问自己", "行，我认", "这句话我不接", "这句话接得漂亮",
     "比之前的都强", "睡吧，我守着", "他记得这事", "这话我留着", "你这句话我记着",
@@ -56,8 +56,57 @@ TIC_PHRASES = (
     "你自己掂量", "没接你那句", "没接你的", "什么心思都写着", "就是认了", "我不拦",
     "这些话我记着",
 )
-SHORT_TIC_PHRASES = ("行", "稳", "很平", "很直", "不催", "我跟", "你去", "回去睡",
-                     "我认", "认你", "你掂量")
+_BUILTIN_SHORT = ("行", "稳", "很平", "很直", "不催", "我跟", "你去", "回去睡",
+                  "我认", "认你", "你掂量")
+_NO_SAY_CACHE: dict[str, tuple[float, tuple[tuple[str, ...], tuple[str, ...]]]] = {}
+
+
+def _no_say_candidates() -> list[Path]:
+    here = Path(__file__).resolve().parent.parent
+    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    return [
+        here / ".hermes" / "skills" / "shuorenhua" / "references" / "no-say.md",
+        Path(home) / "skills" / "shuorenhua" / "references" / "no-say.md",
+        Path(os.path.expanduser("~/.hermes")) / "skills" / "shuorenhua" / "references" / "no-say.md",
+    ]
+
+
+def _parse_no_say(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    long: list[str] = []
+    short: list[str] = []
+    section = "long"
+    for raw in text.splitlines():
+        line = raw.strip()
+        if line.startswith("## "):
+            section = "short" if "短词" in line else ("skip" if "模板" in line else "long")
+            continue
+        if not line.startswith("-"):
+            continue
+        phrase = line.lstrip("-").strip()
+        if not phrase or section == "skip":
+            continue
+        (short if section == "short" else long).append(phrase)
+    return tuple(long), tuple(short)
+
+
+def no_say() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """(long phrases, whole-bubble words) from the shared skill reference."""
+    for path in _no_say_candidates():
+        try:
+            stamp = path.stat().st_mtime
+        except OSError:
+            continue
+        cached = _NO_SAY_CACHE.get(str(path))
+        if cached and cached[0] == stamp:
+            return cached[1]
+        try:
+            long, short = _parse_no_say(path.read_text(encoding="utf-8"))
+        except OSError:
+            continue
+        if long or short:
+            _NO_SAY_CACHE[str(path)] = (stamp, (long, short))
+            return long, short
+    return _BUILTIN_LONG, _BUILTIN_SHORT
 
 
 def repeated(lines: list[str], recent: list[str], *, size: int = _REPEAT_SIZE) -> list[tuple[int, str]]:
@@ -82,7 +131,6 @@ def repeated(lines: list[str], recent: list[str], *, size: int = _REPEAT_SIZE) -
         if best:
             found.append((index, best))
     return found
-
 
 def habit_phrases(bubbles: list[str], *, limit: int = 4) -> list[str]:
     """Short phrases the assistant keeps reusing across recent bubbles."""
@@ -116,7 +164,6 @@ def habit_phrases(bubbles: list[str], *, limit: int = 4) -> list[str]:
             break
     return picked
 
-
 def _phrase_in(line: str, phrase: str) -> bool:
     return phrase in line
 
@@ -136,10 +183,11 @@ def tics(line: str) -> list[str]:
         found.append("rhetorical-tail")
     body = re.sub(r"[\s。！？!?…~,，;；:：]+", "", line)
     squashed = re.sub(r"\s+", "", line)
-    for phrase in TIC_PHRASES:
+    long_phrases, short_words = no_say()
+    for phrase in long_phrases:
         if phrase in squashed:
             found.append(f"tic:{phrase}")
-    for phrase in SHORT_TIC_PHRASES:
+    for phrase in short_words:
         if body == phrase:
             found.append(f"tic:{phrase}")
     return found
@@ -196,9 +244,10 @@ def repair(line: str) -> str:
     if not text:
         return ""
     body = re.sub(r"[\s。！？!?…~,，;；:：]+", "", text)
-    if body in SHORT_TIC_PHRASES:
+    long_phrases, short_words = no_say()
+    if body in short_words:
         return ""
-    for phrase in TIC_PHRASES:
+    for phrase in long_phrases:
         text = re.sub(r"\s*".join(map(re.escape, phrase)), "", text)
     stripped = _FILLER.sub("", text, count=1).lstrip("，, ")
     if stripped:
@@ -306,7 +355,7 @@ def build_polish_prompt(*, count: int, body: str, recent: list[str],
             count=count, body=body,
             habits="\n".join(f"- {phrase}" for phrase in habits) or "（无）",
             recent="\n".join(f"- {line}" for line in recent) or "（无）")
-    tic_text = "、".join(TIC_PHRASES)
+    tic_text = "、".join(no_say()[0])
     recent_text = "\n".join(f"- {line}" for line in recent) or "（无）"
     habit_text = "\n".join(f"- {phrase}" for phrase in habits) or "（无）"
     return f"""你在替一个 QQ 群友改口：下面是它这一轮要发出去的消息。按《说人话》的规则把它们改成有人随口说话的样子——保留意思和具体内容，删掉不承担意思的包装、垫场和姿态。

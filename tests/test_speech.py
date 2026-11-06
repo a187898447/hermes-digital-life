@@ -124,3 +124,11 @@ class OperatorTicListTests(unittest.TestCase):
         prompt = speech.build_polish_prompt(count=1, body="甲", recent=[], habits=[])
         self.assertIn("这句话稳", prompt)
         self.assertIn("短词只有当整条消息就是它时", prompt)
+
+
+class SharedNoSayListTests(unittest.TestCase):
+    def test_the_skill_carries_the_list_for_every_persona(self):
+        long_phrases, short_words = speech.no_say()
+        self.assertIn("但他没躲", long_phrases)
+        self.assertIn("行", short_words)
+        self.assertNotIn("模板", "".join(long_phrases))
