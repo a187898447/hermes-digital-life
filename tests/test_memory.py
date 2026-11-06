@@ -823,13 +823,12 @@ class AnchorAndStressTests(unittest.TestCase):
         self.assertFalse(store.read_entries()[old["id"]].get("archived"))
 
 
-    def test_thursday_rituals_are_pinned_to_thursday(self):
+    def test_applies_dow_round_trips(self):
         store = self.store
-        row = store.write("【v我50】想让人请吃饭时甩一句", kind="learned", now_ms=1_000_000)
-        entry = store.read_entries()[row["id"]]
-        self.assertEqual(entry["applies_dow"], 3)
-        explicit = store.write("周四专用", kind="learned", applies_dow=2, now_ms=1_000_000)
-        self.assertEqual(store.read_entries()[explicit["id"]]["applies_dow"], 2)
+        row = store.write("周四专用", kind="learned", applies_dow=3, now_ms=1_000_000)
+        self.assertEqual(store.read_entries()[row["id"]]["applies_dow"], 3)
+        loose = store.write("随便哪天都能说", kind="learned", now_ms=1_000_000)
+        self.assertIsNone(store.read_entries()[loose["id"]]["applies_dow"])
 
 if __name__ == "__main__":
     unittest.main()
