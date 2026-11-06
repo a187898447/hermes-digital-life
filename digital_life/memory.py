@@ -182,21 +182,30 @@ class MemoryStore:
         entries = {}
         purged: set[str] = set()
         digest = hashlib.sha256()
+        events: list[tuple[str, int, bytes, dict]] = []
         for path in self._paths():
             data = path.read_bytes()
             digest.update(str(path.relative_to(self.directory)).encode())
             digest.update(data)
-            for line in data.splitlines(keepends=True):
+            for index, line in enumerate(data.splitlines(keepends=True)):
                 if not line.endswith(b"\n"):
                     logger.warning("Ignoring incomplete event tail in %s", path)
                     continue
                 try:
                     event = json.loads(line)
-                    self._fold(entries, event)
-                    if isinstance(event, dict) and event.get("op") == "purge":
-                        purged.add(str(event.get("id")))
-                except (ValueError, TypeError, KeyError, OverflowError):
+                except (ValueError, UnicodeDecodeError):
                     logger.warning("Ignoring invalid memory event in %s", path)
+                    continue
+                events.append((path.name, index, line, event))
+        # Replay every file in chronological order: a mutation may be written to a
+        # later day file than its target's add (journal backdates, long-lived entries).
+        for name, _, _, event in sorted(events, key=lambda item: (item[0], item[1])):
+            try:
+                self._fold(entries, event)
+                if isinstance(event, dict) and event.get("op") == "purge":
+                    purged.add(str(event.get("id")))
+            except (ValueError, TypeError, KeyError, OverflowError):
+                logger.warning("Ignoring invalid memory event in %s", name)
         # A purge wins no matter which day file it landed in; /new must not be undone
         # by a later-dated add line replayed after it.
         for identifier in purged:
@@ -216,13 +225,15 @@ class MemoryStore:
                 raise ValueError("duplicate id")
             if event["kind"] not in DEFAULT_WEIGHTS or not isinstance(event["text"], str) or not event["text"].strip():
                 raise ValueError("invalid content")
-            for key in ("weight", "cortisol", "created_at", "last_access_at"):
+            for key in ("weight", "created_at", "last_access_at"):
                 if not _number(event[key]): raise ValueError("invalid number")
-            if not 0.2 <= event["weight"] <= 3 or not 0 <= event["cortisol"] <= 100:
+            cortisol = event.get("cortisol", 50.0)
+            if not _number(cortisol): raise ValueError("invalid number")
+            if not 0.2 <= event["weight"] <= 3 or not 0 <= cortisol <= 100:
                 raise ValueError("invalid weight/cortisol")
             if type(event["hits"]) is not int or event["hits"] < 0 or not isinstance(event["source_session_id"], str):
                 raise ValueError("invalid access metadata")
-            entries[identifier] = {k: event[k] for k in (
+            entries[identifier] = {k: (event[k] if k != "cortisol" else cortisol) for k in (
                 "id", "kind", "text", "weight", "cortisol", "created_at", "last_access_at", "hits", "source_session_id")}
             for field in ("chat_id", "chat_type", "speaker"):
                 value = event.get(field, "")

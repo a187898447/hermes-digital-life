@@ -908,3 +908,21 @@ class QuotaTests(unittest.TestCase):
                 os.environ.pop("HERMES_HOME", None)
             else:
                 os.environ["HERMES_HOME"] = old
+
+
+class CrossDayMutationTests(unittest.TestCase):
+    """A touch written today for an entry added days ago must still apply."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = memory.MemoryStore(Path(self.tmp.name), embedder=False)
+
+    def test_touch_survives_when_it_lands_in_a_later_day_file(self):
+        entry = self.store.write("backdated fact", day="2026-10-01", now_ms=NOW)
+        later = NOW + 3 * DAY
+        self.store._append([{"version": 1, "op": "touch", "id": entry["id"],
+                             "hits": 1, "last_access_at": later}], later)
+        rows = self.store.read_entries()
+        self.assertEqual(rows[entry["id"]]["hits"], 1)
+        self.assertEqual(rows[entry["id"]]["last_access_at"], later)
