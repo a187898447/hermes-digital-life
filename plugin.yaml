@@ -25,6 +25,7 @@ config_schema:
 provides_tools:
   - memory_write
   - memory_recall
+  - memory_revoke
   - digital_life_status
   - beat_targets
   - beat_send
