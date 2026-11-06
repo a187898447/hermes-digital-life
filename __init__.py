@@ -1195,7 +1195,8 @@ def register(ctx) -> None:
                 "description": ("Read a local .txt/.md file or http(s) link page by page and study it. "
                                 "Pass source once to load it; afterwards call with name and no part to "
                                 "resume where you stopped. Keep reading while the turn has tool budget, "
-                                "and record what stuck with memory_write(kind='learned') as you go."),
+                                "and record what stuck with memory_write(kind='learned') as you go — "
+                                "as many or as few as the text deserves."),
                 "parameters": {"type": "object", "properties": {
                     "source": {"type": ["string", "null"], "description": "Path or URL to load."},
                     "name": {"type": ["string", "null"], "description": "A title from library_list."},

@@ -173,9 +173,10 @@ def read(meta: dict, part: int | None = None, max_chars: int = MAX_CHARS) -> dic
             "chars": len(text), "page_chars": len(page), "text": page,
             "next_part": None if done else part + 1, "finished": done,
             "progress": f"{part + 1}/{len(pages)}",
-            "hint": ("读完了。用 memory_write 记 1-3 条 kind=learned 的说法，再写一条 note 概括。"
+            "hint": ("读完了。把真正会用的说法用 memory_write 记成 kind=learned——条数按内容定，"
+                     "可能一条没有，也可能很多；每条要短，并写清什么场合用。另外写一条 note 概括来源。"
                      if done else
-                     "还没读完：本轮还有工具额度就接着读 next_part；每读一两页先记一条 learned，"
+                     "还没读完：本轮还有工具额度就接着读 next_part；读到真正有意思的说法就随手记 learned，"
                      "别一口气吞完整本。")}
 
 
