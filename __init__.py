@@ -416,7 +416,12 @@ def _on_user_message(
     from .digital_life import wake as _wake  # noqa: PLC0415
 
     _selfheal.once()
-    _compaction.once(memory_store)
+    try:
+        factory = _MEMORY_STORE.get("factory")
+        if factory is not None:
+            _compaction.once(factory)
+    except Exception:
+        pass
     _wake.set_agent_running(True)
     meta = {
         "user": user_message[:1500],
