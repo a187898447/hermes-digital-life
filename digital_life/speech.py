@@ -17,6 +17,29 @@ _DANGLING_TAIL = re.compile(rf"(?:{'|'.join(_CONNECTORS)})[。！？!?…~]*$")
 _LEAD_PRONOUN = re.compile(rf"^(它|这|那|其)[{_HAN}]{{1,5}}[。！？!?…~]*$")
 _BACKSTAGE = re.compile(r"(工具额度|工具调用|本轮|下一轮|后台|进程|日志|参数|超了|建起来)")
 _COLON_LIST = re.compile(r"[：:]")
+# Tics are not readability problems, so they need their own shapes: a receipt,
+# a settlement, a filler opener, a service offer, or a rhetorical tail.
+_RECEIPT = re.compile(r"(?:我|规则|要求|约定|这条|你说的|指令)?(?:记着|记下了|记住了|收着|收下了|收着了|已收到|已归档)")
+_SETTLE = re.compile(r"(这账(?:就)?平了|算我输|认栽|就这么定了|成交|一笔勾销|结案)")
+_FILLER = re.compile(r"^(?:说实话|说真的|其实|老实说|不过|反正|倒是|总的来说|讲道理)")
+_SERVICE = re.compile(r"^(?:需要我|要不要我|有什么可以|随时(?:找我|说)|希望能|祝你|加油)")
+_RHETORICAL = re.compile(r"(要不要|是不是|对吧|懂了吗|行不行|好不好)[。！？!?…~]*$")
+
+
+def tics(line: str) -> list[str]:
+    """Named AI-flavour shapes in one bubble (empty when clean)."""
+    found: list[str] = []
+    if _RECEIPT.search(line):
+        found.append("receipt")
+    if _SETTLE.search(line):
+        found.append("settlement")
+    if _FILLER.search(line):
+        found.append("filler-opener")
+    if _SERVICE.search(line):
+        found.append("service-offer")
+    if _RHETORICAL.search(line):
+        found.append("rhetorical-tail")
+    return found
 
 
 def lint(lines: list[str]) -> list[tuple[int, str]]:
@@ -39,6 +62,8 @@ def lint(lines: list[str]) -> list[tuple[int, str]]:
             issues.append((index, "unclear-pronoun"))
         if _BACKSTAGE.search(line):
             issues.append((index, "backstage-talk"))
+        for kind in tics(line):
+            issues.append((index, kind))
         if _COLON_LIST.search(line):
             tail = _COLON_LIST.split(line, 1)[1]
             if tail.count("、") >= 2 and len(tail) > 12:
@@ -61,8 +86,10 @@ POLISH_PROMPT = """\
 1. 每条都改成正常中文口语，读一遍能听懂，不绕、不端着。
 2. 保持原意和原说话人的口气，不增加信息，不解释，不客套。
 3. 只输出 {count} 条，每条一行，用单独一行 --- 分隔；不要编号、不要 Markdown、不要引号。
-4. 改不动就原样保留那一行。
-5. 不要旁白、不要自评、不要“我改完了”这类话，除了改写结果什么都不要输出。
+4. 去掉“我记着/记下了/收着了/已收到”这种回收到的话：记住就直接记住，不要说在记。
+5. 去掉“说实话/其实/反正/不过”这种垫场词，去掉“不错（吧）？”“要不要我…？”这种反问收尾。
+6. 改不动就原样保留那一行。
+7. 不要旁白、不要自评、不要“我改完了”这类话，除了改写结果什么都不要输出。
 
 消息：
 {body}

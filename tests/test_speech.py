@@ -35,3 +35,20 @@ class SpeechLintTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class TicTests(unittest.TestCase):
+    def test_receipt_and_settlement_are_flagged(self):
+        from digital_life import speech
+        self.assertIn("receipt", speech.tics("规则我记着：周四发一次"))
+        self.assertIn("settlement", speech.tics("行，这账平了"))
+
+    def test_filler_service_and_rhetorical_tail(self):
+        from digital_life import speech
+        self.assertIn("filler-opener", speech.tics("说实话，我也想学"))
+        self.assertIn("service-offer", speech.tics("需要我帮你翻一下吗"))
+        self.assertIn("rhetorical-tail", speech.tics("那就周四见，好不好"))
+
+    def test_plain_chat_is_clean(self):
+        from digital_life import speech
+        self.assertEqual(speech.tics("那就周四再说，我等着"), [])
+        self.assertEqual(speech.tics("V我50"), [])
