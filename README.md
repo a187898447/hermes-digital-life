@@ -175,3 +175,28 @@ QQ 会话里模型能调用的工具分几组，权限和预算都不一样：
 已学（`kind=learned`）只收「什么场合 → 你会怎么做」的社会习惯：可带 `applies_dow`（0=周一…6=周日）
 限定星期；超过 60 字、引用原文 ≥15 字、带元信息词（仓库/API/格式/文档…）会被拒；同一事由只留一条，
 第二条要求把细节并进第一条。条数不设配额，由材料本身决定。
+
+## 文档索引
+
+- [使用引导.md](使用引导.md)：从零到 QQ 机器人能说话的完整步骤。
+- [安装说明.md](安装说明.md)：安装/卸载/升级与排错。
+- [docs/memory-palace-upgrade-plan.md](docs/memory-palace-upgrade-plan.md)：记忆宫殿 P0–P2 的设计与阶段划分。
+- [docs/memory-comparison.md](docs/memory-comparison.md)：与腾讯 Agent Memory 的取舍对比。
+- [docs/missing-modules-plan.md](docs/missing-modules-plan.md)：化学/基因组/间隙等模块的补齐计划与偏差记录。
+- [docs/host-fragility-plan.md](docs/host-fragility-plan.md)：宿主升级会踩到的坑与降级策略。
+
+## 宿主补丁
+
+有些行为只能改宿主才能做到（QQ 拆泡、打字节奏、关停横幅、Studio 工具链和跨 profile），
+所以插件带一组幂等补丁脚本。`install.sh` 会在检测到对应宿主时自动应用；也可以手动跑：
+
+| 脚本 | 作用 | 标记 |
+| --- | --- | --- |
+| `scripts/fix-qq-dialogue-split.py` | 只在引号/括号外断句、短句并泡、系统卡整条发 | `# hermes-lover: dialogue split` |
+| `scripts/fix-qq-typing-pace.py` | 气泡之间加人类打字停顿 | `# hermes-lover: typing pace` |
+| `scripts/fix-qq-shutdown-notice.py` | 关停/重启横幅不再广播到 QQ | `# hermes-lover: qq shutdown notice` |
+| `scripts/fix-studio-bridge-python.py` | 让非默认 profile 的 Studio worker 看到宿主依赖 | `HERMES_STUDIO_BRIDGE_FIX` |
+| `scripts/fix-studio-cross-profile.py` | 让 Studio 接受来自非默认 profile 的选项卡回答 | `HERMES_LOVER_STUDIO_CROSS_PROFILE` |
+
+每个脚本都支持 `--check`（已打返回 0）和 `--remove`（还原备份或反向替换）；宿主升级覆盖后会失效，
+`hermes-lover doctor --fix` 会重新应用，`doctor` 只报不改。
