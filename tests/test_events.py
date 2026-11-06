@@ -1136,13 +1136,13 @@ class MakeVideoTests(unittest.TestCase):
 
     def test_a_request_starts_the_task_and_answers_at_once(self):
         hl = self.hl
-        with patch.object(self.hailuo, "create", return_value="task-7"), \
+        with patch.object(self.hailuo, "create", return_value=("task-7", "k1")), \
                 patch.object(hl, "_deliver_video") as deliver, \
                 patch.object(self.budget, "spend", return_value=True):
             out = json.loads(hl._make_video({"prompt": "海边的鲸鱼"}, session_id="s-make"))
         self.assertTrue(out["ok"])
         self.assertEqual(out["task_id"], "task-7")
-        deliver.assert_called_once_with("chat-1", "task-7", "海边的鲸鱼")
+        deliver.assert_called_once_with("chat-1", "task-7", "海边的鲸鱼", "k1")
 
     def test_a_refused_quota_or_platform_never_calls_the_api(self):
         hl = self.hl
@@ -1172,7 +1172,7 @@ class MakeVideoTests(unittest.TestCase):
         hl = self.hl
         with patch.object(self.hailuo, "wait", return_value="file-3"), \
                 patch.object(self.hailuo, "download", return_value="/tmp/made.mp4"):
-            hl._deliver_video("chat-1", "task-3", "海边的鲸鱼")
+            hl._deliver_video("chat-1", "task-3", "海边的鲸鱼", "k1")
         self.assertTrue(self.sent)
         self.assertEqual(self.sent[0]["target"], "qqbot:chat-1")
         self.assertIn("MEDIA:/tmp/made.mp4", self.sent[0]["message"])

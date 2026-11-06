@@ -726,14 +726,14 @@ _VIDEO_JOBS: "set[object]" = set()
 _VIDEO_JOBS_LOCK = threading.Lock()
 
 
-def _deliver_video(chat_id: str, task_id: str, prompt: str) -> None:
+def _deliver_video(chat_id: str, task_id: str, prompt: str, key: str = "") -> None:
     """Wait for one Hailuo task, save it, and send it to the chat that asked."""
     from .digital_life import budget as _budget, hailuo  # noqa: PLC0415
 
     send = _host_send_message_tool()
     try:
-        file_id = hailuo.wait(task_id)
-        path = hailuo.download(file_id)
+        file_id = hailuo.wait(task_id, key=key)
+        path = hailuo.download(file_id, key=key)
     except Exception as exc:  # noqa: BLE001
         logger.warning("hermes-lover video task %s failed", task_id, exc_info=True)
         if send is not None:
@@ -776,14 +776,14 @@ def _make_video(args, session_id="", **kwargs):
                            "error": f"今天已经做过 {VIDEO_GEN_PER_DAY} 个视频了，明天再说。"},
                           ensure_ascii=False)
     try:
-        task_id = hailuo.create(prompt, duration=duration,
-                                resolution=str(args.get("resolution") or "768P"))
+        task_id, key = hailuo.create(prompt, duration=duration,
+                                     resolution=str(args.get("resolution") or "768P"))
     except Exception as exc:  # noqa: BLE001
         _budget.refund(f"videogen:{chat_id}")
         return json.dumps({"ok": False, "error": str(exc)[:200]}, ensure_ascii=False)
     def _run() -> None:
         try:
-            _deliver_video(chat_id, task_id, prompt)
+            _deliver_video(chat_id, task_id, prompt, key)
         finally:
             with _VIDEO_JOBS_LOCK:
                 _VIDEO_JOBS.discard(worker)
