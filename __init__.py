@@ -32,6 +32,7 @@ _TURN_META: dict[str, dict[str, str]] = {}
 # Hard tool budget per user turn (QQ only): the model tends to page its way
 # through the whole zone instead of answering.
 _TOOL_TURNS: dict[str, dict[str, int]] = {}
+_LAST_USER_TEXT: str = ""
 TOOL_CALL_LIMIT = 8
 ZONE_PAGE_LIMIT = 2
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
@@ -453,6 +454,35 @@ def _send_qq(chat_id: str, message: str) -> None:
         logger.warning("hermes-lover could not send command confirmation", exc_info=True)
 
 
+_BEAT_RE = re.compile(r"(主动|定时|排程|设好|定好|到点|提醒我|权限|周四|疯狂星期)")
+
+
+def _proactive_note() -> str | None:
+    """State the real beat schedule so "设好了" / "权限没开" cannot be guessed."""
+    if not _BEAT_RE.search(_LAST_USER_TEXT or ""):
+        return None
+    try:
+        from .digital_life import storage as _storage  # noqa: PLC0415
+        profile = _storage.plugin_data_dir("hermes-lover").parents[1]
+        jobs = json.loads((profile / "cron" / "jobs.json").read_text()).get("jobs") or []
+        job = next((j for j in jobs if j.get("name") == "hermes-lover-beat"), None)
+        if job is None:
+            return "主动消息：没有定时任务；不能承诺到点发消息，也不能说“设好了”。"
+        if not job.get("enabled"):
+            return "主动消息：定时任务当前是暂停的，说“没开”可以，但不能说“设好了”。"
+        fired = []
+        state_file = profile / "cron" / "hermes-lover-beat.json"
+        if state_file.exists():
+            data = json.loads(state_file.read_text())
+            if data.get("date") == time.strftime("%Y-%m-%d"):
+                fired = data.get("fired") or []
+        return (f"主动消息：定时任务开着（{job['schedule']['display']}，今天已触发 {len(fired)} 个时段）。"
+                "beat_send 只能在定时触发的那一轮里用，普通聊天里被拒是设计如此，不代表权限关闭；"
+                "它不认“周四”，只按随机时段发，所以不要说“周四那条设好了”。")
+    except Exception:
+        return None
+
+
 def _learned_hint() -> str:
     """A rotating one-liner: words picked up lately, faded by the forgetting curve.
 
@@ -502,7 +532,12 @@ def _on_user_message(
             _proactive.track_chat({"chat_id": meta["chat_id"], "chat_type": meta["chat_type"]})
         except Exception:
             logger.warning("hermes-lover could not add chat to the beat rotation", exc_info=True)
+    global _LAST_USER_TEXT
+    _LAST_USER_TEXT = user_message or ""
     notes = []
+    proactive_note = _proactive_note()
+    if proactive_note:
+        notes.append(proactive_note)
     note = _proactive.handle_message(user_message, session_id, platform)
     if note:
         notes.append(note)
@@ -1117,7 +1152,7 @@ def register(ctx) -> None:
 
     def beat_targets(args, session_id="", **kwargs):
         if _session_source(session_id) != "cron":
-            return json.dumps({"ok": False, "error": "beat tools are only available to scheduled runs"})
+            return json.dumps({"ok": False, "error": "beat tools are only available to scheduled runs — 主动消息是开着的，被拒只说明本轮不是定时轮，不是权限没开"})
         import os
         from pathlib import Path as _Path
         home = os.environ.get("HERMES_HOME") or str(_Path.home() / ".hermes")
@@ -1172,7 +1207,7 @@ def register(ctx) -> None:
 
     def beat_send(args, session_id="", **kwargs):
         if _session_source(session_id) != "cron":
-            return json.dumps({"ok": False, "error": "beat tools are only available to scheduled runs"})
+            return json.dumps({"ok": False, "error": "beat tools are only available to scheduled runs — 主动消息是开着的，被拒只说明本轮不是定时轮，不是权限没开"})
         chat_id = str(args.get("chat_id") or "").strip()
         text = str(args.get("text") or "").strip()
         if not chat_id or not text:
