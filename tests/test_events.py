@@ -364,6 +364,32 @@ class RegistrationTests(unittest.TestCase):
             handler({"query": "旧", "k": 999, "chat_id": "c1"}, session_id="s-cron")
         self.assertEqual(captured["k"], 10)
 
+    def test_learned_hint_lists_fresh_words_and_skips_faded_ones(self):
+        fresh = {"id": "a", "text": "你行你上", "effective_weight": 0.8}
+        faded = {"id": "b", "text": "典中典", "effective_weight": 0.2}
+        store = type("S", (), {"peek": lambda self, kind, k=10, **kw: [fresh, faded]})()
+        with patch.object(plugin, "_MEMORY_STORE", {"factory": lambda: store}):
+            line = plugin._learned_hint()
+        self.assertIn("你行你上", line)
+        self.assertNotIn("典中典", line)
+        with patch.object(plugin, "_MEMORY_STORE", {"factory": lambda: type(
+                "S", (), {"peek": lambda self, kind, k=10, **kw: []})()}):
+            self.assertEqual(plugin._learned_hint(), "")
+
+    def test_learned_hint_joins_the_pre_llm_context(self):
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        plugin.register(ctx)
+        hooks = dict(ctx.hooks)
+        store = type("S", (), {"peek": lambda self, kind, k=10, **kw: [
+            {"id": "a", "text": "这波不亏", "effective_weight": 0.9}]})()
+        with patch.object(plugin, "_MEMORY_STORE", {"factory": lambda: store}), \
+                patch.object(plugin, "_JOURNAL_CHECK", None), \
+                patch.object(plugin, "_proactive") as proactive:
+            proactive.handle_message.return_value = None
+            result = hooks["pre_llm_call"](user_message="在吗", session_id="s1", platform="qqbot")
+        self.assertIn("这波不亏", result["context"])
+
     def test_unreadable_session_store_fails_closed(self):
         import os
         plugin._SOURCE_CACHE.clear()

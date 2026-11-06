@@ -27,7 +27,7 @@ RRF_K = 60
 VECTOR_TOP = 20
 DAY_MS = 86_400_000
 DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8, "turn": 0.4,
-                   "journal": 2.5, "summary": 1.4}
+                   "journal": 2.5, "summary": 1.4, "learned": 0.9}
 _WRITE_LOCK = threading.RLock()
 _WORDS = re.compile(r"[\u3400-\u9fff\U00020000-\U0002fa1f]+|[a-zA-Z0-9]+")
 _ID = re.compile(r"hp-(\d{8})-(\d{4,})\Z")
@@ -52,7 +52,7 @@ def decay(weight: float, last_access_at: float, now_ms: float) -> float:
 def attention(cortisol: float) -> dict[str, float]:
     crisis, daily = (3.0, 0.1) if cortisol >= 80 else (1.8, 0.4) if cortisol >= 55 else (1.0, 1.0)
     return {"crisis": crisis, "daily": daily, "fact": 1.0, "decision": 1.0, "note": 1.0, "turn": 0.5,
-            "journal": 1.2, "summary": 1.0}
+            "journal": 1.2, "summary": 1.0, "learned": 1.5}
 
 
 def relevance(bm25: float) -> float:
@@ -603,6 +603,21 @@ class MemoryStore:
                 logger.warning("Turn summaries persisted but index update failed", exc_info=True)
             return {"ok": True, "groups": len(groups), "summaries": len(groups),
                     "compacted": sum(len(rows) for rows in groups.values())}
+
+    def peek(self, kind, k=10, *, now_ms=None):
+        """Read-only top-k of one kind, ranked by current effective weight.
+
+        Unlike ``recall`` this never touches entries: a hint line that shows up every
+        turn must not keep stale words alive past their decay.
+        """
+        now_ms = _now(now_ms)
+        entries = self.read_entries()
+        rows = [entry for entry in entries.values()
+                if not entry.get("archived") and entry.get("kind") == kind]
+        rows.sort(key=lambda row: decay(row["weight"], row["last_access_at"], now_ms), reverse=True)
+        return [{"id": row["id"], "text": row["text"], "created_at": row.get("created_at", 0),
+                 "effective_weight": decay(row["weight"], row["last_access_at"], now_ms)}
+                for row in rows[:max(1, min(int(k), 20))]]
 
     def compact(self, days=30, *, now_ms=None):
         """Fold archived entries untouched for `days` into one cold summary per (date, chat).

@@ -412,6 +412,26 @@ def _send_qq(chat_id: str, message: str) -> None:
         logger.warning("hermes-lover could not send command confirmation", exc_info=True)
 
 
+def _learned_hint() -> str:
+    """A rotating one-liner: words picked up lately, faded by the forgetting curve.
+
+    Nothing is pinned: entries fall out of this line as their effective weight decays,
+    so newer fragments naturally replace older ones, while recall still finds them.
+    """
+    factory = _MEMORY_STORE.get("factory")
+    if factory is None:
+        return ""
+    try:
+        items = [item for item in factory().peek("learned", 10)
+                 if float(item.get("effective_weight") or 0) >= 0.45]
+    except Exception:
+        return ""
+    if not items:
+        return ""
+    words = "、".join(str(item.get("text", ""))[:40] for item in items[:3])
+    return f"最近学到的说法（想用就用，别硬套）：{words}"
+
+
 def _on_user_message(
     user_message: str = "", session_id: str = "", platform: str = "", sender_id: str = "", **kwargs
 ) -> dict[str, Any] | None:
@@ -450,6 +470,9 @@ def _on_user_message(
             journal_note = None
         if journal_note:
             notes.append(journal_note)
+    learned = _learned_hint()
+    if learned:
+        notes.append(learned)
     return {"context": f"[hermes-lover] {' '.join(notes)}"} if notes else None
 
 
@@ -1231,7 +1254,7 @@ def register(ctx) -> None:
             "include_cold": {"type": "boolean", "default": False},
             "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
                     "description": "Return that day's journal first, then its raw entries."},
-            "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal", "turn"],
+            "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal", "turn", "learned"],
                      "description": "Return only entries of this kind."},
             "chat_id": {"type": ["string", "null"],
                         "description": "Scheduled runs only: recall another chat's memory. Interactive sessions always use their own chat."},

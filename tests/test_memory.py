@@ -607,6 +607,23 @@ class CompactTests(unittest.TestCase):
             self.assertEqual(sorted(entries[target]["sources"]), sorted(group))
         self.assertEqual(entries[live]["compacted_into"], "")
 
+    def test_peek_ranks_by_decay_and_never_touches(self):
+        old = self.store.write("典中典", kind="learned", now_ms=NOW - 7 * DAY)["id"]
+        fresh = self.store.write("你行你上", kind="learned", now_ms=NOW)["id"]
+        before = self.store.read_entries()
+        rows = self.store.peek("learned", 5, now_ms=NOW)
+        after = self.store.read_entries()
+        self.assertEqual([row["id"] for row in rows], [fresh, old])
+        self.assertLess(rows[1]["effective_weight"], rows[0]["effective_weight"])
+        for identifier in (old, fresh):
+            self.assertEqual(before[identifier]["hits"], after[identifier]["hits"])
+            self.assertEqual(before[identifier]["last_access_at"], after[identifier]["last_access_at"])
+
+    def test_peek_only_returns_the_requested_kind(self):
+        self.store.write("普通见闻", kind="note", now_ms=NOW)
+        learned = self.store.write("这波不亏", kind="learned", now_ms=NOW)["id"]
+        self.assertEqual([row["id"] for row in self.store.peek("learned", 5, now_ms=NOW)], [learned])
+
     def test_compact_turns_folds_only_old_live_turns(self):
         old_a = self.store.write("十月的旧对话一", kind="turn", day="2026-10-01", chat_id="qq:1")["id"]
         old_b = self.store.write("十月的旧对话二", kind="turn", day="2026-10-01", chat_id="qq:1")["id"]
