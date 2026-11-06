@@ -136,18 +136,20 @@ def trigger_group(text: str) -> str:
     return "".join(ch for ch in head if ch.isalnum())[:2]
 
 
-def study_learned_problem(text: str, entries: dict[str, dict], session_id: str, cap: int = 2,
-                          per_occasion: int = 2) -> str:
-    """Background reading gets at most cap habits, and a couple per occasion."""
+def study_learned_problem(text: str, entries: dict[str, dict], session_id: str) -> str:
+    """One habit per occasion: a second entry must merge into the first.
+
+    The count is not capped — the material decides how much is worth keeping.
+    Only repeats of the same occasion are refused, because those are duplicates,
+    not new habits.
+    """
     mine = [row for row in entries.values()
             if row.get("kind") == "learned" and row.get("source_session_id") == session_id]
-    if len(mine) >= cap:
-        return f"already wrote {cap} habits this run; merge the rest into those"
     group = trigger_group(text)
     if group:
         same = [row for row in mine if trigger_group(row.get("text")) == group]
-        if len(same) >= per_occasion:
-            return f"{group} already has {per_occasion} habits; merge the detail into one of them"
+        if same:
+            return f"{group} already has a habit; merge the detail into it instead of adding a second"
     return ""
 
 

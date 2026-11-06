@@ -278,24 +278,7 @@ def _api_error(error: dict[str, Any] | None = None, retryable: bool | None = Non
     record_api_error(now_ms, error_type=error_type, retryable=retryable)
 
 
-_STUDY_CHARS: dict[str, int] = {}
-
-
-def _note_study_read(session_id: str, result: str) -> None:
-    if os.environ.get("LOVER_STUDY") != "1" or not session_id:
-        return
-    try:
-        payload = json.loads(result or "{}")
-    except (TypeError, ValueError):
-        return
-    chars = payload.get("chars") if isinstance(payload, dict) else None
-    if isinstance(chars, int) and chars > 0:
-        _STUDY_CHARS[session_id] = _STUDY_CHARS.get(session_id, 0) + chars
-
-
 def _post_tool_call(tool_name: str = "", args: dict[str, Any] | None = None, result: str = "", **kwargs) -> None:
-    if tool_name == "read_source":
-        _note_study_read(str(kwargs.get("session_id") or ""), result)
     chat_id, _chat_type = _session_scope(str(kwargs.get("session_id") or ""))
     digital_life.runtime.observe_tool_result(time.time() * 1000, tool_name=tool_name, args=args or {},
                                              result=result, chat=chat_id)
@@ -1021,33 +1004,6 @@ def register(ctx) -> None:
         except sqlite3.Error:
             return False
 
-    def _study_chars(session_id: str) -> int:
-        db = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
-        total = _STUDY_CHARS.get(session_id, 0)
-        try:
-            with sqlite3.connect(str(db), timeout=2) as conn:
-                rows = conn.execute(
-                    "SELECT content FROM messages WHERE session_id=? AND tool_name='read_source'",
-                    (session_id,)).fetchall()
-        except sqlite3.Error:
-            return total
-        for (content,) in rows:
-            try:
-                value = json.loads(content or "{}").get("chars")
-            except (TypeError, ValueError, AttributeError):
-                continue
-            if isinstance(value, int) and value > 0:
-                total += value
-        _STUDY_CHARS[session_id] = total
-        return total
-
-    def _study_learned_problem(text, session_id):
-        from .digital_life import memory as _memory  # noqa: PLC0415
-        chars = _study_chars(session_id)
-        cap = max(2, min(12, chars // 6000 + 1))
-        return _memory.study_learned_problem(text, memory_store().read_entries(), session_id, cap=cap)
-
-
     def memory_write(args, session_id="", **kwargs):
         try:
             study = _is_study_session(session_id)
@@ -1255,13 +1211,13 @@ def register(ctx) -> None:
             "[study-task] 你在后台读完一份资料，不要把原文贴回来。用 read_source 读 "
             f"{source} ，一次读不完就用 name 加 part 续读直到 finished；材料写了星期就用 applies_dow"
             "（0=周一…3=周四…6=周日）。"
-            "先判断材料类型：教程/文档/知识 → 可复用的做法，按每 6k 字最多一条提炼；"
-            "段子库、文案集、小说 → 它教不出很多做法，最多 2 条「什么场合可以怎么接」的场合级习惯，"
-            "原文的句子、角色、情节一句都不进记忆，来源与风格用 note 记。"
+            "先判断材料类型：教程/文档/知识 → 提炼可复用的做法；段子库、文案集、小说 → 只提炼"
+            "「什么场合可以怎么接」的场合级习惯，原文的句子、角色、情节一句都不进记忆，来源与风格用 note 记。"
             "每条 learned 过三问，有一个不过就不写：① 去掉原文还成立吗（不靠原文的台词、人名、情节）？"
             "② 这个场合在真实聊天里会出现吗，还是只在这份材料里成立？③ 这是在说做法，还是在复述一个包袱？"
-            "text 写成「什么时候 → 你会怎么做」（自己的话，别抄原文）；同一触发只写一条，补充细节并进已有那条；"
-            "条数是上限不是指标，配额满了就停，剩下的不要塞进 note；不要写 turn。"
+            "text 写成「什么时候 → 你会怎么做」（自己的话，别抄原文）；同一触发只写一条，补充细节并进已有那条。"
+            "写几条由材料决定：真正站得住、真实聊天里会用上的场合有几个就写几个；写不出就不写，不要凑数，"
+            "也不要为省事发一条大总结代替；不要写 turn。"
             "只用 read_source 和 memory_write；不要用 terminal、不要建 cron 任务、不要 web_search/web_extract。"
             "最后只回一句话：说一句你读到什么值得记的，不要报页数或条数。"
         )
@@ -1362,11 +1318,11 @@ def register(ctx) -> None:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
         if isinstance(page, dict) and page.get("finished"):
             page["extract"] = ("读完了。先判断材料类型：教程/文档/知识 → 提炼可复用的做法；段子库、文案集、小说 → "
-                               "最多 2 条场合级习惯，原文的句子、角色、情节一句不进记忆。"
+                               "只提炼场合级习惯，原文的句子、角色、情节一句不进记忆。"
                                "每条 learned 先过三问，有一个不过就不写：① 去掉原文还成立吗？② 这个场合真实聊天里会出现吗？③ 这是在说做法，还是在复述一个包袱？"
                                "写成：什么时候 → 你会怎么做（自己的话）→ "
                                "applies_dow（0=周一 1=周二 2=周三 3=周四 4=周五 5=周六 6=周日，材料没写就 null）。"
-                               "条数是上限不是指标，满了就停，剩下的别塞进 note。")
+                               "条数由材料决定：有几个站得住的场合写几个，写不出就不写，不凑数、不写大总结。")
         return json.dumps(page, ensure_ascii=False)
 
     def library_list(args, **kwargs):
