@@ -278,7 +278,7 @@ _STUDY_CHARS: dict[str, int] = {}
 
 
 def _note_study_read(session_id: str, result: str) -> None:
-    if os.environ.get("HERMES_LOVER_STUDY") != "1" or not session_id:
+    if os.environ.get("LOVER_STUDY") != "1" or not session_id:
         return
     try:
         payload = json.loads(result or "{}")
@@ -1002,6 +1002,21 @@ def register(ctx) -> None:
 
     _JOURNAL_CHECK = journal_check
 
+    def _is_study_session(session_id: str) -> bool:
+        if not session_id:
+            return False
+        # The background reader is a gateway-hosted chat session, so env vars set by the
+        # spawner never reach the plugin; the prompt tag does.
+        db = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
+        try:
+            with sqlite3.connect(str(db), timeout=2) as conn:
+                row = conn.execute(
+                    "SELECT 1 FROM messages WHERE session_id=? AND role='user' AND content LIKE '%[study-task]%' LIMIT 1",
+                    (session_id,)).fetchone()
+            return bool(row)
+        except sqlite3.Error:
+            return False
+
     def _study_learned_problem(text, session_id):
         from .digital_life import memory as _memory  # noqa: PLC0415
         chars = _STUDY_CHARS.get(session_id, 0)
@@ -1011,13 +1026,14 @@ def register(ctx) -> None:
 
     def memory_write(args, session_id="", **kwargs):
         try:
-            if os.environ.get("HERMES_LOVER_STUDY") == "1" and args.get("kind") in ("turn", "daily", "journal"):
+            study = _is_study_session(session_id)
+            if study and args.get("kind") in ("turn", "daily", "journal"):
                 return json.dumps({"ok": False, "error": "background reading writes learned/note only"},
                                   ensure_ascii=False)
             if args.get("kind", "note") == "learned":
                 from .digital_life import memory as _memory  # noqa: PLC0415
 
-                if os.environ.get("HERMES_LOVER_STUDY") == "1":
+                if study:
                     problem = _study_learned_problem(args.get("text"), session_id)
                     if problem:
                         return json.dumps({"ok": False, "error": "learned entry rejected: " + problem},
