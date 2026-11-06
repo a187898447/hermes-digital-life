@@ -46,8 +46,27 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(first["part"], 0)
         second = library.read(meta, None, 400)
         self.assertEqual(second["part"], 1)
-        self.assertEqual(second["progress"], "2/" + str(second["pages"]))
+        self.assertTrue(second["progress"].endswith("%"))
+        self.assertEqual(second["offset"], first["offset"] + len(second["text"]))
         self.assertNotEqual(first["text"], second["text"])
+
+    def test_the_bookmark_survives_a_change_of_page_width(self):
+        body = "".join(f"第{i}段。" + "字" * 40 for i in range(12))
+        meta = library.ingest(str(self.write("wide.txt", body)))
+        wide = library.read(meta, None, 400)
+        narrow = library.read(meta, None, 200)
+        self.assertEqual(narrow["text"], body[wide["offset"]:wide["offset"] + len(narrow["text"])])
+        self.assertEqual(narrow["offset"], wide["offset"] + len(narrow["text"]))
+        self.assertTrue(body.startswith(wide["text"]))
+
+    def test_an_old_page_number_is_read_as_a_character_offset(self):
+        body = "字" * 9000
+        meta = library.ingest(str(self.write("old.txt", body)))
+        meta.pop("offset", None)
+        meta["position"] = 1
+        page = library.read(meta, None, 1000)
+        self.assertEqual(page["offset"], library.MAX_CHARS + len(page["text"]))
+        self.assertNotIn("position", meta)
 
     def test_read_reports_finished_at_the_end(self):
         meta = library.ingest(str(self.write("short.txt", "只有一页")))

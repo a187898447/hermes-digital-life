@@ -9,6 +9,7 @@ one. Nothing here decides what matters: the agent reads, then writes its own
 from __future__ import annotations
 
 import hashlib
+import bisect
 import json
 import os
 import re
@@ -223,14 +224,13 @@ def ingest(source: str, *, fetcher=None) -> dict:
     meta_path = book.with_suffix(".json")
     if not book.exists():
         book.write_text(text, "utf-8")
-    pages = max(1, -(-len(text) // MAX_CHARS))
+    pages = max(1, -(-len(text) // MAX_CHARS))  # only a rough shelf label now
     try:
         meta = json.loads(meta_path.read_text("utf-8"))
     except (OSError, ValueError):
         meta = {}
     meta.update({"title": title, "source": source, "file": book.name, "chars": len(text),
-                 "pages": pages, "digest": digest})
-    meta.setdefault("position", 0)
+                 "pages": pages, "offset": int(meta.get("offset") or 0), "digest": digest})
     meta_path.write_text(json.dumps(meta, ensure_ascii=False), "utf-8")
     return meta
 
@@ -255,30 +255,68 @@ def _pages(text: str, width: int) -> list[str]:
     return pages
 
 
-def read(meta: dict, part: int | None = None, max_chars: int = MAX_CHARS) -> dict:
-    """Return the next page of a source and remember where reading stopped.
+def _window(text: str, start: int, width: int) -> tuple[str, int]:
+    """One chunk starting exactly at ``start``, cut at a paragraph break when close."""
+    end = min(len(text), start + width)
+    if end < len(text):
+        cut = text.rfind(PARAGRAPH, start + width // 2, end)
+        if cut != -1:
+            end = cut + 1
+    return text[start:end], end
 
-    ``part`` omitted resumes at the stored position, so the agent can simply keep
-    calling this while it still has room in the turn instead of asking the user.
+
+def _page_starts(text: str, width: int) -> list[int]:
+    starts = [0]
+    while True:
+        _chunk, end = _window(text, starts[-1], width)
+        if end >= len(text) or end == starts[-1]:
+            return starts
+        starts.append(end)
+
+
+def _offset_of(meta: dict, text_len: int) -> int:
+    """The one bookmark: how many characters were already read.
+
+    Older entries stored a page number, which only made sense at one page width.
+    Convert it once, at the width the ingest used.
+    """
+    raw = meta.get("offset")
+    if raw is None and meta.get("position") is not None:
+        raw = int(meta.get("position") or 0) * MAX_CHARS
+    return max(0, min(int(raw or 0), text_len))
+
+
+def read(meta: dict, part: int | None = None, max_chars: int = MAX_CHARS) -> dict:
+    """Return the next chunk of a source and remember how far the reading got.
+
+    The bookmark is a character offset, not a page number, so reading the same
+    source at different widths never rewinds or skips text. ``part`` is still
+    accepted (and returned) as the page index at the width used right now.
     """
     width = max(500, min(int(max_chars), MAX_CHARS))
     text = (root() / meta["file"]).read_text("utf-8")
-    pages = _pages(text, width)
-    if part is None:
-        part = int(meta.get("position") or 0)
-    part = max(0, min(int(part), len(pages) - 1))
-    page = pages[part]
-    meta["position"] = min(part + 1, len(pages) - 1)
+    starts = _page_starts(text, width)
+    if part is not None:
+        index = max(0, min(int(part), len(starts) - 1))
+        start = starts[index]
+    else:
+        start = _offset_of(meta, len(text))
+        index = max(0, bisect.bisect_right(starts, start) - 1)
+    page, end = _window(text, start, width)
+    meta["offset"] = end
+    meta.pop("position", None)
     try:
         (root() / (Path(meta["file"]).stem + ".json")).write_text(
             json.dumps(meta, ensure_ascii=False), "utf-8")
     except OSError:
         pass
-    done = part + 1 >= len(pages)
-    return {"ok": True, "title": meta.get("title", ""), "part": part, "pages": len(pages),
-            "chars": len(text), "page_chars": len(page), "text": page,
-            "next_part": None if done else part + 1, "finished": done,
-            "progress": f"{part + 1}/{len(pages)}",
+    done = end >= len(text)
+    percent = 100 if not text else min(100, int(end * 100 / len(text)))
+    return {"ok": True, "title": meta.get("title", ""), "part": index, "pages": len(starts),
+            "chars": len(text), "page_chars": len(page), "offset": end, "percent": percent,
+            "text": page,
+            "next_part": None if done else index + 1, "finished": done,
+            "progress": f"{percent}%",
             "hint": ("读完了。把真正会用的说法用 memory_write 记成 kind=learned——条数按内容定，"
                      "可能一条没有，也可能很多；每条要短，并写清什么场合用。另外写一条 note 概括来源。"
                      if done else

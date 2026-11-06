@@ -129,7 +129,7 @@ def _next_book(books: Iterable[dict] | None) -> dict[str, Any] | None:
     if not shelf:
         return None
     unfinished = [book for book in shelf
-                  if int(book.get("position") or 0) + 1 < int(book.get("pages") or 1)]
+                  if int(book.get("offset") or 0) < int(book.get("chars") or 0)]
     return (unfinished or shelf)[0]
 
 

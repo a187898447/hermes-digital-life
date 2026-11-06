@@ -48,7 +48,7 @@ class ClockTests(unittest.TestCase):
 
 
 class AgendaTests(unittest.TestCase):
-    BOOKS = [{"file": "a.md", "title": "夜航西飞", "position": 0}]
+    BOOKS = [{"file": "a.md", "title": "夜航西飞", "offset": 0, "chars": 9000}]
     GAPS = [{"id": "gap-1", "status": "open", "summary": "要不要换个写法"}]
 
     def test_agenda_uses_real_books_and_open_loops(self):
@@ -72,12 +72,12 @@ class AgendaTests(unittest.TestCase):
 
 class ShelfTests(unittest.TestCase):
     def test_an_unfinished_book_wins_over_a_finished_one(self):
-        books = [{"file": "a.md", "title": "读完了", "position": 3, "pages": 3},
-                 {"file": "b.md", "title": "读到一半", "position": 1, "pages": 3}]
+        books = [{"file": "a.md", "title": "读完了", "offset": 3000, "chars": 3000},
+                 {"file": "b.md", "title": "读到一半", "offset": 1000, "chars": 3000}]
         self.assertEqual(life._next_book(books)["file"], "b.md")
 
     def test_without_an_unfinished_book_the_first_one_is_used(self):
-        books = [{"file": "a.md", "title": "读完了", "position": 3, "pages": 3}]
+        books = [{"file": "a.md", "title": "读完了", "offset": 3000, "chars": 3000}]
         self.assertEqual(life._next_book(books)["file"], "a.md")
         self.assertIsNone(life._next_book([]))
 

@@ -1676,9 +1676,14 @@ def register(ctx) -> None:
     def library_list(args, **kwargs):
         from .digital_life import library  # noqa: PLC0415
 
-        return json.dumps({"ok": True, "books": [
-            {"title": book.get("title"), "chars": book.get("chars"), "pages": book.get("pages")}
-            for book in library.books()]}, ensure_ascii=False)
+        books = []
+        for book in library.books():
+            chars = int(book.get("chars") or 0)
+            read = max(0, min(int(book.get("offset") or 0), chars))
+            books.append({"title": book.get("title"), "chars": chars,
+                          "read": read, "percent": 100 if not chars or read >= chars
+                          else int(read * 100 / chars)})
+        return json.dumps({"ok": True, "books": books}, ensure_ascii=False)
 
     ctx.register_tool(
         name="read_source", toolset="digital_life",
