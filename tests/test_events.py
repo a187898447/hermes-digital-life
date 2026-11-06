@@ -1519,14 +1519,15 @@ class BridgeProcessTests(unittest.TestCase):
 class VoiceLlmTests(unittest.TestCase):
     def test_voice_pass_uses_the_host_llm_facade(self):
         class _Llm:
-            def __init__(self):
+            def __init__(self, replies):
                 self.calls = []
+                self.replies = list(replies)
 
             def complete(self, messages, **kwargs):
                 self.calls.append((messages, kwargs))
-                return types.SimpleNamespace(text="行，价签那事不说了。")
+                return types.SimpleNamespace(text=self.replies.pop(0))
 
-        llm = _Llm()
+        llm = _Llm(["行，价签那事不说了。", '{"confusing": [], "rewrite": ["行，价签那事不说了。"]}'])
         previous = plugin._CTX
         plugin._CTX = types.SimpleNamespace(llm=llm)
         try:
@@ -1534,8 +1535,31 @@ class VoiceLlmTests(unittest.TestCase):
                 out = plugin._polish_lines(["价签这事还没完。"], [])
         finally:
             plugin._CTX = previous
-        self.assertEqual(len(llm.calls), 1)
+        self.assertEqual(len(llm.calls), 2)
+        self.assertIn("confusing", llm.calls[1][0][0]["content"])
         self.assertEqual(out, ["行，价签那事不说了。"])
+
+    def test_a_confusing_bubble_is_rewritten_once(self):
+        class _Llm:
+            def __init__(self):
+                self.calls = []
+
+            def complete(self, messages, **kwargs):
+                self.calls.append(messages[0]["content"])
+                if "读不懂" in messages[0]["content"]:
+                    return types.SimpleNamespace(text='{"confusing": [0], "rewrite": ["中午在食堂吃，你上次说的那档口。"]}')
+                return types.SimpleNamespace(text="那中午那顿就是我的记分点。")
+
+        llm = _Llm()
+        previous = plugin._CTX
+        plugin._CTX = types.SimpleNamespace(llm=llm)
+        try:
+            with patch.dict(os.environ, {"HERMES_LOVER_POLISH": "always"}):
+                out = plugin._polish_lines(["那中午那顿就是我的记分点。"], [], last_user="明早不吃了")
+        finally:
+            plugin._CTX = previous
+        self.assertEqual(out, ["中午在食堂吃，你上次说的那档口。"])
+        self.assertIn("明早不吃了", llm.calls[1])
 
     def test_the_pass_carries_what_the_user_just_said(self):
         class _Llm:

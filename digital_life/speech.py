@@ -346,6 +346,49 @@ def load_skill() -> str:
     return ""
 
 
+READBACK_PROMPT = """你没有这个机器人的记忆，也不认识收消息的人。下面每条消息是它这一轮要单独发出去的气泡。
+只做一件事：判断一个刚刚只看到这一条消息的人，能不能读懂它。
+
+读不懂的情况就两种：
+1. 里面有他这轮没提过的名词、外号、代号，或者机器人自己临时造的说法（例如把一顿饭叫「记分点」）；
+2. 整句的前提是几天前的旧事，而这条消息里没有交代。
+
+输出 JSON，不要多余文字：
+{{"confusing": [读不懂的下标，从 0 开始], "rewrite": [按原顺序的改后消息，每条一项]}}
+
+改写规则：只改读不懂的那几条，在原意上把缺的交代补进同一句；补不进去就换成一句不需要前情的话；能读懂的原样返回，不要顺手改文风。条数必须和原文一致。
+
+对方刚说的：{last_user}
+
+最近说过的：
+{recent}
+
+消息：
+{body}
+"""
+
+
+def parse_readback(text: str, count: int) -> list[str] | None:
+    """Return the rewrite only when the judge actually flagged something."""
+    import json
+
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        payload = json.loads(text[start:end + 1])
+    except Exception:
+        return None
+    confusing = payload.get("confusing")
+    rewrite = payload.get("rewrite")
+    if not isinstance(confusing, list) or not confusing:
+        return None
+    if not isinstance(rewrite, list) or len(rewrite) != count:
+        return None
+    lines = [str(item or "").strip() for item in rewrite]
+    return [line for line in lines if line] or None
+
+
 def build_polish_prompt(*, count: int, body: str, recent: list[str],
                         habits: list[str], last_user: str = "") -> str:
     """Chat framing around the skill: it edits bubbles, it does not rewrite essays."""
