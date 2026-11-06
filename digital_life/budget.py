@@ -41,6 +41,30 @@ def _read(path: Path, day: str) -> dict:
     return data
 
 
+def refund(name: str, *, now_ms: float | None = None) -> None:
+    """Give one unit back after the action failed (best effort)."""
+    path = state_path()
+    if path is None:
+        return
+    day = _today(now_ms)
+    with _LOCK:
+        data = _read(path, day)
+        try:
+            count = int(data["counts"].get(name, 0))
+        except (TypeError, ValueError):
+            count = 0
+        if count <= 0:
+            return
+        data["counts"][name] = count - 1
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
+            os.replace(tmp, path)
+        except OSError:
+            pass
+
+
 def used(name: str, *, now_ms: float | None = None) -> int:
     path = state_path()
     if path is None:

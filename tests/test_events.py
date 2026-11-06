@@ -405,7 +405,7 @@ class RegistrationTests(unittest.TestCase):
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)
-        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "study_source", "background_task", "read_source", "library_list", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "memory_revoke", "digital_life_status", "close_gap"])
+        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "study_source", "background_task", "read_source", "library_list", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "memory_revoke", "digital_life_status", "close_gap", "share_video"])
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertEqual(set(schemas["memory_write"]) & {"sources", "refs"}, {"sources", "refs"})
         self.assertIn("kind", schemas["memory_recall"])
@@ -1055,6 +1055,65 @@ class OpenLoopTests(unittest.TestCase):
             out = json.loads(hl._status({}))
         self.assertEqual([gap["id"] for gap in out["gaps"]], ["gap-0", "gap-1", "gap-2"])
         self.assertEqual(out["gaps_hidden"], 2)
+
+
+class ShareVideoTests(unittest.TestCase):
+    def setUp(self):
+        import importlib
+        import tempfile
+        hl = sys.modules["hermes_plugins.digital_life"]
+        self.budget = importlib.import_module("hermes_plugins.digital_life.digital_life.budget")
+        outbox = importlib.import_module("hermes_plugins.digital_life.digital_life.outbox")
+        self.hl = hl
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "clip.mp4").write_bytes(b"fake")
+        self.sent = []
+        hl._TURN_META["s-video"] = {"platform": "qqbot"}
+        self.patches = [
+            patch.object(outbox, "root_dir", return_value=self.root),
+            patch.object(hl, "_session_scope", lambda session_id: ("chat-1", "dm")),
+            patch.object(hl, "_host_send_message_tool", lambda: self.sent.append),
+        ]
+        for item in self.patches:
+            item.start()
+            self.addCleanup(item.stop)
+        self.addCleanup(hl._TURN_META.pop, "s-video", None)
+
+    def test_sends_the_file_as_a_media_attachment(self):
+        hl = self.hl
+        with patch.object(self.budget, "spend", return_value=True):
+            out = json.loads(hl._share_video({"name": "clip.mp4", "caption": "新做的"}, session_id="s-video"))
+        self.assertTrue(out["ok"])
+        self.assertTrue(self.sent)
+        self.assertEqual(self.sent[0]["target"], "qqbot:chat-1")
+        self.assertIn("MEDIA:", self.sent[0]["message"])
+        self.assertIn("新做的", self.sent[0]["message"])
+
+    def test_the_daily_cap_and_non_qq_platforms_are_enforced(self):
+        hl = self.hl
+        with patch.object(self.budget, "spend", return_value=False):
+            out = json.loads(hl._share_video({"name": "clip.mp4"}, session_id="s-video"))
+        self.assertFalse(out["ok"])
+        self.assertIn("今天", out["error"])
+        hl._TURN_META["s-video"] = {"platform": "cli"}
+        with patch.object(self.budget, "spend", return_value=True):
+            out = json.loads(hl._share_video({"name": "clip.mp4"}, session_id="s-video"))
+        self.assertFalse(out["ok"])
+        self.assertIn("QQ", out["error"])
+
+    def test_a_failed_send_gives_the_quota_back(self):
+        hl = self.hl
+        refunds = []
+        def boom(_args):
+            raise RuntimeError("network down")
+        with patch.object(hl, "_host_send_message_tool", lambda: boom), \
+                patch.object(self.budget, "spend", return_value=True), \
+                patch.object(self.budget, "refund", lambda name: refunds.append(name)):
+            out = json.loads(hl._share_video({"name": "clip.mp4"}, session_id="s-video"))
+        self.assertFalse(out["ok"])
+        self.assertEqual(refunds, ["video:chat-1"])
 
 
 class ToolBudgetTests(unittest.TestCase):

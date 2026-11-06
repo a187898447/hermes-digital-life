@@ -37,6 +37,7 @@ TOOL_CALL_LIMIT = 8
 ZONE_PAGE_LIMIT = 2
 READ_SOURCE_TURN_LIMIT = 3
 READ_SOURCE_DAILY_INGESTS = 40
+VIDEO_PER_DAY = 2
 OPEN_LOOP_SHOWN = 3
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
 _CACHE_LIMIT = 512
@@ -421,8 +422,8 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     # duplicate guard already bound them. The budget is for tools that hit the
     # outside world (search, zone, terminal, background jobs).
     if tool_name in ("read_source", "library_list", "memory_write", "memory_recall",
-                     "memory_revoke", "digital_life_status", "close_gap", "study_source",
-                     "background_task", "search_later"):
+                     "memory_revoke", "digital_life_status", "close_gap", "share_video",
+                     "study_source", "background_task", "search_later"):
         return None
     if tool_name == "skill_manage":
         return {"action": "block",
@@ -672,6 +673,51 @@ def _send_qq(chat_id: str, message: str) -> None:
         send_message_tool({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
     except Exception:
         logger.warning("hermes-lover could not send command confirmation", exc_info=True)
+
+
+def _share_video(args, session_id="", **kwargs):
+    from .digital_life import budget as _budget, outbox as _outbox  # noqa: PLC0415
+
+    chat_id, _chat_type = _session_scope(session_id) or ("", "")
+    if not chat_id:
+        return json.dumps({"ok": False, "error": "no chat to send to"}, ensure_ascii=False)
+    platform = (_TURN_META.get(session_id) or {}).get("platform") or _session_source(session_id)
+    if platform != "qqbot":
+        return json.dumps({"ok": False, "error": "videos only go to QQ chats"},
+                          ensure_ascii=False)
+    try:
+        path = _outbox.resolve(str(args.get("name") or ""))
+    except ValueError as exc:
+        return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+    if not _budget.spend(f"video:{chat_id}", VIDEO_PER_DAY):
+        return json.dumps({"ok": False,
+                           "error": f"今天已经发过 {VIDEO_PER_DAY} 条视频了，明天再说。"},
+                          ensure_ascii=False)
+    send = _host_send_message_tool()
+    if send is None:
+        _budget.refund(f"video:{chat_id}")
+        return json.dumps({"ok": False, "error": "host send tool unavailable"},
+                          ensure_ascii=False)
+    caption = " ".join(str(args.get("caption") or "").split())[:120]
+    message = f"{caption}\nMEDIA:{path}" if caption else f"MEDIA:{path}"
+    try:
+        result = send({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
+    except Exception as exc:  # noqa: BLE001
+        _budget.refund(f"video:{chat_id}")
+        logger.warning("hermes-lover could not send a video", exc_info=True)
+        return json.dumps({"ok": False, "error": f"send failed: {exc}"[:200]},
+                          ensure_ascii=False)
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except ValueError:
+            result = {}
+    if isinstance(result, dict) and result.get("error"):
+        _budget.refund(f"video:{chat_id}")
+        return json.dumps({"ok": False, "error": str(result["error"])[:200]},
+                          ensure_ascii=False)
+    return json.dumps({"ok": True, "sent": path.name, "caption": caption},
+                      ensure_ascii=False)
 
 
 def _learned_hint(chat_id: str = "", chat_type: str = "") -> str:
@@ -1895,6 +1941,22 @@ def register(ctx) -> None:
                 }, "required": ["id"], "additionalProperties": False}},
         handler=_close_gap,
         description="Close one of your own open loops so it stops resurfacing.",
+    )
+    ctx.register_tool(
+        name="share_video",
+        toolset="digital_life",
+        schema={"name": "share_video",
+                "description": ("Send one finished video from your outbox folder to the person "
+                                "in this chat. Only files the operator or a generator already put "
+                                "in that folder can be sent; give the bare file name, with at "
+                                "most a one-line caption. At most two videos per chat per day."),
+                "parameters": {"type": "object", "properties": {
+                    "name": {"type": "string", "description": "File name inside the outbox folder, e.g. clip.mp4."},
+                    "caption": {"type": "string", "maxLength": 120,
+                                "description": "Optional one line to send with it."},
+                }, "required": ["name"], "additionalProperties": False}},
+        handler=_share_video,
+        description="Send one finished video from the outbox folder.",
     )
     ctx.register_hook("transform_llm_output", _transform_llm_output)
     ctx.register_hook("pre_gateway_dispatch", _on_gateway_dispatch)
