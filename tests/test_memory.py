@@ -926,3 +926,19 @@ class CrossDayMutationTests(unittest.TestCase):
         rows = self.store.read_entries()
         self.assertEqual(rows[entry["id"]]["hits"], 1)
         self.assertEqual(rows[entry["id"]]["last_access_at"], later)
+
+
+class IdReuseTests(unittest.TestCase):
+    """Ids must never come back after a purge; replay keeps the high-water mark."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = memory.MemoryStore(Path(self.tmp.name), embedder=False)
+
+    def test_ids_are_not_reused_after_purge(self):
+        first = self.store.write("first", now_ms=NOW)
+        self.store.clear()
+        second = self.store.write("second", now_ms=NOW)
+        self.assertNotEqual(first["id"], second["id"])
+        self.assertGreater(int(second["id"].rsplit("-", 1)[1]), int(first["id"].rsplit("-", 1)[1]))

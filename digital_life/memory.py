@@ -181,6 +181,7 @@ class MemoryStore:
     def _replay(self):
         entries = {}
         purged: set[str] = set()
+        self._seq_max: dict[str, int] = {}
         digest = hashlib.sha256()
         events: list[tuple[str, int, bytes, dict]] = []
         for path in self._paths():
@@ -204,6 +205,11 @@ class MemoryStore:
                 self._fold(entries, event)
                 if isinstance(event, dict) and event.get("op") == "purge":
                     purged.add(str(event.get("id")))
+                if isinstance(event, dict) and event.get("op") == "add":
+                    parts = str(event.get("id", "")).split("-")
+                    if len(parts) == 3 and parts[1].isdigit() and parts[2].isdigit():
+                        key = f"{parts[1][:4]}-{parts[1][4:6]}-{parts[1][6:]}"
+                        self._seq_max[key] = max(self._seq_max.get(key, 0), int(parts[2]))
             except (ValueError, TypeError, KeyError, OverflowError):
                 logger.warning("Ignoring invalid memory event in %s", name)
         # A purge wins no matter which day file it landed in; /new must not be undone
@@ -490,7 +496,7 @@ class MemoryStore:
                              and e.get("kind") != "turn")
                 if writes >= 20:
                     raise ValueError("Daily session memory quota (20) reached")
-                seq = max((int(e["id"].rsplit("-", 1)[1]) for e in today), default=0) + 1
+                seq = max([self._seq_max.get(date, 0)] + [int(e["id"].rsplit("-", 1)[1]) for e in today]) + 1
                 event = {"op": "add", "id": f"hp-{date.replace('-', '')}-{seq:04d}", "text": text,
                          "kind": kind, "weight": weight, "cortisol": self._state().get("chemistry", {}).get("cortisol", 20),
                          "created_at": now_ms, "last_access_at": now_ms, "hits": 0, "source_session_id": session_id,
@@ -532,7 +538,8 @@ class MemoryStore:
             except (sqlite3.Error, RuntimeError, OSError):
                 logger.warning("Memory index unavailable before capture", exc_info=True)
             today = [e for e in entries.values() if e["date"] == date]
-            seq = max((int(e["id"].rsplit("-", 1)[1]) for e in today), default=0) + 1
+            # Purged entries keep their ids out of `entries`; the high-water mark stops reuse.
+            seq = max([self._seq_max.get(date, 0)] + [int(e["id"].rsplit("-", 1)[1]) for e in today]) + 1
             event = {"op": "add", "id": f"hp-{date.replace('-', '')}-{seq:04d}", "text": text,
                      "kind": "turn", "weight": 0.4,
                      "cortisol": self._state().get("chemistry", {}).get("cortisol", 20),
@@ -652,8 +659,8 @@ class MemoryStore:
                 rows = sorted(groups[(date, chat_id)], key=lambda row: (row["created_at"], row["id"]))
                 seq = seqs.get(date)
                 if seq is None:
-                    seq = max((int(e["id"].rsplit("-", 1)[1]) for e in entries.values() if e["date"] == date),
-                              default=0) + 1
+                    seq = max([self._seq_max.get(date, 0)] + [
+                        int(e["id"].rsplit("-", 1)[1]) for e in entries.values() if e["date"] == date]) + 1
                 seqs[date] = seq + 1
                 summary_id = f"hp-{date.replace('-', '')}-{seq:04d}"
                 ids = [row["id"] for row in rows]
@@ -725,8 +732,8 @@ class MemoryStore:
                 rows = sorted(groups[(date, chat_id)], key=lambda row: (row["created_at"], row["id"]))
                 seq = seqs.get(date)
                 if seq is None:
-                    seq = max((int(e["id"].rsplit("-", 1)[1]) for e in entries.values() if e["date"] == date),
-                              default=0) + 1
+                    seq = max([self._seq_max.get(date, 0)] + [
+                        int(e["id"].rsplit("-", 1)[1]) for e in entries.values() if e["date"] == date]) + 1
                 seqs[date] = seq + 1
                 summary_id = f"hp-{date.replace('-', '')}-{seq:04d}"
                 ids = [row["id"] for row in rows]
