@@ -36,7 +36,7 @@ def lint(lines: list[str]) -> list[tuple[int, str]]:
         if _LEAD_PRONOUN.match(line):
             issues.append((index, "unclear-pronoun"))
         suffixes = sum(line.count(word) for word in _ABSTRACT)
-        if suffixes >= 3 and len(body) > 24:
+        if suffixes >= 3 and len(body) > 16:
             issues.append((index, "abstract-noun-pile"))
     return issues
 

@@ -13,7 +13,7 @@ class SpeechLintTests(unittest.TestCase):
         self.assertEqual(speech.lint(["在", "困了就睡", "？"]), [])
 
     def test_flags_abstract_pile(self):
-        self.assertTrue(speech.lint(["这个功能的兼容性和可用性要再确认一下"]))
+        self.assertTrue(speech.lint(["这个功能的兼容性、可用性和稳定度都要再确认一下"]))
 
     def test_flags_dangling_connector(self):
         self.assertTrue(speech.lint(["所以。"]))

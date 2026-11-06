@@ -783,15 +783,45 @@ def _qq_bubble_rewrite(text: str) -> Optional[str]:
     return rewritten if rewritten != text else None
 
 
+def _polish_lines(lines: list[str]) -> Optional[list[str]]:
+    """Ask a throwaway child session to smooth bubbles that read like machine output."""
+    import shutil
+    import subprocess
+
+    from .digital_life import speech
+
+    if os.environ.get("HERMES_LOVER_POLISH", "1") == "0":
+        return None
+    if not speech.lint(lines) or os.environ.get("HERMES_LOVER_POLISH_CHILD") == "1":
+        return None
+    hermes = shutil.which("hermes") or str(Path.home() / ".local" / "bin" / "hermes")
+    profile = Path(os.environ.get("HERMES_HOME", "")).name
+    if not hermes or not profile:
+        return None
+    prompt = speech.POLISH_PROMPT.format(body="\n---\n".join(lines))
+    env = dict(os.environ, HERMES_LOVER_POLISH_CHILD="1", HERMES_DISABLE_LAZY_INSTALLS="1")
+    try:
+        proc = subprocess.run([hermes, "-p", profile, "chat", "--oneshot", "-Q", "-q", prompt],
+                              capture_output=True, text=True, timeout=45, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    parts = speech.parse_polish(proc.stdout, len(lines))
+    if not parts or speech.lint(parts):
+        return None
+    return parts
+
+
 def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs) -> Optional[str]:
     """Give QQ replies the short-burst shape the persona uses; other surfaces untouched."""
     if platform != "qqbot":
         return None
     cleaned = _qq_strip_labels(response_text or "")
-    rewritten = _qq_bubble_rewrite(cleaned)
-    if rewritten:
-        return rewritten
-    return cleaned if cleaned != response_text else None
+    rewritten = _qq_bubble_rewrite(cleaned) or (cleaned if cleaned != response_text else None)
+    if not rewritten:
+        return None
+    lines = [line for line in rewritten.split("\n") if line.strip()]
+    polished = _polish_lines(lines)
+    return "\n".join(polished) if polished else rewritten
 
 
 def _sync_persona_card(root: Path | None = None) -> None:
