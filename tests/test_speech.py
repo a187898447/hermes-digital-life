@@ -21,6 +21,12 @@ class SpeechLintTests(unittest.TestCase):
     def test_flags_repeated_character(self):
         self.assertTrue(speech.lint(["我我明天再去"]))
 
+    def test_flags_backstage_talk(self):
+        self.assertTrue(speech.lint(["这轮工具用超了，下一轮再建"]))
+
+    def test_flags_colon_list_without_connectors(self):
+        self.assertTrue(speech.lint(["我打算这么改：食堂虾 6 块、粉还没上架、五点下班"]))
+
     def test_parse_polish_requires_same_shape(self):
         self.assertEqual(speech.parse_polish("a\n---\nb\n---\n闲聊", 2), ["a", "b"])
         self.assertIsNone(speech.parse_polish("a", 2))

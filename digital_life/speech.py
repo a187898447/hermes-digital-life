@@ -15,6 +15,8 @@ _ABSTRACT = ("性", "化", "度", "感", "力")
 _REPEAT = re.compile(r"(的的|了了|我我|是是|就就)")
 _DANGLING_TAIL = re.compile(rf"(?:{'|'.join(_CONNECTORS)})[。！？!?…~]*$")
 _LEAD_PRONOUN = re.compile(rf"^(它|这|那|其)[{_HAN}]{{1,5}}[。！？!?…~]*$")
+_BACKSTAGE = re.compile(r"(工具额度|工具调用|本轮|下一轮|后台|进程|日志|参数|超了|建起来)")
+_COLON_LIST = re.compile(r"[：:]")
 
 
 def lint(lines: list[str]) -> list[tuple[int, str]]:
@@ -35,6 +37,12 @@ def lint(lines: list[str]) -> list[tuple[int, str]]:
             issues.append((index, "dangling-connector"))
         if _LEAD_PRONOUN.match(line):
             issues.append((index, "unclear-pronoun"))
+        if _BACKSTAGE.search(line):
+            issues.append((index, "backstage-talk"))
+        if _COLON_LIST.search(line):
+            tail = _COLON_LIST.split(line, 1)[1]
+            if tail.count("、") >= 2 and len(tail) > 12:
+                issues.append((index, "colon-list"))
         kinds = sum(1 for word in _ABSTRACT if word in line)
         total = sum(line.count(word) for word in _ABSTRACT)
         if kinds >= 2 and total >= 3 and len(body) > 16:
