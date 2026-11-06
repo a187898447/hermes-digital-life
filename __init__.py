@@ -1348,19 +1348,35 @@ def register(ctx) -> None:
         handler=background_task,
         description="Run a multi-step job in the background; its result is sent to the chat.",
     )
+    def _bridge_get(path, timeout=3.0):
+        """Call the loopback bridge with its token; returns (payload, error)."""
+        home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
+        port = os.environ.get("QZONE_BRIDGE_PORT") or "8765"
+        request = urllib.request.Request(f"http://127.0.0.1:{port}{path}")
+        try:
+            token = (Path(home) / "plugin-data" / "hermes-lover" / "qzone-bridge.token")
+            request.add_header("X-Bridge-Token", token.read_text("utf-8").strip())
+        except OSError:
+            pass  # an old bridge has no token yet; it will answer 401 below
+        try:
+            raw = urllib.request.urlopen(request, timeout=timeout).read()
+            return json.loads(raw.decode("utf-8")), None
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                return None, ("qzone bridge 还没启用本机鉴权：重启 bridge 让它生成 token "
+                              "（qzone_bridge start）")
+            return None, f"qzone bridge 返回 HTTP {exc.code}"
+        except (OSError, ValueError) as exc:
+            return None, str(exc)
+
     def qzone_bridge(args, **kwargs):
         action = str(args.get("action") or "status").strip().lower()
         home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
         script = Path(home) / "scripts" / "qzone-bridge.py"
-        port = os.environ.get("QZONE_BRIDGE_PORT") or "8765"
-        health = f"http://127.0.0.1:{port}/health"
 
         def state():
-            try:
-                body = urllib.request.urlopen(health, timeout=3).read()
-                return json.loads(body.decode("utf-8"))
-            except (OSError, ValueError):
-                return None
+            payload, _ = _bridge_get("/health")
+            return payload
 
         if action == "start":
             current = state()
@@ -1464,25 +1480,23 @@ def register(ctx) -> None:
         want_images = bool(args.get("images"))
         include_seen = bool(args.get("include_seen"))
         pos = max(0, int(args.get("pos") or 0))
-        port = os.environ.get("QZONE_BRIDGE_PORT") or "8765"
-        url = f"http://127.0.0.1:{port}/feed?count={count}&pos={pos}"
+        path = f"/feed?count={count}&pos={pos}"
         if want_images:
-            url += "&images=1"
+            path += "&images=1"
         if include_seen:
-            url += "&seen=1"
-        try:
-            raw = urllib.request.urlopen(url, timeout=15).read()
-            data = json.loads(raw.decode("utf-8"))
-        except (OSError, ValueError):
+            path += "&seen=1"
+        data, error = _bridge_get(path, timeout=20.0)
+        if data is None:
+            if error and "鉴权" in error:
+                return json.dumps({"ok": False, "error": error}, ensure_ascii=False)
             started = json.loads(qzone_bridge({"action": "start"}))
             if not started.get("ok"):
                 return json.dumps({"ok": False, "error": "qzone bridge 未运行且启动失败",
                                    "detail": started.get("error"), "hint": started.get("detail")})
-            try:
-                raw = urllib.request.urlopen(url, timeout=20).read()
-                data = json.loads(raw.decode("utf-8"))
-            except (OSError, ValueError):
-                return json.dumps({"ok": False, "error": "qzone bridge 启动后仍不可用"})
+            data, error = _bridge_get(path, timeout=20.0)
+            if data is None:
+                return json.dumps({"ok": False, "error": "qzone bridge 启动后仍不可用",
+                                   "detail": error}, ensure_ascii=False)
         if not data.get("ok"):
             return json.dumps({"ok": False, "error": data.get("error") or "feed failed",
                                "hint": data.get("hint")})

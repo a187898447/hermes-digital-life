@@ -225,8 +225,8 @@ else
 
   CROSS_FIX="$SOURCE/scripts/fix-studio-cross-profile.py"
   if [[ -f "$CROSS_FIX" ]] && ! python3 "$CROSS_FIX" --check >/dev/null 2>&1; then
-    python3 "$CROSS_FIX" ||
-      printf '提示: Studio 跨 profile 答复补丁未应用；选项按钮点了没反应时见 README 已知问题。\n' >&2
+    printf '未默认应用 Studio 跨 profile 补丁：profile 是数据边界，不是安全边界。\n'
+    printf '若确认要让 Studio 跨 profile 打开选项卡，再手动运行：python3 %s\n' "$CROSS_FIX"
   fi
 fi
 

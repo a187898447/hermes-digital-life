@@ -210,6 +210,19 @@ class DoctorCheckTests(unittest.TestCase):
                              "fix-studio-bridge-python.py")
             self.assertEqual(checks["patch.studio-cross-profile"].status, doctor.SKIP)
 
+    def test_studio_cross_profile_is_a_hint_never_a_repair(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fixture = Fixture(tmp)
+            fixture.runner.checks = {"fix-studio-cross-profile.py": (1, "未找到跨 profile 校验")}
+            checks = doctor.inspect(home=fixture.home, repo=fixture.repo,
+                                    runner=fixture.runner, studio=True)
+            check = fixture.by_key(checks)["patch.studio-cross-profile"]
+            self.assertEqual(check.status, doctor.WARN)
+            self.assertFalse(check.fix)
+            applied = doctor.repair([check], home=fixture.home, repo=fixture.repo,
+                                    runner=fixture.runner)
+            self.assertEqual(applied, [])
+
     def test_stale_persona_is_a_fix_and_missing_soul_is_a_warning(self):
         with tempfile.TemporaryDirectory() as tmp:
             fixture = Fixture(tmp)

@@ -72,7 +72,7 @@ CLI and TUI sessions, and the default profile, are unaffected.
 
 Hermes Studio 0.8.x binds each chat connection to one profile and then checks every clarify/approval answer against that connection profile. When the conversation belongs to another profile (`hermes-lover`, the usual case after install), the click is rejected with `Profile "<name>" is not available on this connection`; the card closes, the agent waits out the timeout, and the card reappears when you come back to the tab.
 
-When Hermes Studio is installed and its bundle still contains that guard, `install.sh` applies an idempotent host fix that lets Studio serve a conversation from any profile that exists on the machine. No Studio, no host change. Only Studio's own JS bundle is touched; Hermes and the CLI are not modified. For an existing install run it manually and then restart Studio:
+A profile is a data boundary, not a security boundary, but widening it is still the operator's call: `install.sh` does **not** apply the fix by default and only prints a hint when Studio still carries the guard. Only Studio's own JS bundle is touched; Hermes and the CLI are not modified. If you decide a profile tab may be opened from any profile on the machine, run it manually and restart Studio:
 
 ```sh
 python3 scripts/fix-studio-cross-profile.py          # apply, safe to repeat
@@ -81,7 +81,7 @@ python3 scripts/fix-studio-cross-profile.py --remove # undo
 hermes-web-ui restart
 ```
 
-If a Studio upgrade overwrites the bundle, re-run the installer or the script above.
+If a Studio upgrade overwrites the bundle, re-run the script above.
 
 ## Known issue: a host update can disable the plugin or move its internals
 
@@ -196,7 +196,10 @@ QQ 会话里模型能调用的工具分几组，权限和预算都不一样：
 | `scripts/fix-qq-typing-pace.py` | 气泡之间加人类打字停顿 | `# hermes-lover: typing pace` |
 | `scripts/fix-qq-shutdown-notice.py` | 关停/重启横幅不再广播到 QQ | `# hermes-lover: qq shutdown notice` |
 | `scripts/fix-studio-bridge-python.py` | 让非默认 profile 的 Studio worker 看到宿主依赖 | `HERMES_STUDIO_BRIDGE_FIX` |
-| `scripts/fix-studio-cross-profile.py` | 让 Studio 接受来自非默认 profile 的选项卡回答 | `HERMES_LOVER_STUDIO_CROSS_PROFILE` |
+| `scripts/fix-studio-cross-profile.py` | 让 Studio 接受来自非默认 profile 的选项卡回答（默认不装） | `HERMES_LOVER_STUDIO_CROSS_PROFILE` |
 
 每个脚本都支持 `--check`（已打返回 0）和 `--remove`（还原备份或反向替换）；宿主升级覆盖后会失效，
 `hermes-lover doctor --fix` 会重新应用，`doctor` 只报不改。
+
+`fix-studio-cross-profile.py` 是唯一默认不应用的补丁：profile 是数据边界，不是安全边界；
+确认要让 Studio 跨 profile 打开选项卡时再手动运行，`doctor` 只提示，不会替你打开。

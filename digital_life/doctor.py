@@ -415,6 +415,30 @@ def _patch_check(
     return Check(key, WARN, f"{label}检查异常（rc={rc}）：{detail or '无输出'}")
 
 
+STUDIO_CROSS_HINT = (
+    "默认不打：profile 是数据边界，不是安全边界；确认要让 Studio 跨 profile 打开选项卡，"
+    "再运行 python3 scripts/fix-studio-cross-profile.py"
+)
+
+
+def _check_studio_cross_profile(*, home: Path, repo: Path, runner: Runner, studio: bool) -> Check:
+    """Hint only: the patch widens who may open a profile tab, so the operator opts in."""
+    key = "patch.studio-cross-profile"
+    if not studio:
+        return Check(key, SKIP, "没有找到 Hermes Studio")
+    path = repo / "scripts" / "fix-studio-cross-profile.py"
+    if not path.is_file():
+        return Check(key, WARN, "仓库里找不到 scripts/fix-studio-cross-profile.py")
+    rc, output = runner(["python3", str(path), "--check"], _env(home))
+    if rc == 0:
+        return Check(key, OK, "已按你的选择应用跨 profile 补丁")
+    if rc == 3 and "未找到" in output:
+        return Check(key, SKIP, _first_line(output) or "本机没有可打补丁的宿主文件")
+    if rc == 1:
+        return Check(key, WARN, STUDIO_CROSS_HINT)
+    return Check(key, WARN, f"Studio 跨 profile 补丁检查异常（rc={rc}）：{_first_line(output) or '无输出'}")
+
+
 def _check_cron(config: dict[str, Any] | None, config_error: str) -> Check:
     key = "config.cron-wrap"
     if config is None:
@@ -529,9 +553,7 @@ def inspect(
                      home=patches_home, repo=repo, runner=runner, label="QQ 关停通知过滤补丁"),
         _patch_check(key="patch.studio-bridge", script="fix-studio-bridge-python.py",
                      home=patches_home, repo=repo, runner=runner, label="Studio Python 桥补丁"),
-        _patch_check(key="patch.studio-cross-profile", script="fix-studio-cross-profile.py",
-                     home=patches_home, repo=repo, runner=runner, label="Studio 跨 profile 补丁",
-                     skip="" if studio else "没有找到 Hermes Studio"),
+        _check_studio_cross_profile(home=patches_home, repo=repo, runner=runner, studio=studio),
         _check_cron(config, config_error),
         _check_wake(config, config_error),
         _sync_check("sync.personas", _persona_pairs(repo, home)),

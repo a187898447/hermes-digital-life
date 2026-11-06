@@ -8,11 +8,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import http.cookiejar
 import hashlib
+import hmac
+import http.cookiejar
+import ipaddress
 import json
 import os
 import re
+import secrets
+import socket
 import sys
 import time
 import urllib.parse
@@ -27,6 +31,81 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
 
 QR_PNG = HOME / "qzone-qr.png"
+
+# The bridge listens on loopback, but loopback is not an authentication boundary: any
+# local process (or a DNS-rebinding page) could read a private timeline. Every request
+# therefore carries a token that only this user can read.
+TOKEN_NAME = "qzone-bridge.token"
+MAX_IMAGE_BYTES = 5 * 1024 * 1024
+IMAGE_HOSTS = ("qpic.cn", "qlogo.cn", "myqcloud.com")
+
+
+def token_path() -> Path:
+    return Path(os.environ.get("QZONE_BRIDGE_TOKEN_FILE")
+                or (HOME / "plugin-data" / "hermes-lover" / TOKEN_NAME))
+
+
+def ensure_token() -> str:
+    path = token_path()
+    try:
+        existing = path.read_text("utf-8").strip()
+    except OSError:
+        existing = ""
+    if existing:
+        return existing
+    path.parent.mkdir(parents=True, exist_ok=True)
+    token = secrets.token_hex(32)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.write(fd, token.encode())
+    finally:
+        os.close(fd)
+    return token
+
+
+def authorized(given: str, expected: str) -> bool:
+    return bool(expected) and hmac.compare_digest(str(given or ""), str(expected))
+
+
+def image_url_ok(url: str) -> bool:
+    """Only QQ image CDNs, only https, only addresses the public internet routes."""
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        return False
+    host = parsed.hostname.lower()
+    if not any(host == suffix or host.endswith("." + suffix) for suffix in IMAGE_HOSTS):
+        return False
+    try:
+        addresses = {info[4][0] for info in socket.getaddrinfo(host, parsed.port or 443)}
+    except OSError:
+        return False
+    if not addresses:
+        return False
+    for raw in addresses:
+        try:
+            if not ipaddress.ip_address(raw).is_global:
+                return False
+        except ValueError:
+            return False
+    return True
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: N802
+        return None
+
+
+def fetch_image(url: str) -> bytes | None:
+    if not image_url_ok(url):
+        return None
+    request = urllib.request.Request(url, headers={"User-Agent": UA})
+    opener_ = urllib.request.build_opener(_NoRedirect)
+    try:
+        with opener_.open(request, timeout=20) as response:
+            raw = response.read(MAX_IMAGE_BYTES + 1)
+    except (OSError, ValueError):
+        return None
+    return None if len(raw) > MAX_IMAGE_BYTES else raw
 
 
 def hash33(text: str) -> int:
@@ -160,15 +239,12 @@ def _download_images(op, msg: dict, limit: int) -> list[str]:
             break
         if not url.startswith(("http://", "https://")):
             continue
-        try:
-            raw = op.open(url, timeout=20).read()
-        except OSError:
-            continue
-        if len(raw) < 512:
+        raw = fetch_image(url)
+        if raw is None or len(raw) < 512:
             continue
         IMAGE_DIR.mkdir(parents=True, exist_ok=True)
         suffix = ".png" if raw[:8] == b"\x89PNG\r\n\x1a\n" else ".jpg"
-        name = hashlib.sha1(url.encode()).hexdigest()[:16] + suffix
+        name = hashlib.sha256(url.encode()).hexdigest()[:32] + suffix
         path = IMAGE_DIR / name
         if not path.exists():
             path.write_bytes(raw)
@@ -242,6 +318,8 @@ def fetch_feed(count: int = 5, with_images: bool = False, include_seen: bool = F
 
 
 class Handler(BaseHTTPRequestHandler):
+    token = ""
+
     def log_message(self, *_args):  # keep the bridge quiet
         return
 
@@ -254,6 +332,8 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):  # noqa: N802 - http.server API
+        if not authorized(self.headers.get("X-Bridge-Token"), self.token):
+            return self._json({"ok": False, "error": "unauthorized"}, 401)
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/health":
             return self._json({"ok": True, "logged_in": bool(load_cookies())})
@@ -268,6 +348,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def serve(port: int) -> int:
+    Handler.token = ensure_token()
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
     print(f"qzone-bridge listening on http://127.0.0.1:{port}")
     server.serve_forever()
