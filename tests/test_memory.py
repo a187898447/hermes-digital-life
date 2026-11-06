@@ -822,6 +822,15 @@ class AnchorAndStressTests(unittest.TestCase):
         self.assertIn("correct", stale["error"])
         self.assertFalse(store.read_entries()[old["id"]].get("archived"))
 
+
+    def test_thursday_rituals_are_pinned_to_thursday(self):
+        store = self.store
+        row = store.write("【v我50】想让人请吃饭时甩一句", kind="learned", now_ms=1_000_000)
+        entry = store.read_entries()[row["id"]]
+        self.assertEqual(entry["applies_dow"], 3)
+        explicit = store.write("周四专用", kind="learned", applies_dow=2, now_ms=1_000_000)
+        self.assertEqual(store.read_entries()[explicit["id"]]["applies_dow"], 2)
+
 if __name__ == "__main__":
     unittest.main()
 

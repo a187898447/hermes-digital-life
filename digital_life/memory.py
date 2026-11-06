@@ -211,6 +211,10 @@ class MemoryStore:
                     raise ValueError("invalid references")
                 # Store-written summaries may cite a whole cold group; model input stays at 20.
                 entries[identifier][field] = value[:512]
+            dow = event.get("applies_dow")
+            if dow is not None and (type(dow) is not int or not 0 <= dow <= 6):
+                raise ValueError("invalid applies_dow")
+            entries[identifier]["applies_dow"] = dow
             entries[identifier]["compacted_into"] = ""
             date = identifier.split("-")[1]
             entries[identifier].update(date=f"{date[:4]}-{date[4:6]}-{date[6:]}", archived=False)
@@ -403,6 +407,9 @@ class MemoryStore:
         text = text.strip()
         if len(text) > 4000: raise ValueError("超过4000字符，请拆成几条")
         if kind not in DEFAULT_WEIGHTS: raise ValueError("Unsupported memory kind")
+        # 疯狂星期四 is a Thursday ritual: never let it float to other days.
+        if applies_dow is None and kind == "learned" and re.search(r"疯狂星期四|疯四|[Vv]我\s*50|肯德基", text):
+            applies_dow = 3
         if applies_dow is not None:
             if type(applies_dow) is not int or not 0 <= applies_dow <= 6:
                 raise ValueError("applies_dow must be 0-6 (0=Monday)")
