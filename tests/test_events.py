@@ -479,6 +479,23 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(result["request"]["temperature"], 0.4)
         self.assertTrue(result["request"]["messages"][0]["content"].endswith("[affect]"))
 
+    def test_request_middleware_puts_the_clock_in_front_of_the_note(self):
+        request = {"messages": [{"role": "user", "content": "hello"}]}
+        with patch.object(plugin, "_life_enabled", return_value=True), \
+                patch.object(plugin.digital_life.runtime, "affect_note", return_value="[affect]"):
+            result = plugin._affect_request(request)
+        content = result["request"]["messages"][0]["content"]
+        self.assertIn("hello\n\n[现在]", content)
+        self.assertIn("心情", content)
+        self.assertTrue(content.endswith("[affect]"))
+
+    def test_clock_line_stays_off_when_the_life_layer_is_disabled(self):
+        request = {"messages": [{"role": "user", "content": "hello"}]}
+        with patch.object(plugin, "_life_enabled", return_value=False), \
+                patch.object(plugin.digital_life.runtime, "affect_note", return_value="[affect]"):
+            result = plugin._affect_request(request)
+        self.assertEqual(result["request"]["messages"][0]["content"], "hello\n\n[affect]")
+
     def test_reorder_is_kept_when_last_user_content_is_not_text_block(self):
         request = {
             "messages": [
