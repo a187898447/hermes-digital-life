@@ -122,6 +122,24 @@ _LEARNED_META = re.compile(
 _QUOTED = re.compile(r"[「『“\"]([^」』”\"]{15,})[」』”\"]")
 
 
+def similar_learned(text: str, entries: dict[str, dict], threshold: float = 0.8) -> str:
+    """Return an existing learned id that says the same thing, if any."""
+    import difflib  # noqa: PLC0415
+
+    def norm(value: str) -> str:
+        return "".join(ch for ch in str(value or "") if ch.isalnum())
+
+    target = norm(text)
+    if len(target) < 8:
+        return ""
+    for identifier, row in entries.items():
+        if row.get("kind") != "learned":
+            continue
+        if difflib.SequenceMatcher(None, target, norm(row.get("text"))).ratio() >= threshold:
+            return identifier
+    return ""
+
+
 def learned_problem(text: str) -> str:
     """Return why a learned entry is unfit, or "" when it is fine.
 
@@ -228,7 +246,7 @@ class MemoryStore:
         op = event["op"]
         if op == "add":
             if identifier in entries:
-                raise ValueError("duplicate id")
+                return
             if event.get("kind") not in DEFAULT_WEIGHTS or not isinstance(event.get("text"), str) or not event["text"].strip():
                 raise ValueError("invalid content")
             # Entries written by older versions lack some fields; fill them in

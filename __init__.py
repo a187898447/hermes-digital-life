@@ -994,6 +994,10 @@ def register(ctx) -> None:
                 if problem:
                     return json.dumps({"ok": False, "error": "learned entry rejected: " + problem},
                                       ensure_ascii=False)
+                twin = _memory.similar_learned(args.get("text"), memory_store().read_entries())
+                if twin:
+                    return json.dumps({"ok": False, "error": "learned entry rejected: already covered by " + twin},
+                                      ensure_ascii=False)
             chat_id, chat_type = _session_scope(session_id)
             result = memory_store().write(args.get("text"), kind=args.get("kind", "note"),
                                           weight=args.get("weight"), session_id=session_id,

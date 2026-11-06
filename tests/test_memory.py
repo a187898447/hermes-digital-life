@@ -942,3 +942,14 @@ class IdReuseTests(unittest.TestCase):
         second = self.store.write("second", now_ms=NOW)
         self.assertNotEqual(first["id"], second["id"])
         self.assertGreater(int(second["id"].rsplit("-", 1)[1]), int(first["id"].rsplit("-", 1)[1]))
+
+class SimilarLearnedTests(unittest.TestCase):
+    def test_near_duplicate_learned_is_found(self):
+        from digital_life import memory as m
+        entries = {"hp-1": {"kind": "learned", "text": "周四 → 冷不丁甩一句疯狂星期四文案给他"}}
+        self.assertEqual(m.similar_learned("周四 → 顺手甩一句疯狂星期四文案给他", entries), "hp-1")
+
+    def test_different_habit_is_allowed(self):
+        from digital_life import memory as m
+        entries = {"hp-1": {"kind": "learned", "text": "周四 → 冷不丁甩一句疯狂星期四文案给他"}}
+        self.assertEqual(m.similar_learned("有人骂我 → 先接情绪不解释", entries), "")
