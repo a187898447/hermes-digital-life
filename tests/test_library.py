@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -177,3 +178,21 @@ class LibraryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class BookmarkMonotonicTests(unittest.TestCase):
+    def test_a_stale_snapshot_does_not_rewind_the_bookmark(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch.object(library, "root", return_value=Path(tmp)), \
+                 mock.patch.object(library, "inbox_root", return_value=Path(tmp) / "inbox"):
+                (Path(tmp) / "inbox").mkdir()
+                text = "".join(f"第{i}段。" for i in range(2000))
+                (Path(tmp) / "inbox" / "book.txt").write_text(text, encoding="utf-8")
+                meta = library.ingest("book.txt", fetcher=None)
+                first = library.read(dict(meta), max_chars=1000)
+                library.read(dict(meta), max_chars=1000)          # fresh snapshot reads on
+                stale = dict(meta, offset=0)                       # what an old agenda holds
+                again = library.read(stale, max_chars=1000)
+                self.assertGreaterEqual(again["offset"], first["offset"] + 1000)
+                saved = json.loads((Path(tmp) / (Path(meta["file"]).stem + ".json")).read_text())
+                self.assertEqual(saved["offset"], again["offset"])

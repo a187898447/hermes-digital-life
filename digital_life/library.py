@@ -286,6 +286,14 @@ def _offset_of(meta: dict, text_len: int) -> int:
     return max(0, min(int(raw or 0), text_len))
 
 
+def _stored_meta(meta: dict) -> dict:
+    """The bookmark on disk, which is newer than any snapshot a caller holds."""
+    try:
+        return json.loads((root() / (Path(meta["file"]).stem + ".json")).read_text("utf-8"))
+    except (OSError, ValueError, KeyError):
+        return {}
+
+
 def read(meta: dict, part: int | None = None, max_chars: int = MAX_CHARS) -> dict:
     """Return the next chunk of a source and remember how far the reading got.
 
@@ -296,18 +304,24 @@ def read(meta: dict, part: int | None = None, max_chars: int = MAX_CHARS) -> dic
     width = max(500, min(int(max_chars), MAX_CHARS))
     text = (root() / meta["file"]).read_text("utf-8")
     starts = _page_starts(text, width)
+    stored = _stored_meta(meta)
     if part is not None:
         index = max(0, min(int(part), len(starts) - 1))
         start = starts[index]
     else:
-        start = _offset_of(meta, len(text))
+        # A caller may hand us a meta snapshot taken before someone else read
+        # further; never let that rewind the bookmark.
+        start = max(_offset_of(meta, len(text)), _offset_of(stored, len(text)))
         index = max(0, bisect.bisect_right(starts, start) - 1)
     page, end = _window(text, start, width)
-    meta["offset"] = end
-    meta.pop("position", None)
+    merged = {**stored, **meta}
+    merged["offset"] = max(int(stored.get("offset") or 0), end)
+    merged.pop("position", None)
     try:
         (root() / (Path(meta["file"]).stem + ".json")).write_text(
-            json.dumps(meta, ensure_ascii=False), "utf-8")
+            json.dumps(merged, ensure_ascii=False), "utf-8")
+        meta.clear()
+        meta.update(merged)
     except OSError:
         pass
     done = end >= len(text)
