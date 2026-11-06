@@ -12,7 +12,7 @@ Event-memory writes default on. Set `plugins.entries.hermes-lover.settings.memor
 
 Uninstall with `hermes plugins disable hermes-lover` followed by `hermes plugins remove hermes-lover`. Plugin removal leaves profile data under `plugin-data/hermes-lover/`; handle that directory separately if deleting the saved state is desired.
 
-For upgrades, back up the target profile's `plugin-data/hermes-lover/` directory before replacing plugin code. State is schema-versioned; this release performs bounded migrations when reading older state. Hermes profiles keep plugin data separate at runtime but are not an OS filesystem security boundary. Do not grant gateway injection for this release because no proactive delivery workflow uses it.
+For upgrades, back up the target profile's `plugin-data/hermes-lover/` directory before replacing plugin code. State is schema-versioned; this release performs bounded migrations when reading older state. Hermes profiles keep plugin data separate at runtime but are not an OS filesystem security boundary. The installer enables gateway injection for the plugin's own wake-up nudge; the scheduled beats use the host's cron job and `beat_send` instead.
 
 ## Current package scope
 
@@ -24,11 +24,13 @@ For upgrades, back up the target profile's `plugin-data/hermes-lover/` directory
 - Chinese assistant uncertainty/inquiry detection with existing gap deduplication and reactivation.
 - Task-defined chemistry/energy temperature mapping, only when request temperature is omitted or null.
 - Lossless memory affinity ranking helpers.
+- Dated memory palace with FTS5 recall, optional hybrid (RRF) recall, facts/journals, `read_source`/`library_list`/`study_source`, and a pre-send speech gate.
+- QQ Zone read tools (`qzone_feed`), background jobs (`background_task`, `search_later`), and the `beat_targets`/`beat_send` pair used only by scheduled beats.
 - Operator CLI: `hermes hermes-lover core|status|stop|resume|resolve-gap <id>`.
 - Bundled profile skills: `hermes-lover-guide` (onboarding, 女娲→SOUL.md translation, QQ binding, beat enablement).
 - Bundled personas: `SOUL.template.md` plus the worked example `personas/001-deepseek-xiaojingyu/` (persona card + finished `SOUL.md`), copied into every new profile's `personas/`.
 
-No model-callable tool mutates life state or accepts user-supplied hormone/energy values. Fixed plugin rules respond only to host-observed provider requests, completed turns, transient errors, search results, and elapsed time. Operator stop/resume and gap closure require typing an explicit confirmation. The installer creates one paused `hermes-lover-beat` cron job that delivers locally; it stays silent until an operator points its Deliver target at a real channel and resumes it (guide, last step). The optional “Quiet digital-life reflection” blueprint creates a local-only scheduled turn when an operator chooses it. The plugin itself implements no delivery logic and registers no gateway injection hook.
+No model-callable tool mutates life state or accepts user-supplied hormone/energy values. Fixed plugin rules respond only to host-observed provider requests, completed turns, transient errors, search results, and elapsed time. Operator stop/resume and gap closure require typing an explicit confirmation. The installer creates one paused `hermes-lover-beat` cron job that delivers locally; it stays silent until an operator resumes it (guide, last step). The optional “Quiet digital-life reflection” blueprint creates a local-only scheduled turn when an operator chooses it. The plugin itself implements no delivery logic and registers no gateway injection hook.
 
 Hermes's built-in `memory` tool remains responsible for memory writes. Per-request middleware reorders the exact rendered `MEMORY.md`/`USER.md` blocks by DLC affinity and preserves every entry; it does not replace or own the memory store. The reflection blueprint may write identity-judged memory through Hermes's built-in tool; it cannot mutate life-state values. The plugin itself implements no proactive wakes; the installer's paused `hermes-lover-beat` cron is a host-side scheduled turn the operator must enable.
 
@@ -38,7 +40,7 @@ Hermes's built-in `memory` remains the store for stable profile facts. `memory_w
 
 `memory_recall(query, k=8, include_cold=false)` searches Chinese bigrams and lowercase English tokens, returning inventory/match counts and ranked entries. Displayed entries refresh access history except during emergency stop. Queries are token-based, not semantic search; punctuation-only or single-character queries use literal substring matching. Neither tool changes life state. No event memories are automatically injected into prompts in P0.
 
-Daily JSONL add/touch/forget events are the only authority. `memory-index.db` is disposable: rebuild with `hermes hermes-lover memory-rebuild`. Back up the daily logs before manual edits; malformed lines are reported and skipped, and interrupted tails are preserved in recovery files. Cold views are never replayed. P0 understands archive events but does not generate them or automatically delete/archive memories; injection is P1 and archive/compact controls are P2.
+Daily JSONL add/touch/forget events are the only authority. `memory-index.db` is disposable: rebuild with `hermes hermes-lover memory-rebuild`. Back up the daily logs before manual edits; malformed lines are reported and skipped, and interrupted tails are preserved in recovery files. Cold views are never replayed. Archive events are understood but never generated automatically; compaction is the explicit `memory-compact` CLI, and injection into prompts is opt-in per kind.
 
 A-class upstream rules: seven-day effective-weight half-life, reciprocal recency, three-level attention, and nonempty-query score coefficients. B-class policies: daily JSONL, bigram/FTS BM25 relevance, kind defaults, same-day reinforcement, empty-query attention bias, quotas and the write switch. Current implementation fully scans the logs to validate the cache on each operation; large archives will need incremental indexing. Requires macOS/Linux file locking and SQLite FTS5.
 
@@ -111,7 +113,7 @@ compressor, and nothing here installs it.
 From this repository root:
 
 ```sh
-python3 -m unittest discover -s tests
+cd tests && PYTHONPATH=.. python3 -m unittest discover -p 'test_*.py'
 ```
 
 The tests do not require Hermes or an API key. The live plugin contract can be checked with `hermes plugins doctor . --ci` in a compatible Hermes installation.
@@ -147,3 +149,29 @@ Selected domain rules are derived from `digital-life-core` by mashangshui (温�
 - `hermes-lover memory-compact --days 30` 是手动命令（不是模型工具）：把 30 天未访问的归档条目
   按 `(date, chat_id)` 折叠成一条 ≤200 字的 `summary`，原文保留、仍可按 id 读回；`include_cold=true`
   时只返回摘要，不展开原文。重复执行不会产生重复摘要。
+
+## 工具、预算与口吻闸门
+
+QQ 会话里模型能调用的工具分几组，权限和预算都不一样：
+
+- **记忆**：`memory_write` / `memory_recall` / `memory_revoke`（只能撤 10 分钟内）/ `memory-compact` CLI。
+  自动捕获按轮写 `turn`；每天第一条 QQ 消息会先补前一天的 `fact` 和 `journal`。
+- **读源**：`read_source` 单页最多 6000 字，书没读完时返回自动续读提示，支持 GitHub blob/repo/tree；
+  `library_list` 列出 `plugin-data/<profile>/library/` 里的书（每本 ≤2MB）；`study_source` 把长链接交给
+  后台会话，后台只能用 `read_source` 和 `memory_write`（`pre_tool_call` 硬拦 terminal/搜索/代码执行），
+  读完给会话回一句结论。
+- **空间**：`qzone_feed` 每轮最多 2 页、5 条，且调用前必须先 `memory_recall` 查这段是否读过。
+- **后台**：`background_task` / `search_later` 交出去后不占本轮预算，结果直接发回会话。
+- **只读状态**：`digital_life_status` 里 `proactive` 字段说明 beat 是否排程、今天响过几次、哪些工具只在
+  定时轮可用；普通聊天轮调 `beat_send` 会被拒，这是设计，不是权限没开。
+
+预算：QQ 每一轮最多 8 次外部工具调用（搜索、抓取、空间、终端、写文件等）；记忆类、读源类、状态、
+后台任务不计入。超了会先让模型回话，把余下工作交给后台。
+
+口吻闸门：QQ 发送前，`digital_life/speech.py` 先标出回执腔、结算腔、填充词、客服腔和反问尾巴；
+命中就让子会话改写（`HERMES_LOVER_POLISH_CHILD=1`），仍不合格按分句删，删光回「嗯」。
+相关规则也写在人格卡与 `shuorenhua` skill 里。
+
+已学（`kind=learned`）只收「什么场合 → 你会怎么做」的社会习惯：可带 `applies_dow`（0=周一…6=周日）
+限定星期；超过 60 字、引用原文 ≥15 字、带元信息词（仓库/API/格式/文档…）会被拒；同一事由只留一条，
+第二条要求把细节并进第一条。条数不设配额，由材料本身决定。
