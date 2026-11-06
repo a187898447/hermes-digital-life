@@ -28,6 +28,19 @@ _RHETORICAL = re.compile(r"(要不要|是不是|对吧|懂了吗|行不行|好�
 # clause comes back a few replies later. Compare against what was just said
 # instead of hardcoding the phrase.
 _REPEAT_SIZE = 6
+# Short habits ("我认", "行吧") never reach the six-character window above. Count
+# them across the recent bubbles instead, so the pass learns the phrase from the
+# assistant's own output rather than from a hardcoded list.
+_HABIT_SIZES = (2, 3)
+_HABIT_STOP = {
+    "什么", "这个", "那个", "就是", "还是", "不是", "可以", "知道", "我们", "你们",
+    "他们", "现在", "今天", "明天", "昨天", "时候", "一个", "一下", "这样", "那样",
+    "因为", "所以", "但是", "如果", "已经", "没有", "自己", "觉得", "真的", "可能",
+    "应该", "需要", "东西", "事情", "问题", "不用", "不要", "咱们", "怎么", "这么",
+    "那么", "然后", "起来", "出来", "过来", "回来", "下去", "上去", "的话", "一样",
+    "有点", "一点", "有些", "也是", "只是", "还有", "就是", "反正", "其实",
+}
+_HABIT_PARTICLES = set("的地得了着过吗呢吧啊哈嗯哦呀嘛")
 
 
 def repeated(lines: list[str], recent: list[str], *, size: int = _REPEAT_SIZE) -> list[tuple[int, str]]:
@@ -54,6 +67,39 @@ def repeated(lines: list[str], recent: list[str], *, size: int = _REPEAT_SIZE) -
     return found
 
 
+def habit_phrases(bubbles: list[str], *, limit: int = 4) -> list[str]:
+    """Short phrases the assistant keeps reusing across recent bubbles."""
+    counts: dict[str, int] = {}
+    seen: dict[str, set[int]] = {}
+    for index, raw in enumerate(bubbles or []):
+        line = str(raw or "").strip()
+        if len(line) < 2:
+            continue
+        for size in _HABIT_SIZES:
+            for start in range(len(line) - size + 1):
+                phrase = line[start:start + size]
+                if not all("\u4e00" <= ch <= "\u9fff" for ch in phrase):
+                    continue
+                if phrase in _HABIT_STOP or phrase[-1] in _HABIT_PARTICLES:
+                    continue
+                counts[phrase] = counts.get(phrase, 0) + 1
+                seen.setdefault(phrase, set()).add(index)
+    ranked = [
+        phrase for phrase, count in counts.items()
+        if count >= 2 and len(seen.get(phrase, ())) >= 2
+    ]
+    ranked.sort(key=lambda phrase: (counts[phrase] * len(phrase), len(phrase)), reverse=True)
+    # Keep the longest form only: "我认了" already covers "我认".
+    picked: list[str] = []
+    for phrase in ranked:
+        if any(phrase in kept or kept in phrase for kept in picked):
+            continue
+        picked.append(phrase)
+        if len(picked) >= limit:
+            break
+    return picked
+
+
 def tics(line: str) -> list[str]:
     """Named AI-flavour shapes in one bubble (empty when clean)."""
     found: list[str] = []
@@ -75,6 +121,13 @@ def lint(lines: list[str], recent: list[str] | None = None) -> list[tuple[int, s
     issues: list[tuple[int, str]] = []
     for index, phrase in repeated(lines, recent or []):
         issues.append((index, f"repeated:{phrase}"))
+    habits = habit_phrases(recent or [])
+    if habits:
+        for index, raw in enumerate(lines):
+            for phrase in habits:
+                if phrase in (raw or ""):
+                    issues.append((index, f"habit:{phrase}"))
+                    break
     for index, raw in enumerate(lines):
         line = (raw or "").strip()
         if not line:
@@ -136,11 +189,16 @@ POLISH_PROMPT = """\
 4. 把每句当群友聊天读，问三件事：它是在说话，还是在处理事情（确认、记账、结算、归档、汇报、下承诺）？
    删掉这句，对话有没有损失？对方会不会这么说？任一条不对就删掉，或改成一句具体的话。
    已经聊完的事，不要再说成还挂着、没结、欠着——那是在记账，不是在说话。
+   也不要主动提对方早就答过的旧事来收尾（"对了，那事还没…"），对方这轮没提就别接。
 5. 去掉“说实话/其实/反正/不过”这种垫场词，去掉“不错（吧）？”“要不要我…？”这种反问收尾。
 6. 改不动就原样保留那一行。
 7. 不要旁白、不要自评、不要“我改完了”这类话，除了改写结果什么都不要输出。
 8. 不要重复最近说过的说法。下面「最近说过的」里出现的句子和词组不要再出现；
    和它重复的部分删掉，换成这次具体要说的事，宁可短。
+9. 不要拿「我认」「服了」「算我输」这种服软的姿态代替一句具体的话：
+   除非真的在认某一件具体的事、说得清认的是什么，否则删掉，剩下的照说。
+10. 下面是你最近反复用的短词（不是这轮的内容）。这一轮不要再用它们：
+{habits}
 
 最近说过的（不要重复）：
 {recent}

@@ -176,14 +176,16 @@ class ObservedTransitionTests(unittest.TestCase):
         self.assertEqual(self.state["gaps"][0]["status"], "open")
 
     def test_sqlite_transactions_preserve_concurrent_updates(self):
+        import tempfile
         self.patcher.stop()
-        with ThreadPoolExecutor(max_workers=8) as pool:
-            futures = []
-            for worker in range(8):
-                futures.append(pool.submit(self._write_gaps, worker))
-            for future in futures:
-                future.result()
-        persisted = storage.load_state(2_000_000)
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"HERMES_HOME": tmp}):
+            with ThreadPoolExecutor(max_workers=8) as pool:
+                futures = []
+                for worker in range(8):
+                    futures.append(pool.submit(self._write_gaps, worker))
+                for future in futures:
+                    future.result()
+            persisted = storage.load_state(2_000_000)
         self.assertEqual(len(persisted["gaps"]), 160)
 
     def _write_gaps(self, worker: int):

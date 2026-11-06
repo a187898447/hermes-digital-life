@@ -66,3 +66,16 @@ class RepairTests(unittest.TestCase):
     def test_settlement_clause_is_dropped(self):
         from digital_life import speech
         self.assertEqual(speech.repair("行，这账平了。那就周四。"), "行，那就周四。")
+
+
+class HabitTests(unittest.TestCase):
+    def test_a_short_phrase_repeated_across_bubbles_is_named(self):
+        recent = ["行吧，我认。", "我认了这个价。", "今天不想说了。"]
+        self.assertIn("我认", speech.habit_phrases(recent))
+
+    def test_one_use_is_not_a_habit(self):
+        self.assertEqual(speech.habit_phrases(["我认了一次。"]), [])
+
+    def test_the_polish_prompt_names_the_habit(self):
+        prompt = speech.POLISH_PROMPT.format(count=1, habits="- 我认", body="x", recent="（无）")
+        self.assertIn("我认", prompt)

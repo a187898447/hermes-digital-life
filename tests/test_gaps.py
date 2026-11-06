@@ -290,3 +290,28 @@ class SiblingWindowTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FadeStaleTests(unittest.TestCase):
+    def _state_with(self, created_ms, *, chat="chat-1"):
+        return {"gaps": [{"id": "gap-old", "summary": "old question", "status": "open",
+                          "created_at": created_ms, "chat": chat, "relief": 0.0}]}
+
+    def test_an_old_open_loop_is_retired(self):
+        now = 10_000_000_000.0
+        state = self._state_with(now - 13 * 3_600_000)
+        closed = gaps.fade_stale(state, now)
+        self.assertEqual(closed, ["gap-old"])
+        self.assertEqual(state["gaps"][0]["status"], "resolved")
+        self.assertEqual(state["gaps"][0]["closed_by"], "faded")
+
+    def test_a_young_loop_is_kept(self):
+        now = 10_000_000_000.0
+        state = self._state_with(now - 3_600_000)
+        self.assertEqual(gaps.fade_stale(state, now), [])
+        self.assertEqual(state["gaps"][0]["status"], "open")
+
+    def test_another_chat_is_left_alone(self):
+        now = 10_000_000_000.0
+        state = self._state_with(now - 13 * 3_600_000, chat="chat-2")
+        self.assertEqual(gaps.fade_stale(state, now, chat="chat-1"), [])

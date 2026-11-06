@@ -22,6 +22,10 @@ GAP_TENSION_BASE = 80.0
 GAP_TENSION_PER_HOUR = 5.0
 GAP_SIMILARITY = 0.6
 GAP_RESOLVED_TTL_DAYS = 30
+# An open loop that outlives a day without being closed by a tool result or an
+# epiphany has been carried long enough: asking about it again is nagging, so
+# the tick retires it instead of surfacing it forever.
+FADE_AFTER_HOURS = 12.0
 GAP_OPEN_WARN = 1000
 EPIPHANY_ECHO_MINUTES = 10.0
 SIBLING_WINDOW_MINUTES = 30.0
@@ -214,6 +218,26 @@ def close_gap(state: dict[str, Any], *, by: str, now_ms: float, match_text: str 
         gap["closed_by"] = by
         closed.append(gap)
         retire_wake(state, str(gap.get("id") or ""))
+    return closed
+
+
+def fade_stale(state: dict[str, Any], now_ms: float, *, chat: str | None = None) -> list[str]:
+    """Retire open loops that have been carried past their shelf life."""
+    cutoff = now_ms - FADE_AFTER_HOURS * 3_600_000
+    closed: list[str] = []
+    for gap in open_gaps(state.get("gaps") or []):
+        if chat is not None and str(gap.get("chat") or "") not in (chat, ""):
+            continue
+        if float_or(gap.get("created_at"), now_ms) > cutoff:
+            continue
+        gap["status"] = "resolved"
+        gap["closed_by"] = "faded"
+        gap["closed_at"] = now_ms
+        gap["resolved_at"] = now_ms
+        retire_wake(state, str(gap.get("id") or ""))
+        closed.append(str(gap.get("id") or ""))
+    if closed:
+        logger.info("hermes-lover faded %d stale open loop(s)", len(closed))
     return closed
 
 

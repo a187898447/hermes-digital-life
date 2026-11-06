@@ -52,6 +52,9 @@ def once(now_ms: float | None = None, *, force: bool = False) -> dict[str, Any]:
         from . import affect
 
         affect.refresh(current, now)
+        from . import gaps
+
+        done["faded"] = gaps.fade_stale(current, now)
         current["life"]["last_tick_at"] = now
         done.update(stepped)
         done["pulses_applied"] = applied
