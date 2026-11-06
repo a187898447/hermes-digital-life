@@ -140,10 +140,11 @@ class DoctorCheckTests(unittest.TestCase):
             fixture = Fixture(tmp)
             checks = fixture.inspect()
             statuses = {check.key: check.status for check in checks}
-            self.assertEqual(len(checks), 11)
+            self.assertEqual(len(checks), 12)
             self.assertEqual([check.key for check in checks], [
                 "plugin.enabled", "toolsets.qqbot", "patch.qq-dialogue-split",
-                "patch.studio-bridge", "patch.studio-cross-profile", "config.cron-wrap",
+                "patch.qq-shutdown-notice", "patch.studio-bridge", "patch.studio-cross-profile",
+                "config.cron-wrap",
                 "config.wake", "sync.personas", "sync.soul", "sync.scripts", "sync.skills",
             ])
             self.assertEqual(statuses["plugin.enabled"], doctor.OK)
@@ -153,7 +154,7 @@ class DoctorCheckTests(unittest.TestCase):
             output = []
             self.assertEqual(doctor.run(home=fixture.home, repo=fixture.repo, runner=fixture.runner,
                                       studio=False, out=output.append), 0)
-            self.assertIn("结果：11 项检查", output[-1])
+            self.assertIn("结果：12 项检查", output[-1])
 
     def test_disabled_plugin_is_a_fix_and_exits_one(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -238,7 +239,7 @@ class DoctorCheckTests(unittest.TestCase):
             self.assertEqual(code, 1)
             payload = json.loads("\n".join(output))
             self.assertFalse(payload["ok"])
-            self.assertEqual(len(payload["checks"]), 11)
+            self.assertEqual(len(payload["checks"]), 12)
             self.assertEqual(payload["checks"][0]["status"], doctor.FIX)
 
     def test_config_missing_is_a_warning_not_a_crash(self):

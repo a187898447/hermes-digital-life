@@ -255,6 +255,17 @@ if [[ -f "$QQ_PACE_FIX" ]] && command -v python3 >/dev/null 2>&1; then
   fi
 fi
 
+# QQ shutdown banners: the host tells every active chat when it goes down; skip QQ.
+QQ_SHUTDOWN_FIX="$SOURCE/scripts/fix-qq-shutdown-notice.py"
+if [[ -f "$QQ_SHUTDOWN_FIX" ]] && command -v python3 >/dev/null 2>&1; then
+  if python3 "$QQ_SHUTDOWN_FIX" --check >/dev/null 2>&1; then
+    printf 'QQ 关停通知过滤已正常，无需修复。\n'
+  else
+    python3 "$QQ_SHUTDOWN_FIX" ||
+      printf '提示: QQ 关停通知过滤补丁未应用；重启时会向 QQ 发状态横幅。\n' >&2
+  fi
+fi
+
 # `hermes profile create` drops a generic alias wrapper that forwards straight
 # to the host CLI, which makes `hermes-lover status` print Hermes' own status.
 # Route the plugin's operator verbs back to the plugin command; keep chat etc.

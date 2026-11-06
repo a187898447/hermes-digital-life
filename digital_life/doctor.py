@@ -405,6 +405,8 @@ def _patch_check(
     detail = _first_line(output)
     if rc == 0:
         return Check(key, OK, f"{label}已就位")
+    if rc == 3 and "未找到" in output:
+        return Check(key, SKIP, _first_line(output) or "本机没有可打补丁的宿主文件")
     if script == "fix-qq-dialogue-split.py" and "未找到" in output:
         return Check(key, SKIP, "本机没有可打补丁的 QQ 适配器")
     if rc == 1:
@@ -523,6 +525,8 @@ def inspect(
         _check_toolsets(config, config_error),
         _patch_check(key="patch.qq-dialogue-split", script="fix-qq-dialogue-split.py",
                      home=patches_home, repo=repo, runner=runner, label="QQ 对话拆分补丁"),
+        _patch_check(key="patch.qq-shutdown-notice", script="fix-qq-shutdown-notice.py",
+                     home=patches_home, repo=repo, runner=runner, label="QQ 关停通知过滤补丁"),
         _patch_check(key="patch.studio-bridge", script="fix-studio-bridge-python.py",
                      home=patches_home, repo=repo, runner=runner, label="Studio Python 桥补丁"),
         _patch_check(key="patch.studio-cross-profile", script="fix-studio-cross-profile.py",
