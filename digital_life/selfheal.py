@@ -1,8 +1,9 @@
-"""Passive self-repair: run the doctor at most once per process and per hour.
+"""Passive health check: run the doctor at most once per process and per hour.
 
-Called from ``pre_llm_call`` so a host update that disabled the plugin or
-clobbered a host patch heals itself on the next conversation, without blocking
-the reply and without ever touching profile data.
+Called from ``pre_llm_call`` so drift (a disabled plugin, a reverted host patch)
+is noticed on the next conversation — but noticed, not silently undone. Repair is
+an explicit operator action (``hermes-lover doctor --fix``); an unattended turn
+must not rewrite tool sets or patches the operator may have removed on purpose.
 """
 
 from __future__ import annotations
@@ -37,10 +38,10 @@ def is_due(path: Path, now_ms: float) -> bool:
         return True
 
 
-def _record(path: Path, now_ms: float, code: int, fixed: list[str]) -> None:
+def _record(path: Path, now_ms: float, code: int, pending: list[str]) -> None:
     try:
         path.write_text(
-            json.dumps({"at": now_ms, "ok": code == 0, "fixed": fixed}, ensure_ascii=False),
+            json.dumps({"at": now_ms, "ok": code == 0, "pending": pending}, ensure_ascii=False),
             "utf-8",
         )
     except OSError:
@@ -48,21 +49,23 @@ def _record(path: Path, now_ms: float, code: int, fixed: list[str]) -> None:
 
 
 def worker(path: Path, now_ms: float) -> None:
-    """Run one repair pass; failures are logged and never raised."""
+    """Run one read-only doctor pass; failures are logged and never raised."""
     try:
         from . import doctor  # noqa: PLC0415
 
         chunks: list[str] = []
-        code = doctor.run(fix=True, as_json=True, out=chunks.append)
-        fixed: list[str] = []
+        code = doctor.run(fix=False, as_json=True, out=chunks.append)
+        pending: list[str] = []
         if chunks:
             try:
-                fixed = list(json.loads(chunks[-1]).get("fixed") or [])
-            except (ValueError, AttributeError):
-                fixed = []
-        if fixed:
-            logger.info("hermes-lover self-heal repaired: %s", ", ".join(fixed))
-        _record(path, now_ms, code, fixed)
+                checks = json.loads(chunks[-1]).get("checks") or []
+                pending = [str(check.get("key")) for check in checks
+                           if isinstance(check, dict) and check.get("status") == "FIX"]
+            except (ValueError, AttributeError, TypeError):
+                pending = []
+        if pending:
+            logger.info("hermes-lover self-check found items to fix: %s", ", ".join(pending))
+        _record(path, now_ms, code, pending)
     except Exception:
         logger.warning("hermes-lover self-heal failed", exc_info=True)
 

@@ -73,6 +73,57 @@ class SubscriptionFileTests(unittest.TestCase):
                 self.assertIsInstance(target["added_at"], float)
 
 
+class MuteAndSendTests(unittest.TestCase):
+    def setUp(self):
+        from contextlib import contextmanager
+        import tempfile
+        from pathlib import Path
+
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        base = Path(self.tmp.name)
+
+        @contextmanager
+        def no_lock():
+            yield
+
+        self.patchers = [
+            patch.object(proactive, "_targets_path", lambda: base / "proactive-targets.json"),
+            patch.object(proactive, "_targets_lock", no_lock),
+            patch.object(proactive, "_state_lock", no_lock),
+            patch.object(proactive, "sync_beat_delivery"),
+        ]
+        for item in self.patchers:
+            item.start()
+            self.addCleanup(item.stop)
+
+    def test_unsubscribe_leaves_a_tombstone_that_blocks_re_enrolment(self):
+        proactive.subscribe({"chat_id": "A", "chat_type": "group"})
+        self.assertTrue(proactive.can_send("A"))
+        self.assertEqual(proactive.unsubscribe("A"), ("removed", 0))
+        self.assertFalse(proactive.can_send("A"))
+        self.assertFalse(proactive.track_chat({"chat_id": "A", "chat_type": "group"}))
+        self.assertEqual(proactive.subscribed_chats(), set())
+        self.assertTrue(proactive.is_muted("A"))
+        # Asking again is an explicit opt-in and clears the tombstone.
+        self.assertEqual(proactive.subscribe({"chat_id": "A"}), ("added", 1))
+        self.assertFalse(proactive.is_muted("A"))
+        self.assertTrue(proactive.can_send("A"))
+
+    def test_can_send_requires_a_subscription(self):
+        self.assertFalse(proactive.can_send("A"))
+        self.assertFalse(proactive.can_send(""))
+
+    def test_one_beat_per_chat_per_day(self):
+        day = 1_700_000_000_000.0
+        self.assertTrue(proactive.claim_send("A", day))
+        self.assertFalse(proactive.claim_send("A", day + 60_000))
+        self.assertTrue(proactive.claim_send("B", day + 60_000))
+        self.assertTrue(proactive.claim_send("A", day + 26 * 3_600_000))
+        proactive.release_send("A", day + 26 * 3_600_000)
+        self.assertTrue(proactive.claim_send("A", day + 26 * 3_600_000))
+
+
 class LockTests(unittest.TestCase):
     def _with_fake_storage(self, root):
         import sys

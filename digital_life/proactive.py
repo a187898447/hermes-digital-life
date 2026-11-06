@@ -35,6 +35,9 @@ CHAT_BEAT_PROMPT = (
     "5) 只输出这句话，不要解释，也不要自己调用发送工具——投递目标由这个任务的 Deliver 决定。"
 )
 TARGETS_FILE = "proactive-targets.json"
+MUTED_FILE = "proactive-muted.json"
+SENT_FILE = "proactive-sent.json"
+MAX_SENT_CHATS = 200
 
 # Order matters: a request that contains a quiet phrase must win over the
 # "主动" it may also contain ("不用主动找我").
@@ -83,6 +86,123 @@ def _load_targets_strict() -> list[dict[str, Any]]:
     except (OSError, ValueError):
         return []
     return [item for item in data if isinstance(item, dict) and item.get("chat_id")]
+
+
+def _sibling(name: str) -> Path:
+    """A state file next to the targets file (tests only redirect the targets path)."""
+    return _targets_path().with_name(name)
+
+
+@contextmanager
+def _state_lock():
+    """Serialise the mute/dedupe files; separate from the targets lock, never nested."""
+    try:
+        import fcntl  # noqa: PLC0415 - POSIX only
+    except ImportError:  # pragma: no cover
+        yield
+        return
+    try:
+        path = _sibling("proactive-state.lock")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(path, "a+", encoding="utf-8")
+    except (OSError, HostAPIUnavailable):
+        yield
+        return
+    with handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _read_dict(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_dict(path: Path, data: dict[str, Any]) -> None:
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2))
+    tmp.replace(path)
+
+
+def muted_chats() -> dict[str, Any]:
+    """Chats that asked for quiet. A tombstone outlives the message that set it."""
+    try:
+        raw = _read_dict(_sibling(MUTED_FILE))
+    except HostAPIUnavailable:
+        return {}
+    return {str(key): value for key, value in raw.items() if isinstance(value, dict)}
+
+
+def is_muted(chat_id: str) -> bool:
+    return str(chat_id) in muted_chats()
+
+
+def _set_muted(chat_id: str, by: str = "") -> None:
+    try:
+        with _state_lock():
+            muted = muted_chats()
+            muted[str(chat_id)] = {"at": time.time(), "by": str(by or "")}
+            _write_dict(_sibling(MUTED_FILE), muted)
+    except HostAPIUnavailable:
+        logger.warning("hermes-lover: host plugin storage is unavailable; mute not recorded")
+
+
+def _clear_muted(chat_id: str) -> None:
+    try:
+        with _state_lock():
+            muted = muted_chats()
+            if muted.pop(str(chat_id), None) is not None:
+                _write_dict(_sibling(MUTED_FILE), muted)
+    except HostAPIUnavailable:
+        logger.warning("hermes-lover: host plugin storage is unavailable; mute not cleared")
+
+
+def can_send(chat_id: str) -> bool:
+    """A beat may only be delivered to a chat that is subscribed and not muted."""
+    chat_id = str(chat_id or "")
+    return bool(chat_id) and chat_id in subscribed_chats() and not is_muted(chat_id)
+
+
+def _today(now_ms: float) -> str:
+    return time.strftime("%Y-%m-%d", time.localtime(now_ms / 1000.0))
+
+
+def claim_send(chat_id: str, now_ms: float | None = None) -> bool:
+    """One proactive message per chat per local day; False when it was already sent."""
+    now_ms = time.time() * 1000 if now_ms is None else now_ms
+    day = _today(now_ms)
+    try:
+        with _state_lock():
+            raw = _read_dict(_sibling(SENT_FILE))
+            if raw.get("date") != day or not isinstance(raw.get("chats"), list):
+                raw = {"date": day, "chats": []}
+            if str(chat_id) in raw["chats"]:
+                return False
+            raw["chats"] = (raw["chats"] + [str(chat_id)])[-MAX_SENT_CHATS:]
+            _write_dict(_sibling(SENT_FILE), raw)
+    except HostAPIUnavailable:
+        logger.warning("hermes-lover: cannot record a beat send; refusing to double-send")
+        return False
+    return True
+
+
+def release_send(chat_id: str, now_ms: float | None = None) -> None:
+    """Undo a claim when the send itself failed, so a retry stays possible."""
+    now_ms = time.time() * 1000 if now_ms is None else now_ms
+    try:
+        with _state_lock():
+            raw = _read_dict(_sibling(SENT_FILE))
+            if raw.get("date") == _today(now_ms) and str(chat_id) in (raw.get("chats") or []):
+                raw["chats"] = [item for item in raw["chats"] if item != str(chat_id)]
+                _write_dict(_sibling(SENT_FILE), raw)
+    except HostAPIUnavailable:
+        logger.warning("hermes-lover: host plugin storage is unavailable; send claim kept")
 
 
 def load_targets() -> list[dict[str, Any]]:
@@ -202,6 +322,8 @@ def track_chat(chat: dict[str, str]) -> bool:
     chat_id = str(chat.get("chat_id") or "")
     if not chat_id:
         return False
+    if is_muted(chat_id):
+        return False
     try:
         with _targets_lock():
             targets = _load_targets_strict()
@@ -293,6 +415,7 @@ def subscribe(chat: dict[str, str], label: str = "") -> tuple[str, int]:
                 }
             )
             _save_targets(targets)
+            _clear_muted(chat_id)
             sync_beat_delivery()
             return "added", len(targets)
     except HostAPIUnavailable:
@@ -308,6 +431,7 @@ def unsubscribe(chat_id: str) -> tuple[str, int]:
             kept = [item for item in targets if item["chat_id"] != chat_id]
             if len(kept) == len(targets):
                 return "absent", len(targets)
+            _set_muted(chat_id)
             _save_targets(kept)
             sync_beat_delivery()
             return "removed", len(kept)

@@ -523,7 +523,7 @@ def _send_qq(chat_id: str, message: str) -> None:
         logger.warning("hermes-lover could not send command confirmation", exc_info=True)
 
 
-def _learned_hint() -> str:
+def _learned_hint(chat_id: str = "", chat_type: str = "") -> str:
     """A rotating one-liner: words picked up lately, faded by the forgetting curve.
 
     Nothing is pinned: entries fall out of this line as their effective weight decays,
@@ -534,7 +534,8 @@ def _learned_hint() -> str:
         return ""
     try:
         weekday = time.localtime().tm_wday
-        items = [item for item in factory().peek("learned", 10)
+        items = [item for item in factory().peek("learned", 10, chat_id=chat_id,
+                                                  include_global=chat_type != "group")
                  if float(item.get("effective_weight") or 0) >= 0.45
                  and (item.get("applies_dow") is None or item.get("applies_dow") == weekday)]
     except Exception:
@@ -567,7 +568,10 @@ def _on_user_message(
     _TOOL_TURNS.pop(meta["session"], None)
     meta["chat_id"], meta["chat_type"] = _session_scope(meta["session"])
     _remember(_TURN_META, meta["session"], meta)
-    if (meta["platform"] or "") == "qqbot" and meta["chat_id"]:
+    # Only a direct chat joins the proactive rotation on its own: a group opts in by
+    # asking for it, so one member cannot sign everyone else up for bot messages.
+    if ((meta["platform"] or "") == "qqbot" and meta["chat_id"]
+            and (meta["chat_type"] or "") != "group"):
         try:
             _proactive.track_chat({"chat_id": meta["chat_id"], "chat_type": meta["chat_type"]})
         except Exception:
@@ -583,7 +587,7 @@ def _on_user_message(
             journal_note = None
         if journal_note:
             notes.append(journal_note)
-    learned = _learned_hint()
+    learned = _learned_hint(meta["chat_id"], meta["chat_type"])
     if learned:
         notes.append(learned)
     return {"context": f"[hermes-lover] {' '.join(notes)}"} if notes else None
@@ -1209,6 +1213,15 @@ def register(ctx) -> None:
         text = str(args.get("text") or "").strip()
         if not chat_id or not text:
             return json.dumps({"ok": False, "error": "chat_id and text are required"})
+        from .digital_life import proactive as _proactive  # noqa: PLC0415
+
+        if not _proactive.can_send(chat_id):
+            return json.dumps({"ok": False,
+                               "error": "this chat has not subscribed to proactive messages"},
+                              ensure_ascii=False)
+        if not _proactive.claim_send(chat_id):
+            return json.dumps({"ok": False, "error": "already sent to this chat today"},
+                              ensure_ascii=False)
         delay = args.get("delay_seconds") or 0
         try:
             delay = max(0, min(300, float(delay)))
@@ -1218,12 +1231,15 @@ def register(ctx) -> None:
             time.sleep(delay)
         send_message_tool = _host_send_message_tool()
         if send_message_tool is None:
+            _proactive.release_send(chat_id)
             return json.dumps({"ok": False, "error": "send unavailable"}, ensure_ascii=False)
         raw = send_message_tool({"action": "send", "target": f"qqbot:{chat_id}", "message": text})
         try:
             result = json.loads(raw)
         except (TypeError, ValueError):
             result = {"ok": True, "raw": str(raw)[:200]}
+        if result.get("error"):
+            _proactive.release_send(chat_id)
         return json.dumps({"ok": not result.get("error"), "chat_id": chat_id, "result": result},
                           ensure_ascii=False)
 

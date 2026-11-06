@@ -837,6 +837,26 @@ class AnchorAndStressTests(unittest.TestCase):
                          {"ok": False, "error": "no entry to revoke"})
 
 
+    def test_learned_peek_keeps_chats_apart(self):
+        store = self.store
+        store.write("A 群的梗", kind="learned", now_ms=NOW, chat_id="group-a")
+        store.write("B 群的梗", kind="learned", now_ms=NOW, chat_id="group-b")
+        mine = store.peek("learned", 5, chat_id="group-a", include_global=False, now_ms=NOW)
+        self.assertEqual([row["text"] for row in mine], ["A 群的梗"])
+        self.assertEqual(store.peek("learned", 5, chat_id="group-b", include_global=False,
+                                    now_ms=NOW)[0]["text"], "B 群的梗")
+
+    def test_learned_peek_shows_global_entries_only_where_allowed(self):
+        store = self.store
+        store.write("主人教的通用说法", kind="learned", now_ms=NOW)
+        store.write("群里的说法", kind="learned", now_ms=NOW, chat_id="group-a")
+        everywhere = store.peek("learned", 5, chat_id="group-a", include_global=True, now_ms=NOW)
+        self.assertEqual({row["text"] for row in everywhere}, {"主人教的通用说法", "群里的说法"})
+        self.assertEqual([row["text"] for row in store.peek("learned", 5, chat_id="", include_global=True,
+                                                            now_ms=NOW)], ["主人教的通用说法"])
+        self.assertEqual([row["text"] for row in store.peek("learned", 5, chat_id="group-a",
+                                                            include_global=False, now_ms=NOW)], ["群里的说法"])
+
     def test_applies_dow_round_trips(self):
         store = self.store
         row = store.write("周四专用", kind="learned", applies_dow=3, now_ms=1_000_000)

@@ -748,16 +748,19 @@ class MemoryStore:
             return {"ok": True, "groups": len(groups), "summaries": len(groups),
                     "compacted": sum(len(rows) for rows in groups.values())}
 
-    def peek(self, kind, k=10, *, now_ms=None):
+    def peek(self, kind, k=10, *, chat_id="", include_global=True, now_ms=None):
         """Read-only top-k of one kind, ranked by current effective weight.
 
         Unlike ``recall`` this never touches entries: a hint line that shows up every
-        turn must not keep stale words alive past their decay.
+        turn must not keep stale words alive past their decay. A chat only sees what it
+        learned itself, plus operator-written global entries where that is allowed.
         """
         now_ms = _now(now_ms)
         entries = self.read_entries()
         rows = [entry for entry in entries.values()
-                if not entry.get("archived") and entry.get("kind") == kind]
+                if not entry.get("archived") and entry.get("kind") == kind
+                and (str(entry.get("chat_id") or "") == str(chat_id)
+                     or (include_global and not entry.get("chat_id")))]
         rows.sort(key=lambda row: decay(row["weight"], row["last_access_at"], now_ms), reverse=True)
         return [{"id": row["id"], "text": row["text"], "created_at": row.get("created_at", 0),
                  "effective_weight": decay(row["weight"], row["last_access_at"], now_ms)}

@@ -370,10 +370,20 @@ class SelfHealTests(unittest.TestCase):
                 self.assertFalse(state.exists())
                 logger.warning.assert_called()
 
+            seen: list[dict] = []
+
             def fake_run(**kwargs):
-                kwargs["out"](json.dumps({"fixed": ["patch.studio-bridge"]}))
-                return 0
+                seen.append(kwargs)
+                kwargs["out"](json.dumps({"ok": False, "fixed": [], "checks": [
+                    {"key": "plugin.enabled", "status": "FIX", "detail": "disabled"},
+                    {"key": "profile.copy", "status": "OK", "detail": "fine"},
+                ]}))
+                return 1
 
             with patch("digital_life.doctor.run", side_effect=fake_run):
                 selfheal.worker(state, 3_000_000.0)
-            self.assertEqual(json.loads(state.read_text("utf-8"))["fixed"], ["patch.studio-bridge"])
+            self.assertFalse(seen[0]["fix"], "the hourly check must not repair anything")
+            record = json.loads(state.read_text("utf-8"))
+            self.assertEqual(record["pending"], ["plugin.enabled"])
+            self.assertFalse(record["ok"])
+            self.assertNotIn("fixed", record)

@@ -960,7 +960,9 @@ class HostSendFallbackTests(unittest.TestCase):
         ctx = RecordingContext()
         plugin.register(ctx)
         handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["beat_send"]
-        with patch.dict(sys.modules, {"tools": None, "tools.send_message_tool": None}):
+        with patch.dict(sys.modules, {"tools": None, "tools.send_message_tool": None}), \
+                patch.object(plugin.digital_life.proactive, "can_send", lambda chat_id: True), \
+                patch.object(plugin.digital_life.proactive, "claim_send", lambda chat_id, now_ms=None: True):
             self.assertIsNone(plugin._host_send_message_tool())
             plugin._send_qq("c1", "hello")  # must not raise
             with patch.object(plugin, "_session_source", return_value="cron"):
