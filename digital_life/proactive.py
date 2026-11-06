@@ -57,7 +57,10 @@ def classify(text: str) -> str | None:
     body = (text or "").strip()
     if not body or len(body) > 300:
         return None
-    if _DISABLE.search(body):
+    for match in _DISABLE.finditer(body):
+        # "我不少聊" says the opposite of a quiet request; let it fall through.
+        if match.start() > 0 and body[match.start() - 1] == "不":
+            continue
         return "remove"
     for match in _ENABLE.finditer(body):
         clause = re.split(r"[，,。.!！?？\s]", body[:match.start()])[-1]

@@ -28,6 +28,11 @@ class ClassifyTests(unittest.TestCase):
         for text in ("别多聊", "不要多聊", "别多找我", "少聊两句"):
             self.assertEqual(proactive.classify(text), "remove", text)
 
+    def test_a_negated_quiet_word_is_not_a_quiet_request(self):
+        self.assertIsNone(proactive.classify("我不少聊"))
+        # A new clause starts over: "别担心" is not about chatting.
+        self.assertEqual(proactive.classify("别担心，多聊点"), "add")
+
     def test_unrelated_messages_are_ignored(self):
         for text in ("帮我看看第几步了", "", "   ", "今天天气怎么样"):
             self.assertIsNone(proactive.classify(text), text)

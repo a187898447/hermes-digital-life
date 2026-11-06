@@ -206,6 +206,61 @@ _MAX_CHILD_SESSIONS = 256
 _CHILD_MARK = "[lover-child:"
 
 
+def _stop_old_bridge(home_dir: str) -> bool:
+    """Stop the previous bridge process after checking its command line.
+
+    Bridges from before the token upgrade never wrote a pidfile, so the pidfile
+    alone cannot find them: also take whichever process holds the loopback port.
+    A pid is only killed when its command line mentions the bridge script.
+    """
+    port = os.environ.get("QZONE_BRIDGE_PORT") or "8765"
+    path = Path(os.environ.get("QZONE_BRIDGE_PID_FILE")
+                or (Path(home_dir) / "plugin-data" / "hermes-lover" / "qzone-bridge.pid"))
+    candidates: list[int] = []
+    try:
+        candidates.append(int(path.read_text("utf-8").strip()))
+    except (OSError, ValueError):
+        pass
+    candidates.extend(_listening_pids(port))
+    killed = False
+    for pid in dict.fromkeys(candidates):
+        if pid <= 0 or pid == os.getpid():
+            continue
+        try:
+            command = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
+                                     capture_output=True, text=True, timeout=5).stdout
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if "qzone-bridge.py" not in command:
+            continue
+        try:
+            os.kill(pid, signal.SIGTERM)
+            killed = True
+        except OSError:
+            continue
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    return killed
+
+
+def _listening_pids(port: str) -> list[int]:
+    """Pids holding a local TCP listen socket, via lsof; [] when it cannot be read."""
+    try:
+        out = subprocess.run(["lsof", "-nP", "-ti", f"tcp:{port}", "-sTCP:LISTEN"],
+                             capture_output=True, text=True, timeout=5).stdout
+    except (OSError, subprocess.SubprocessError):
+        return []
+    pids = []
+    for token in out.split():
+        try:
+            pids.append(int(token))
+        except ValueError:
+            continue
+    return pids
+
+
 def _child_kind(session_id: str) -> str | None:
     """Which background child this session is ("study"/"task"/"search"), else None.
 
@@ -1388,38 +1443,12 @@ def register(ctx) -> None:
             """An old bridge is up but ignores the token file; replace it."""
             return bool(current and current.get("ok")) and current.get("auth") is not True
 
-        def stop_old(home_dir: str) -> bool:
-            """Stop the previous bridge only if it is really the bridge.
-
-            An upgrade leaves an old process that ignores the token file; it has to go
-            or every feed call keeps running unauthenticated. We kill it by its pidfile
-            (never by port) and only after checking the command line.
-            """
-            path = Path(os.environ.get("QZONE_BRIDGE_PID_FILE")
-                        or (Path(home_dir) / "plugin-data" / "hermes-lover" / "qzone-bridge.pid"))
-            try:
-                pid = int(path.read_text("utf-8").strip())
-            except (OSError, ValueError):
-                return False
-            try:
-                command = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
-                                         capture_output=True, text=True, timeout=5).stdout
-            except (OSError, subprocess.SubprocessError):
-                return False
-            if "qzone-bridge.py" not in command:
-                return False
-            try:
-                os.kill(pid, signal.SIGTERM)
-            except OSError:
-                return False
-            return True
-
         if action == "start":
             current = state()
             if stale(current):
                 # The plugin cannot tell an old bridge to re-read the token file; it has
                 # to be replaced, or every feed call keeps running unauthenticated.
-                if not stop_old(home):
+                if not _stop_old_bridge(home):
                     return json.dumps({"ok": False, "running": True,
                                        "error": "旧版 bridge 还在跑，先手动结束它再启动"})
                 for _ in range(20):

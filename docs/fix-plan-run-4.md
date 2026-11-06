@@ -387,7 +387,7 @@ session-228cb381 的复核结论是"可以上线，但先补必须修 1–3"。�
 |---|---|
 | F4 热路径 | `_replay()` 按 `(mtime_ns, size)` 缓存每个 JSONL 的解析结果，未变文件只更新摘要、不读盘；摘要改为"相对路径 + 文件摘要"，升级后首次会重建一次索引（一次性成本）。capture 仍做权威读，但只读当天变动的那一个文件。 |
 | 文档旧路径 | `使用引导.md`、`安装说明.md` 的 `hermes-digital-life/` 改成 `<本仓库>` / `/path/to/hermes-lover`；远端仓库 URL 保留（GitHub 仓库名没变）。 |
-| 旧 qzone 桥 | `/health` 返回 `auth`、`version`。插件发现 200 但 `auth` 缺失，按 pidfile + `ps` 校验后 SIGTERM 旧进程（**不按端口杀**），再拉起新桥；旧进程不肯退时返回"先手动结束它"，不叠加第二个进程。 |
+| 旧 qzone 桥 | `/health` 返回 `auth`、`version`。插件发现 200 但 `auth` 缺失，先按 pidfile、再用 `lsof -sTCP:LISTEN` 找占端口的进程，逐个用 `ps -o command=` 确认命令行含 `qzone-bridge.py` 才 SIGTERM（端口只用来**发现**进程，不按端口盲杀），再拉起新桥；旧进程不肯退时返回"先手动结束它"，不叠加第二个进程。 |
 | beat 频率 | `claim_send` 从"每 chat 每天一条"改成 10 分钟窗口（beat 一天 10/14/16/20 四个时段，按日去重会压成一条）。 |
 | 否定词 | `classify` 对正向词的子句前缀做否定检查（"别多聊"不再被当成"多聊"），并补 `别聊`、`少聊`、`不要多聊` 到禁用词。 |
 | `_CHILD_SESSIONS` | 上限 256，超出按插入顺序淘汰最旧。 |

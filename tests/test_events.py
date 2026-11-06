@@ -1234,3 +1234,71 @@ class QzoneFeedTests(unittest.TestCase):
                 os.environ.pop("QZONE_BRIDGE_PORT", None)
             else:
                 os.environ["QZONE_BRIDGE_PORT"] = old
+
+
+class BridgeProcessTests(unittest.TestCase):
+    """Finding an old bridge must work even when it never wrote a pidfile."""
+
+    def setUp(self):
+        import shutil
+        self.tmp = tempfile.mkdtemp(prefix="bridge-")
+        self.addCleanup(shutil.rmtree, self.tmp, True)
+
+    def _spawn_listener(self, name: str):
+        import subprocess
+
+        free = __import__("socket").socket()
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]
+        free.close()
+        script = Path(self.tmp) / name
+        script.write_text(
+            "import socket, sys, time\n"
+            "s = socket.socket()\n"
+            "s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+            "s.bind(('127.0.0.1', int(sys.argv[1])))\n"
+            "s.listen(1)\n"
+            "time.sleep(60)\n"
+        )
+        proc = subprocess.Popen([sys.executable, str(script), str(port)])
+        self.addCleanup(self._reap, proc)
+        for _ in range(100):
+            if plugin._listening_pids(str(port)):
+                break
+            time.sleep(0.05)
+        return proc, port
+
+    @staticmethod
+    def _reap(proc):
+        if proc.poll() is None:
+            proc.kill()
+        proc.wait(timeout=10)
+
+    def test_listening_pids_finds_the_owner_and_frees_the_port(self):
+        import socket
+
+        server = socket.socket()
+        server.bind(("127.0.0.1", 0))
+        server.listen(1)
+        port = str(server.getsockname()[1])
+        try:
+            self.assertIn(os.getpid(), plugin._listening_pids(port))
+        finally:
+            server.close()
+        self.assertEqual(plugin._listening_pids(port), [])
+
+    def test_stops_a_bridge_newer_than_the_pidfile(self):
+        proc, port = self._spawn_listener("qzone-bridge.py")
+        env = {"QZONE_BRIDGE_PORT": str(port),
+               "QZONE_BRIDGE_PID_FILE": str(Path(self.tmp) / "missing.pid")}
+        with patch.dict(os.environ, env):
+            self.assertTrue(plugin._stop_old_bridge(self.tmp))
+        self.assertIsNotNone(proc.wait(timeout=10))
+
+    def test_never_kills_a_process_that_is_not_the_bridge(self):
+        proc, port = self._spawn_listener("not-a-bridge.py")
+        env = {"QZONE_BRIDGE_PORT": str(port),
+               "QZONE_BRIDGE_PID_FILE": str(Path(self.tmp) / "missing.pid")}
+        with patch.dict(os.environ, env):
+            self.assertFalse(plugin._stop_old_bridge(self.tmp))
+        self.assertIsNone(proc.poll())
