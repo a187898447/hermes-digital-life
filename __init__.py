@@ -194,40 +194,53 @@ def _maybe_wake(session_id: str = "") -> None:
 
 
 
-_STUDY_SESSIONS: dict[str, bool] = {}
+_CHILD_SESSIONS: dict[str, str | None] = {}
+_CHILD_MARK = "[lover-child:"
 
 
-def _study_session(session_id: str) -> bool:
-    """True when this session is a background study run (tagged by study_source).
+def _child_kind(session_id: str) -> str | None:
+    """Which background child this session is ("study"/"task"/"search"), else None.
 
-    Those runs are hosted by the gateway like any local session, so they see the
-    full toolset; restricting them here is the only enforcement that actually
-    holds when the model decides to go debug something instead of reading.
+    A child is a gateway-hosted one-shot session, so env vars set by the spawner never
+    reach it; the prompt tag does, and it survives the queue.
     """
     if not session_id:
-        return False
-    if session_id in _STUDY_SESSIONS:
-        return _STUDY_SESSIONS[session_id]
+        return None
+    if session_id in _CHILD_SESSIONS:
+        return _CHILD_SESSIONS[session_id]
     db = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
     try:
         with sqlite3.connect(str(db), timeout=2) as conn:
             row = conn.execute(
-                "SELECT 1 FROM messages WHERE session_id=? AND role='user' AND content LIKE '%[study-task]%' LIMIT 1",
+                "SELECT content FROM messages WHERE session_id=? AND role='user' "
+                "AND content LIKE '%[lover-child:%' LIMIT 1",
                 (session_id,)).fetchone()
-        found = bool(row)
     except sqlite3.Error:
-        return False
-    _STUDY_SESSIONS[session_id] = found
-    return found
+        return None
+    kind = None
+    text = str(row[0] or "") if row else ""
+    start = text.find(_CHILD_MARK)
+    if start >= 0:
+        end = text.find("]", start)
+        if end > start:
+            kind = text[start + len(_CHILD_MARK):end].strip() or None
+    _CHILD_SESSIONS[session_id] = kind
+    return kind
 
 
 def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict[str, Any] | None:
     """Veto runaway tool loops inside one QQ turn (hard limit, not a prompt hint)."""
     if not tool_name or not session_id:
         return None
-    if _study_session(session_id) and tool_name not in ("read_source", "memory_write"):
-        return {"action": "block",
-                "message": "后台阅读理解只做两件事：read_source 读、memory_write 记。读不完就停，回一句结论，不要排查代码或跑命令。"}
+    kind = _child_kind(session_id)
+    if kind is not None:
+        allow = {"study": {"read_source", "memory_write"},
+                 "task": {"web_search", "web_extract", "read_source", "memory_write"},
+                 "search": {"web_search", "web_extract"},
+                 "polish": set()}.get(kind, set())
+        if tool_name not in allow:
+            return {"action": "block",
+                    "message": f"background {kind} sessions can only use their own tools; finish with what you have."}
     meta = _TURN_META.get(session_id) or {}
     if (meta.get("platform") or _session_source(session_id) or "") != "qqbot":
         return None
@@ -848,28 +861,28 @@ def _qq_bubble_rewrite(text: str) -> Optional[str]:
 
 
 def _polish_lines(lines: list[str]) -> Optional[list[str]]:
-    """Ask a throwaway child session to smooth bubbles that read like machine output."""
-    import shutil
-    import subprocess
+    """Ask a throwaway child session to smooth bubbles that read like machine output.
 
+    The child gets only the todo toolset and a fenced copy of the lines, so even if the
+    text smuggles in an instruction the worst it can do is return a bad rewrite.
+    """
+    from .digital_life import research as _research
     from .digital_life import speech
 
     if os.environ.get("HERMES_LOVER_POLISH", "1") == "0":
         return None
     if not speech.lint(lines) or os.environ.get("HERMES_LOVER_POLISH_CHILD") == "1":
         return None
-    hermes = shutil.which("hermes") or str(Path.home() / ".local" / "bin" / "hermes")
-    profile = Path(os.environ.get("HERMES_HOME", "")).name
-    if not hermes or not profile:
-        return None
-    prompt = speech.POLISH_PROMPT.format(count=len(lines), body="\n---\n".join(lines))
-    env = dict(os.environ, HERMES_LOVER_POLISH_CHILD="1", HERMES_DISABLE_LAZY_INSTALLS="1")
+    prompt = _research.child_marker("polish") + " " + speech.POLISH_PROMPT.format(
+        count=len(lines), body="\n---\n".join(lines))
     try:
-        proc = subprocess.run([hermes, "-p", profile, "chat", "--oneshot", "-Q", "-q", prompt],
-                              capture_output=True, text=True, timeout=45, env=env)
-    except (OSError, subprocess.SubprocessError):
+        out = _research.spawn_child("polish", prompt, timeout=45,
+                                    extra_env={"HERMES_LOVER_POLISH_CHILD": "1"})
+    except Exception:
         return None
-    parts = speech.parse_polish(proc.stdout, len(lines))
+    if not out:
+        return None
+    parts = speech.parse_polish(out, len(lines))
     if not parts or speech.lint(parts):
         return None
     return parts
@@ -1024,28 +1037,13 @@ def register(ctx) -> None:
 
     _JOURNAL_CHECK = journal_check
 
-    def _is_study_session(session_id: str) -> bool:
-        if not session_id:
-            return False
-        # The background reader is a gateway-hosted chat session, so env vars set by the
-        # spawner never reach the plugin; the prompt tag does.
-        db = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
-        try:
-            with sqlite3.connect(str(db), timeout=2) as conn:
-                row = conn.execute(
-                    "SELECT 1 FROM messages WHERE session_id=? AND role='user' AND content LIKE '%[study-task]%' LIMIT 1",
-                    (session_id,)).fetchone()
-            return bool(row)
-        except sqlite3.Error:
-            return False
-
     def _study_learned_problem(text, session_id):
         from .digital_life import memory as _memory  # noqa: PLC0415
         return _memory.study_learned_problem(text, memory_store().read_entries(), session_id)
 
     def memory_write(args, session_id="", **kwargs):
         try:
-            study = _is_study_session(session_id)
+            study = _child_kind(session_id) == "study"
             if study and args.get("kind") in ("turn", "daily", "journal"):
                 return json.dumps({"ok": False, "error": "background reading writes learned/note only"},
                                   ensure_ascii=False)
@@ -1247,7 +1245,7 @@ def register(ctx) -> None:
             return json.dumps({"ok": False, "error": "no chat context for this session"})
         from .digital_life import research as _research  # noqa: PLC0415
         prompt = (
-            "[study-task] 你在后台读完一份资料，不要把原文贴回来。用 read_source 读 "
+            _research.child_marker("study") + " 你在后台读完一份资料，不要把原文贴回来。用 read_source 读 "
             f"{source} ，一次读不完就用 name 加 part 续读直到 finished；材料写了星期就用 applies_dow"
             "（0=周一…3=周四…6=周日）。"
             "先判断材料类型：教程/文档/知识 → 提炼可复用的做法；段子库、文案集、小说 → 只提炼"
@@ -1260,7 +1258,7 @@ def register(ctx) -> None:
             "只用 read_source 和 memory_write；不要用 terminal、不要建 cron 任务、不要 web_search/web_extract。"
             "最后只回一句话：说一句你读到什么值得记的，不要报页数或条数。"
         )
-        started = _research.spawn_task(prompt, chat_id, _send_qq)
+        started = _research.spawn_task(prompt, chat_id, _send_qq, kind="study")
         if not started:
             return json.dumps({"ok": False, "error": "a background task for this chat is already running"})
         return json.dumps({"ok": True, "note": "Reply to the user now; I will read it in the background and message you when done."})
@@ -1283,7 +1281,7 @@ def register(ctx) -> None:
         if not chat_id:
             return json.dumps({"ok": False, "error": "no chat context for this session"})
         from .digital_life import research as _research  # noqa: PLC0415
-        started = _research.spawn_task(task, chat_id, _send_qq)
+        started = _research.spawn_task(_research.child_marker("task") + " " + task, chat_id, _send_qq)
         if not started:
             return json.dumps({"ok": False, "error": "a background task for this chat is already running"})
         return json.dumps({"ok": True, "note": "Reply with one short line now; the result arrives later as its own message."})

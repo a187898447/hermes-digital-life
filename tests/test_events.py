@@ -990,6 +990,56 @@ class ToolBudgetTests(unittest.TestCase):
         finally:
             self.hl._TURN_META.pop("s-cron", None)
 
+class ChildSessionTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        from pathlib import Path
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        home = Path(self.tmp.name)
+        db = home / "state.db"
+        with sqlite3.connect(str(db)) as conn:
+            conn.execute("CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT)")
+            conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
+                         ("s-study", "user", "[lover-child:study] 读这份资料"))
+            conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
+                         ("s-task", "user", "[lover-child:task] 查几个网页"))
+            conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
+                         ("s-plain", "user", "普通对话"))
+        patcher = patch.object(plugin, "_plugin_env",
+                               side_effect=lambda name: str(home) if name == "HERMES_HOME" else "")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        plugin._CHILD_SESSIONS.clear()
+        self.addCleanup(plugin._CHILD_SESSIONS.clear)
+
+    def test_marker_selects_the_kind(self):
+        self.assertEqual(plugin._child_kind("s-study"), "study")
+        self.assertEqual(plugin._child_kind("s-task"), "task")
+        self.assertIsNone(plugin._child_kind("s-plain"))
+        self.assertIsNone(plugin._child_kind(""))
+
+    def test_study_child_may_only_read_and_remember(self):
+        hook = plugin._gate_tool_call
+        self.assertIsNone(hook(tool_name="read_source", session_id="s-study"))
+        self.assertIsNone(hook(tool_name="memory_write", session_id="s-study"))
+        for name in ("terminal", "web_search", "background_task", "qzone_feed"):
+            with self.subTest(tool=name):
+                blocked = hook(tool_name=name, session_id="s-study")
+                self.assertEqual(blocked["action"], "block")
+                self.assertIn("study", blocked["message"])
+
+    def test_task_child_gets_web_and_reading_but_no_shell(self):
+        hook = plugin._gate_tool_call
+        for name in ("web_search", "web_extract", "read_source", "memory_write"):
+            self.assertIsNone(hook(tool_name=name, session_id="s-task"))
+        self.assertEqual(hook(tool_name="terminal", session_id="s-task")["action"], "block")
+
+    def test_plain_session_is_not_restricted(self):
+        plugin._TURN_META.pop("s-plain", None)
+        self.assertIsNone(plugin._gate_tool_call(tool_name="terminal", session_id="s-plain"))
+
+
 class LearnedGateTests(unittest.TestCase):
     def test_learned_entries_are_gated_before_any_write(self):
         ctx = RecordingContext()
