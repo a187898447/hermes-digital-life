@@ -619,22 +619,23 @@ class MemoryStore:
                 logger.warning("Memory event persisted but index update failed", exc_info=True)
             return {"ok": True, "id": event["id"], "date": date}
 
-    def revoke(self, identifier, *, window_ms=10 * 60 * 1000, now_ms=None):
-        """Undo a just-written entry (default: 10 minutes). Older entries can only be corrected."""
+    def revoke(self, identifier, *, chat_id, window_ms=10 * 60 * 1000, now_ms=None):
+        """Undo a just-written entry (default: 10 minutes) from the chat that wrote it.
+
+        Every miss answers the same thing: an id from another chat must be
+        indistinguishable from an id that never existed.
+        """
         stamp = time.time() * 1000 if now_ms is None else now_ms
         with self._locked():
             self._require_running()
             entries = self.read_entries()
             entry = entries.get(identifier)
-            if entry is None:
-                return {"ok": False, "error": f"no entry {identifier}"}
-            if entry.get("archived"):
-                return {"ok": False, "error": "that entry is already archived"}
+            if (entry is None or entry.get("archived") or not entry.get("chat_id")
+                    or str(entry.get("chat_id")) != str(chat_id)):
+                return {"ok": False, "error": "no entry to revoke"}
             created = int(entry.get("created_at") or 0)
             if not created or stamp - created > window_ms:
-                return {"ok": False,
-                        "error": "only entries written in the last 10 minutes can be revoked; "
-                                 "write a correction entry instead"}
+                return {"ok": False, "error": "no entry to revoke"}
             self._append([{"version": 1, "id": identifier, "op": "forget",
                            "archived_at": stamp}], stamp)
             try:

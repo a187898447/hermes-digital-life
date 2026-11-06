@@ -812,15 +812,29 @@ class AnchorAndStressTests(unittest.TestCase):
 
     def test_revoke_only_undoes_recent_entries(self):
         store = self.store
-        first = store.write("刚写错的", kind="note", now_ms=1_000_000)
-        old = store.write("很久以前写的", kind="note", now_ms=999_000)
-        result = store.revoke(first["id"], now_ms=1_000_000 + 60_000)
+        first = store.write("刚写错的", kind="note", now_ms=1_000_000, chat_id="c1")
+        old = store.write("很久以前写的", kind="note", now_ms=999_000, chat_id="c1")
+        result = store.revoke(first["id"], chat_id="c1", now_ms=1_000_000 + 60_000)
         self.assertTrue(result["ok"])
         self.assertTrue(store.read_entries()[first["id"]].get("archived"))
-        stale = store.revoke(old["id"], now_ms=1_000_000 + 20 * 60_000)
+        stale = store.revoke(old["id"], chat_id="c1", now_ms=1_000_000 + 20 * 60_000)
         self.assertFalse(stale["ok"])
-        self.assertIn("correct", stale["error"])
+        self.assertEqual(stale["error"], "no entry to revoke")
         self.assertFalse(store.read_entries()[old["id"]].get("archived"))
+
+    def test_revoke_ignores_entries_from_another_chat(self):
+        store = self.store
+        row = store.write("别人房里的话", kind="note", now_ms=1_000_000, chat_id="c2")
+        miss = store.revoke(row["id"], chat_id="c1", now_ms=1_000_000 + 60_000)
+        self.assertEqual(miss, {"ok": False, "error": "no entry to revoke"})
+        self.assertFalse(store.read_entries()[row["id"]].get("archived"))
+        self.assertTrue(store.revoke(row["id"], chat_id="c2", now_ms=1_000_000 + 60_000)["ok"])
+
+    def test_revoke_refuses_entries_without_a_chat(self):
+        store = self.store
+        row = store.write("没有归属的旧条目", kind="note", now_ms=1_000_000)
+        self.assertEqual(store.revoke(row["id"], chat_id="", now_ms=1_000_000 + 1000),
+                         {"ok": False, "error": "no entry to revoke"})
 
 
     def test_applies_dow_round_trips(self):

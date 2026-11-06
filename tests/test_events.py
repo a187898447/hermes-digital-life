@@ -714,7 +714,9 @@ class QqBubbleTransformTests(unittest.TestCase):
             self.assertIn(command, sent[0])
 
 
-    def test_restart_acks_then_schedules_a_gateway_restart(self):
+    def test_restart_needs_a_second_message_before_it_fires(self):
+        plugin._RESTART_PENDING.clear()
+        plugin._RESTART_LAST_AT = 0.0
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ctx, patches, event = self._owner_hook(root, "/restart")
@@ -725,10 +727,30 @@ class QqBubbleTransformTests(unittest.TestCase):
                     patch.object(plugin, "_restart_gateway_later",
                                  side_effect=lambda delay=1.5: scheduled.append(delay)):
                 plugin.register(ctx)
-                result = dict(ctx.hooks)["pre_gateway_dispatch"](event=event)
-        self.assertEqual(result, {"action": "skip", "reason": "hermes-lover /restart"})
-        self.assertEqual(len(sent), 1)
+                hook = dict(ctx.hooks)["pre_gateway_dispatch"]
+                first = hook(event=event)
+                self.assertEqual(first["reason"], "hermes-lover /restart needs confirmation")
+                self.assertEqual(scheduled, [])
+                second = hook(event=event)
+        self.assertEqual(second, {"action": "skip", "reason": "hermes-lover /restart"})
         self.assertEqual(scheduled, [1.5])
+        self.assertEqual(len(sent), 2)
+
+    def test_restart_is_ignored_while_the_last_one_is_cooling(self):
+        plugin._RESTART_PENDING.clear()
+        plugin._RESTART_LAST_AT = time.time()
+        self.addCleanup(setattr, plugin, "_RESTART_LAST_AT", 0.0)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx, patches, event = self._owner_hook(root, "/restart")
+            scheduled: list[float] = []
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5], \
+                    patch.object(plugin, "_restart_gateway_later",
+                                 side_effect=lambda delay=1.5: scheduled.append(delay)):
+                plugin.register(ctx)
+                result = dict(ctx.hooks)["pre_gateway_dispatch"](event=event)
+        self.assertEqual(result["reason"], "hermes-lover /restart cooling down")
+        self.assertEqual(scheduled, [])
 
     def test_forget_clears_memory_without_rotating(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -741,6 +763,38 @@ class QqBubbleTransformTests(unittest.TestCase):
                 result = dict(ctx.hooks)["pre_gateway_dispatch"](event=event)
                 self.assertEqual(result, {"action": "skip", "reason": "hermes-lover /forget"})
                 self.assertEqual(plugin._MEMORY_STORE["factory"]().read_entries(), {})
+
+    def test_forget_keeps_other_chats_and_does_not_reset_life_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx, patches, event = self._owner_hook(root, "/forget")
+            sent: list[str] = []
+            with patches[0], patches[1], patches[2], patches[3], patch.object(
+                    plugin, "_send_qq", side_effect=lambda chat_id, text: sent.append(text)), patches[5]:
+                plugin.register(ctx)
+                store = plugin._MEMORY_STORE["factory"]()
+                store.capture("本会话的话", session_id="s1", chat_id="chat-1")
+                store.capture("别处的话", session_id="s2", chat_id="chat-2")
+                with patch.object(plugin.digital_life.storage, "update_state") as updated:
+                    result = dict(ctx.hooks)["pre_gateway_dispatch"](event=event)
+                self.assertEqual(result, {"action": "skip", "reason": "hermes-lover /forget"})
+                updated.assert_not_called()
+                left = store.read_entries()
+                self.assertEqual([row["chat_id"] for row in left.values()], ["chat-2"])
+                self.assertIn("1 条别的记录没动", sent[0])
+
+    def test_forget_without_a_chat_id_refuses_to_touch_anything(self):
+        saved = plugin._MEMORY_STORE.get("factory")
+        self.addCleanup(lambda: plugin._MEMORY_STORE.__setitem__("factory", saved))
+        plugin._MEMORY_STORE["factory"] = None
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            ctx, patches, event = self._owner_hook(root, "/forget")
+            event.source.chat_id = ""
+            with patches[0], patches[1], patches[2], patches[3], patches[4], patches[5]:
+                plugin.register(ctx)
+                result = dict(ctx.hooks)["pre_gateway_dispatch"](event=event)
+        self.assertEqual(result["reason"], "hermes-lover /forget without a chat")
 
 
 

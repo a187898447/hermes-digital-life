@@ -347,6 +347,12 @@ _HELP_TEXT = (
 _RESTART_COMMAND = re.compile(r"^/(?:restart|重启|重载)(?:\s|$)", re.IGNORECASE)
 
 
+_RESTART_PENDING: dict[str, float] = {}
+_RESTART_LAST_AT = 0.0
+RESTART_CONFIRM_SECONDS = 180
+RESTART_COOLDOWN_SECONDS = 60
+
+
 def _restart_gateway_later(delay: float = 1.5) -> None:
     def fire() -> None:
         try:
@@ -402,14 +408,26 @@ def _on_gateway_dispatch(event=None, **kwargs):
         if platform != "qqbot":
             return None
         if _RESTART_COMMAND.match(text):
+            global _RESTART_LAST_AT
             chat_id = str(getattr(source, "chat_id", "") or "")
             sender = str(getattr(event, "sender_id", "") or getattr(source, "user_id", "") or "")
-            if sender in _reset_admins():
-                _send_qq(chat_id, "重启中，十来秒后回来。")
-                _restart_gateway_later()
-                logger.info("hermes-lover /restart by owner")
-                return {"action": "skip", "reason": "hermes-lover /restart"}
-            return None
+            if sender not in _reset_admins():
+                return None
+            now = time.time()
+            if now - _RESTART_LAST_AT < RESTART_COOLDOWN_SECONDS:
+                _send_qq(chat_id, "正在重启，别急，等它回来。")
+                return {"action": "skip", "reason": "hermes-lover /restart cooling down"}
+            first = _RESTART_PENDING.get(chat_id, 0.0)
+            if not first or now - first > RESTART_CONFIRM_SECONDS:
+                _RESTART_PENDING[chat_id] = now
+                _send_qq(chat_id, "要重启网关吗？3 分钟内再发一次 /restart 确认。")
+                return {"action": "skip", "reason": "hermes-lover /restart needs confirmation"}
+            _RESTART_PENDING.pop(chat_id, None)
+            _RESTART_LAST_AT = now
+            _send_qq(chat_id, "重启中，十来秒后回来。")
+            _restart_gateway_later()
+            logger.info("hermes-lover /restart by owner")
+            return {"action": "skip", "reason": "hermes-lover /restart"}
         if _HELP_COMMAND.match(text):
             chat_id = str(getattr(source, "chat_id", "") or "")
             sender = str(getattr(event, "sender_id", "") or getattr(source, "user_id", "") or "")
@@ -429,15 +447,26 @@ def _on_gateway_dispatch(event=None, **kwargs):
             logger.info("hermes-lover command ignored: sender %s is not an owner", sender[-6:])
             return None
         if forget:
+            if not all_chats and not chat_id:
+                logger.info("hermes-lover /forget ignored: the event carries no chat id")
+                return {"action": "skip", "reason": "hermes-lover /forget without a chat"}
             factory = _MEMORY_STORE.get("factory")
             store = factory() if factory is not None else None
-            cleared = store.clear(None if all_chats else (chat_id or "unknown")) if store is not None else 0
-            now_ms = time.time() * 1000
-            from .digital_life import domain as _domain, storage as _storage  # noqa: PLC0415
+            cleared = store.clear(None if all_chats else chat_id) if store is not None else 0
+            if all_chats:
+                now_ms = time.time() * 1000
+                from .digital_life import domain as _domain, storage as _storage  # noqa: PLC0415
 
-            _storage.update_state(now_ms, lambda state: _domain.default_state(now_ms))
-            logger.info("hermes-lover /forget by owner: cleared %s palace entries, life state reset", cleared)
-            _send_qq(chat_id, "记忆清了。" if not all_chats else "所有会话的记忆都清了。")
+                _storage.update_state(now_ms, lambda state: _domain.default_state(now_ms))
+                logger.info("hermes-lover /forget all by owner: cleared %s entries, life state reset", cleared)
+                _send_qq(chat_id, "所有会话的记忆都清了。")
+                return {"action": "skip", "reason": "hermes-lover /forget"}
+            left = 0
+            if store is not None:
+                left = sum(1 for entry in store.read_entries().values() if not entry.get("archived"))
+            logger.info("hermes-lover /forget by owner: cleared %s entries in this chat, %s left", cleared, left)
+            tail = f"另有 {left} 条别的记录没动，要全清用 /forget all。" if left else "别的记录没动。"
+            _send_qq(chat_id, f"这个会话的记忆清了。{tail}")
             return {"action": "skip", "reason": "hermes-lover /forget"}
         if all_chats:
             session_store = kwargs.get("session_store")
@@ -1484,12 +1513,18 @@ def register(ctx) -> None:
         handler=memory_write,
         description="Remember a meaningful event, experience or decision in this profile's dated event library. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. Never tell the user that you wrote something down; memory is a background action. Does not change life state.",
     )
-    def memory_revoke(args, **kwargs):
-        """Undo a memory entry written in the last ten minutes; older entries can only be corrected."""
+    def memory_revoke(args, session_id="", **kwargs):
+        """Undo a memory entry written in the last ten minutes by this chat."""
         identifier = str(args.get("id") or "").strip()
         if not identifier:
             return json.dumps({"ok": False, "error": "id is required"}, ensure_ascii=False)
-        result = memory_store().revoke(identifier)
+        try:
+            chat_id, _chat_type = _session_scope(session_id)
+            if not chat_id and session_id and (_session_source(session_id) in (None, "", "qqbot")):
+                raise ValueError("cannot verify the calling session; refusing an unscoped revoke")
+            result = memory_store().revoke(identifier, chat_id=chat_id or "")
+        except (ValueError, OSError, RuntimeError, sqlite3.Error) as exc:
+            result = {"ok": False, "error": str(exc)}
         return json.dumps(result, ensure_ascii=False)
 
     ctx.register_tool(
