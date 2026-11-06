@@ -212,7 +212,8 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     # duplicate guard already bound them. The budget is for tools that hit the
     # outside world (search, zone, terminal, background jobs).
     if tool_name in ("read_source", "library_list", "memory_write", "memory_recall",
-                     "memory_revoke", "digital_life_status", "study_source"):
+                     "memory_revoke", "digital_life_status", "study_source",
+                     "background_task", "search_later"):
         return None
     if tool_name == "skill_manage":
         return {"action": "block",
