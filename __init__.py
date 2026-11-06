@@ -1501,7 +1501,9 @@ def register(ctx) -> None:
     def qzone_bridge(args, **kwargs):
         action = str(args.get("action") or "status").strip().lower()
         home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
-        script = Path(home) / "scripts" / "qzone-bridge.py"
+        script = Path(__file__).resolve().parent / "scripts" / "qzone-bridge.py"
+        if not script.is_file():  # remote installs may keep a copy under the profile
+            script = Path(home) / "scripts" / "qzone-bridge.py"
 
         def state():
             payload, _ = _bridge_get("/health")
@@ -1805,7 +1807,7 @@ def register(ctx) -> None:
                                 "it no longer matters. Closed loops stop being brought up. "
                                 "Only loops from this conversation can be closed here."),
                 "parameters": {"type": "object", "properties": {
-                    "id": {"type": "string", "description": "The gap id, e.g. gap-1793879158989-6."},
+                    "id": {"type": "string", "description": "The open-loop id shown by digital_life_status."},
                 }, "required": ["id"], "additionalProperties": False}},
         handler=_close_gap,
         description="Close one of your own open loops so it stops resurfacing.",

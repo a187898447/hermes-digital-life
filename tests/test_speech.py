@@ -25,7 +25,7 @@ class SpeechLintTests(unittest.TestCase):
         self.assertTrue(speech.lint(["这轮工具用超了，下一轮再建"]))
 
     def test_flags_colon_list_without_connectors(self):
-        self.assertTrue(speech.lint(["我打算这么改：食堂虾 6 块、粉还没上架、五点下班"]))
+        self.assertTrue(speech.lint(["我打算这么改：周三上线、两个页面、五点下班"]))
 
     def test_parse_polish_requires_same_shape(self):
         self.assertEqual(speech.parse_polish("a\n---\nb\n---\n闲聊", 2), ["a", "b"])
