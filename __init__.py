@@ -1015,7 +1015,21 @@ def _qq_bubble_rewrite(text: str) -> Optional[str]:
     return rewritten if rewritten != text else None
 
 
-def _polish_lines(lines: list[str]) -> Optional[list[str]]:
+_RECENT_BUBBLES: dict[str, list[str]] = {}
+_MAX_RECENT_CHATS = 64
+_MAX_RECENT_LINES = 8
+
+
+def _remember_bubbles(key: str, lines: list[str]) -> None:
+    """Keep what was just said so the next reply can be checked for repeats."""
+    kept = _RECENT_BUBBLES.setdefault(key, [])
+    kept.extend(line for line in lines if line.strip())
+    del kept[:-_MAX_RECENT_LINES]
+    while len(_RECENT_BUBBLES) > _MAX_RECENT_CHATS:
+        _RECENT_BUBBLES.pop(next(iter(_RECENT_BUBBLES)))
+
+
+def _polish_lines(lines: list[str], recent: list[str] | None = None) -> Optional[list[str]]:
     """Ask a throwaway child session to smooth bubbles that read like machine output.
 
     The child gets only the todo toolset and a fenced copy of the lines, so even if the
@@ -1026,10 +1040,12 @@ def _polish_lines(lines: list[str]) -> Optional[list[str]]:
 
     if os.environ.get("HERMES_LOVER_POLISH", "1") == "0":
         return None
-    if not speech.lint(lines) or os.environ.get("HERMES_LOVER_POLISH_CHILD") == "1":
+    recent = list(recent or [])
+    if not speech.lint(lines, recent) or os.environ.get("HERMES_LOVER_POLISH_CHILD") == "1":
         return None
     prompt = _research.child_marker("polish") + " " + speech.POLISH_PROMPT.format(
-        count=len(lines), body="\n---\n".join(lines))
+        count=len(lines), body="\n---\n".join(lines),
+        recent="\n".join(f"- {line}" for line in recent) or "（无）")
     try:
         out = _research.spawn_child("polish", prompt, timeout=45,
                                     extra_env={"HERMES_LOVER_POLISH_CHILD": "1"})
@@ -1038,7 +1054,7 @@ def _polish_lines(lines: list[str]) -> Optional[list[str]]:
     if not out:
         return None
     parts = speech.parse_polish(out, len(lines))
-    if not parts or speech.lint(parts):
+    if not parts or speech.lint(parts, recent):
         return None
     return parts
 
@@ -1052,11 +1068,14 @@ def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs)
     if not rewritten:
         return None
     lines = [line for line in rewritten.split("\n") if line.strip()]
-    polished = _polish_lines(lines)
+    session = str(kwargs.get("session_id") or "")
+    key = _session_scope(session)[0] or session or platform
+    polished = _polish_lines(lines, _RECENT_BUBBLES.get(key, []))
     final = polished or lines
     from .digital_life import speech as _speech
     repaired = [_speech.repair(line) for line in final]
     repaired = [line for line in repaired if line.strip()]
+    _remember_bubbles(key, repaired)
     return "\n".join(repaired) if repaired else "嗯"
 
 
