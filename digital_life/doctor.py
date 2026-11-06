@@ -538,8 +538,27 @@ def inspect(
         _check_soul(home),
         _sync_check("sync.scripts", _script_pairs(repo, home)),
         _sync_check("sync.skills", _skill_pairs(repo, home)),
+        _check_memory(home),
     ]
 
+
+
+MEMORY_WARN_BYTES = 50 * 1024 * 1024
+
+
+def _check_memory(home: Path) -> Check:
+    """Warn (never repair) when the palace is big enough to slow every replay."""
+    root = home / "plugin-data" / PLUGIN_NAME / "memory"
+    total = 0
+    try:
+        total = sum(path.stat().st_size for path in root.rglob("*") if path.is_file())
+    except OSError:
+        return Check("memory.size", SKIP, "读不到记忆目录")
+    megabytes = total / (1024 * 1024)
+    if total > MEMORY_WARN_BYTES:
+        return Check("memory.size", WARN,
+                     f"记忆库 {megabytes:.1f} MB，超过 50 MB；跑 hermes-lover memory-compact 收一收")
+    return Check("memory.size", OK, f"{megabytes:.1f} MB")
 
 
 def _hermes_prefix(home: Path) -> list[str] | None:

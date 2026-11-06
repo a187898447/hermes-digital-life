@@ -52,6 +52,11 @@ def run_once(store, now_ms: float) -> dict:
     except Exception as exc:  # noqa: BLE001
         logger.warning("hermes-lover turn compaction failed: %s", exc)
         result["turns_error"] = str(exc)
+    try:
+        result["archive"] = store.rotate_turns(days=TURN_DAYS, now_ms=now_ms)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hermes-lover turn rotation failed: %s", exc)
+        result["archive_error"] = str(exc)
     return result
 
 

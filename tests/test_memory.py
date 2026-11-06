@@ -429,7 +429,8 @@ class MemoryTests(unittest.TestCase):
 
     def test_index_failure_returns_persisted_id_and_repairs(self):
         self.write("first")
-        with patch.object(self.store, "_save_index", side_effect=sqlite3.OperationalError("full")):
+        with patch.object(self.store, "_index_events", return_value=False), \
+                patch.object(self.store, "_save_index", side_effect=sqlite3.OperationalError("full")):
             result = self.write("second")
         self.assertFalse(result["indexed"])
         duplicate = self.write("second")
@@ -708,7 +709,7 @@ class CompactTests(unittest.TestCase):
         cli.setup_parser(parser)
         args = parser.parse_args(["memory-compact", "--days", "7"])
         self.assertEqual(args.days, 7)
-        self.assertEqual(parser.parse_args(["memory-compact"]).days, 30)
+        self.assertEqual(parser.parse_args(["memory-compact"]).days, 14)
 
     def test_compact_cli_runs_against_plugin_storage(self):
         from argparse import Namespace
@@ -942,6 +943,48 @@ class QuotaTests(unittest.TestCase):
                 os.environ.pop("HERMES_HOME", None)
             else:
                 os.environ["HERMES_HOME"] = old
+
+
+class TurnBudgetTests(unittest.TestCase):
+    """Raw turns are capped per day and rotated out of the live log once summarised."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = memory.MemoryStore(Path(self.tmp.name), embedder=False)
+
+    def test_capture_updates_the_index_without_a_full_rebuild(self):
+        self.store.rebuild_index()
+        with patch.object(self.store, "_save_index", side_effect=AssertionError("full rebuild")):
+            result = self.store.capture("hello there", session_id="s", now_ms=NOW)
+        self.assertTrue(result["ok"])
+        with closing(sqlite3.connect(self.store.index)) as db:
+            rows = db.execute("SELECT id FROM entries").fetchall()
+        self.assertEqual(rows, [(result["id"],)])
+        self.assertEqual(self.store.recall("hello", now_ms=NOW)["matched"], 1)
+
+    def test_a_full_day_keeps_only_the_newest_turns(self):
+        with patch.object(memory, "TURN_DAILY_CAP", 3):
+            for index in range(5):
+                self.store.capture(f"turn {index}", session_id="s", now_ms=NOW + index)
+        turns = [row for row in self.store.read_entries().values() if row["kind"] == "turn"]
+        self.assertEqual(sorted(row["text"] for row in turns), ["turn 2", "turn 3", "turn 4"])
+        self.assertEqual(self.store.recall("turn", now_ms=NOW)["total"], 3)
+
+    def test_rotated_turns_leave_the_log_but_keep_a_summary(self):
+        old = NOW - 40 * memory.DAY_MS
+        for index in range(2):
+            self.store.capture(f"old chat {index}", session_id="s", chat_id="c1",
+                               now_ms=old + index)
+        self.store.compact_turns(days=30, now_ms=NOW)
+        result = self.store.rotate_turns(days=30, now_ms=NOW)
+        self.assertEqual(result["turns"], 2)
+        live = self.store.read_entries()
+        self.assertFalse([row for row in live.values() if row["kind"] == "turn"])
+        archives = list((self.store.directory / "archive").glob("*.jsonl.gz"))
+        self.assertEqual(len(archives), 1)
+        self.assertEqual(self.store.recall("old chat", now_ms=NOW)["matched"], 1)
+        self.assertEqual(self.store.compact_turns(days=30, now_ms=NOW)["compacted"], 0)
 
 
 class CrossDayMutationTests(unittest.TestCase):

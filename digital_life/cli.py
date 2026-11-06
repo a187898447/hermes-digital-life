@@ -42,8 +42,8 @@ def setup_parser(subparser: argparse.ArgumentParser) -> None:
     actions.add_parser("resume", help="Resume life-state transitions")
     actions.add_parser("memory-rebuild", help="Rebuild the event-memory index from daily logs")
     compact = actions.add_parser("memory-compact", help="Fold old archived memories into cold summaries")
-    compact.add_argument("--days", type=int, default=30,
-                         help="Only compact entries unused for this many days (default: 30)")
+    compact.add_argument("--days", type=int, default=14,
+                         help="Only compact entries unused for this many days (default: 14)")
     beats = actions.add_parser("beats", help="Enable or pause every proactive beat job")
     beats.add_argument("beats_action", choices=["enable", "disable"])
     resolve = actions.add_parser("resolve-gap", help="Close one observed gap by identifier")

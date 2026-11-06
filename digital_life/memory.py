@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 RRF_K = 60
 VECTOR_TOP = 20
 DAY_MS = 86_400_000
+# Raw turns are the provenance floor; they get a tighter budget than written memories so a
+# long-running chat cannot grow the palace without bound.
+TURN_DAILY_CAP = 200
+ARCHIVE_DAYS = 30
 DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8, "turn": 0.4,
                    "journal": 2.5, "summary": 1.4, "learned": 0.9}
 _WRITE_LOCK = threading.RLock()
@@ -202,6 +206,8 @@ class MemoryStore:
         self.writes_enabled = writes_enabled or (lambda: True)
         # None means "whatever this machine offers"; False disables vectors for tests/ops.
         self.embedder = embeddings.default_embedder() if embedder is None else embedder
+        # The index is loaded once per process; writers then keep it current row by row.
+        self._index_ready = False
 
     def _state(self):
         return self.life_state()
@@ -355,6 +361,18 @@ class MemoryStore:
         """Read authority without touching files, index or life state."""
         return self._replay()[0]
 
+    def _index_entries(self):
+        """Live entries from the index (built once per process); falls back to the log."""
+        self._ensure_index()
+        try:
+            with closing(sqlite3.connect(self.index.as_uri() + "?mode=ro", uri=True)) as db:
+                return {row_id: json.loads(payload)
+                        for row_id, payload in db.execute("SELECT id, payload FROM entries")}
+        except (sqlite3.DatabaseError, ValueError):
+            logger.warning("Memory index unreadable; replaying the log", exc_info=True)
+            self._index_ready = False
+            return self._replay()[0]
+
     @staticmethod
     def _populate(db, entries):
         db.execute("DROP TABLE IF EXISTS entries_fts")
@@ -418,6 +436,66 @@ class MemoryStore:
         finally:
             db.close()
 
+    def _ensure_index(self):
+        """Build the index at most once per process; nothing here scans the log afterwards."""
+        if self._index_ready:
+            return
+        entries, digest = self._replay()
+        self._sync(entries, digest)
+        self._index_ready = True
+
+    def _delete_index_row(self, db, identifier):
+        db.execute("DELETE FROM entries WHERE id=?", (identifier,))
+        db.execute("DELETE FROM entries_fts WHERE id=?", (identifier,))
+        db.execute("DELETE FROM vectors WHERE id=?", (identifier,))
+
+    def _index_events(self, events) -> bool:
+        """Apply freshly appended events to the index. False means a rebuild is needed."""
+        if not self.index.exists():
+            return False
+        db = self.connect()
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            for event in events:
+                op = event.get("op")
+                identifier = event.get("id")
+                if op == "purge":
+                    self._delete_index_row(db, identifier)
+                    continue
+                wanted = [identifier]
+                if op == "compact":
+                    wanted.append(event["into"])
+                rows = {}
+                for want in wanted:
+                    payload = db.execute("SELECT payload FROM entries WHERE id=?", (want,)).fetchone()
+                    if payload:
+                        rows[want] = json.loads(payload[0])
+                if identifier not in rows and op != "add":
+                    continue
+                self._fold(rows, event)
+                for want, row in rows.items():
+                    if want not in wanted:
+                        continue
+                    db.execute("INSERT OR REPLACE INTO entries VALUES(?,?,?,?,?)", (
+                        row["id"], row["text"], int(row["archived"]), row.get("compacted_into") or "",
+                        json.dumps(row, ensure_ascii=False)))
+                    db.execute("DELETE FROM entries_fts WHERE id=?", (row["id"],))
+                    db.execute("INSERT INTO entries_fts VALUES(?,?)",
+                               (row["id"], " ".join(tokens(row["text"]))))
+                for want in wanted:
+                    if want not in rows:
+                        self._delete_index_row(db, want)
+                self._ensure_vectors(db, {want: rows[want] for want in wanted if want in rows})
+            db.commit()
+        except (sqlite3.DatabaseError, RuntimeError, ValueError, KeyError, TypeError):
+            db.rollback()
+            self._index_ready = False
+            logger.warning("Incremental index update failed; rebuilding", exc_info=True)
+            return False
+        finally:
+            db.close()
+        return True
+
     def _sync(self, entries, digest, force=False):
         if self.index.exists() and not force:
             try:
@@ -439,6 +517,7 @@ class MemoryStore:
         with self._locked():
             entries, digest = self._replay()
             self._sync(entries, digest, force=True)
+            self._index_ready = True
             return {"ok": True, "total": len(entries)}
 
     @staticmethod
@@ -529,11 +608,10 @@ class MemoryStore:
         date = date_override or datetime.fromtimestamp(now_ms / 1000).strftime("%Y-%m-%d")
         session_id = session_id or "unknown"
         with self._locked():
-            # shortcut: replay validates all files per operation; add incremental checkpoints for large archives.
             self._append([], now_ms)
-            entries, digest = self._replay()
+            entries = self._replay()[0]
             try:
-                self._sync(entries, digest)
+                self._ensure_index()
             except (sqlite3.Error, RuntimeError, OSError):
                 logger.warning("Memory index unavailable before write; event log remains authoritative", exc_info=True)
             # Facts cite the turns they were distilled from; diaries cite their facts.
@@ -568,13 +646,17 @@ class MemoryStore:
                          "applies_dow": applies_dow}
             self._require_running()
             self._append([event], now_ms)
-            indexed = True
-            try:
-                entries, digest = self._replay()
-                self._save_index(entries, digest)
-            except (sqlite3.Error, RuntimeError, OSError):
-                logger.warning("Memory event persisted but index update failed", exc_info=True)
+            if self._index_events([event]):
+                indexed = True
+            else:
                 indexed = False
+                self._index_ready = False
+                try:
+                    full, full_digest = self._replay()
+                    self._save_index(full, full_digest)
+                    indexed = True
+                except (sqlite3.Error, RuntimeError, OSError):
+                    logger.warning("Memory event persisted but index update failed", exc_info=True)
             return {"ok": True, "id": event["id"], "date": date, "duplicate": bool(duplicate),
                     "created_at": duplicate["created_at"] if duplicate else now_ms, "indexed": indexed}
 
@@ -595,9 +677,9 @@ class MemoryStore:
         session_id = session_id or "unknown"
         with self._locked():
             self._append([], now_ms)
-            entries, digest = self._replay()
+            entries = self._replay()[0]
             try:
-                self._sync(entries, digest)
+                self._ensure_index()
             except (sqlite3.Error, RuntimeError, OSError):
                 logger.warning("Memory index unavailable before capture", exc_info=True)
             today = [e for e in entries.values() if e["date"] == date]
@@ -610,14 +692,27 @@ class MemoryStore:
                      "source_session_id": session_id,
                      "chat_id": str(chat_id or ""), "chat_type": str(chat_type or ""), "speaker": str(speaker or ""),
                      "anchors": anchor_keys(text)}
+            # A busy day keeps only its most recent raw turns; earlier ones are dropped
+            # outright (not summarised) once the day's budget is full.
+            live = sorted((e for e in today if e.get("kind") == "turn" and not e.get("archived")),
+                          key=lambda row: (row.get("created_at", 0), row["id"]))
+            droppable = [row for row in live if not row.get("compacted_into")]
+            events = []
+            if len(live) >= TURN_DAILY_CAP:
+                overflow = len(live) - TURN_DAILY_CAP + 1
+                events.extend({"op": "purge", "id": row["id"], "purged_at": now_ms}
+                              for row in droppable[:overflow])
+            events.append(event)
             self._require_running()
-            self._append([event], now_ms)
-            try:
-                entries, digest = self._replay()
-                self._save_index(entries, digest)
-            except (sqlite3.Error, RuntimeError, OSError):
-                logger.warning("Memory event persisted but index update failed", exc_info=True)
-            return {"ok": True, "id": event["id"], "date": date}
+            self._append(events, now_ms)
+            if not self._index_events(events):
+                try:
+                    full, full_digest = self._replay()
+                    self._save_index(full, full_digest)
+                except (sqlite3.Error, RuntimeError, OSError):
+                    logger.warning("Memory event persisted but index update failed", exc_info=True)
+            return {"ok": True, "id": event["id"], "date": date,
+                    "dropped": len(events) - 1}
 
     def revoke(self, identifier, *, chat_id, window_ms=10 * 60 * 1000, now_ms=None):
         """Undo a just-written entry (default: 10 minutes) from the chat that wrote it.
@@ -748,6 +843,54 @@ class MemoryStore:
             return {"ok": True, "groups": len(groups), "summaries": len(groups),
                     "compacted": sum(len(rows) for rows in groups.values())}
 
+    @staticmethod
+    def _event_from_row(row):
+        fields = ("id", "text", "kind", "weight", "cortisol", "created_at", "last_access_at",
+                  "hits", "source_session_id", "chat_id", "chat_type", "speaker",
+                  "sources", "refs", "applies_dow", "anchors")
+        return {"version": 1, "op": "add", **{key: row.get(key) for key in fields}}
+
+    def rotate_turns(self, days=ARCHIVE_DAYS, *, now_ms=None):
+        """Move already-summarised turns out of the live log into a month archive.
+
+        The raw exchange is kept (gzipped, by month) for anyone tracing a memory back, but
+        it leaves the replayed log and the index, so both stay bounded by `days`.
+        """
+        if type(days) is not int or not 1 <= days <= 3650:
+            raise ValueError("days must be an integer between 1 and 3650")
+        now_ms = _now(now_ms)
+        cutoff = now_ms - days * DAY_MS
+        with self._locked():
+            self._require_running()
+            self._append([], now_ms)
+            entries = self._replay()[0]
+            stale = [row for row in entries.values()
+                     if row.get("kind") == "turn" and row.get("compacted_into")
+                     and row.get("created_at", 0) < cutoff]
+            if not stale:
+                return {"ok": True, "turns": 0, "months": 0}
+            import gzip  # noqa: PLC0415 - only this slow maintenance path needs it
+
+            by_month: dict[str, list[dict]] = {}
+            for row in stale:
+                by_month.setdefault(row["date"][:7], []).append(row)
+            archive = self.directory / "archive"
+            archive.mkdir(parents=True, exist_ok=True)
+            for month, rows in sorted(by_month.items()):
+                target = archive / f"{month}.jsonl.gz"
+                with gzip.open(target, "at", encoding="utf-8") as handle:
+                    for row in sorted(rows, key=lambda item: (item["created_at"], item["id"])):
+                        handle.write(json.dumps(self._event_from_row(row), ensure_ascii=False) + "\n")
+            purges = [{"op": "purge", "id": row["id"], "purged_at": now_ms} for row in stale]
+            self._append(purges, now_ms)
+            if not self._index_events(purges):
+                try:
+                    full, full_digest = self._replay()
+                    self._save_index(full, full_digest)
+                except (sqlite3.Error, RuntimeError, OSError):
+                    logger.warning("Rotated turns persisted but index update failed", exc_info=True)
+            return {"ok": True, "turns": len(stale), "months": len(by_month)}
+
     def peek(self, kind, k=10, *, chat_id="", include_global=True, now_ms=None):
         """Read-only top-k of one kind, ranked by current effective weight.
 
@@ -756,7 +899,7 @@ class MemoryStore:
         learned itself, plus operator-written global entries where that is allowed.
         """
         now_ms = _now(now_ms)
-        entries = self.read_entries()
+        entries = self._index_entries()
         rows = [entry for entry in entries.values()
                 if not entry.get("archived") and entry.get("kind") == kind
                 and (str(entry.get("chat_id") or "") == str(chat_id)
@@ -1010,8 +1153,7 @@ class MemoryStore:
             result.pop("_vector_broken", None)
             return result
         with self._locked():
-            entries, digest = self._replay()
-            self._sync(entries, digest)
+            entries = self._index_entries()
             if hybrid:
                 self._index_vectors(entries)
             result = self._retrieve(entries, query, k, include_cold, now_ms, cortisol, disk=True,
@@ -1025,9 +1167,10 @@ class MemoryStore:
                 self._append(events, now_ms)
                 for row, event in zip(result["shown"], events):
                     row.update(hits=event["hits"], last_access_at=now_ms)
-                entries, digest = self._replay()
-                try:
-                    self._save_index(entries, digest)
-                except sqlite3.Error:
-                    logger.warning("Recall touches persisted but index update failed", exc_info=True)
+                if not self._index_events(events):
+                    try:
+                        full, full_digest = self._replay()
+                        self._save_index(full, full_digest)
+                    except sqlite3.Error:
+                        logger.warning("Recall touches persisted but index update failed", exc_info=True)
             return result
