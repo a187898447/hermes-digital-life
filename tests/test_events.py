@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import sys
 import types
 import unittest
@@ -16,6 +17,9 @@ from pathlib import Path
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
+# The QQ rewrite may hand bubbles to a child session for polishing; the real call is
+# covered by test_research, and unit tests must not reach the model.
+os.environ.setdefault("HERMES_LOVER_POLISH", "0")
 _db_dir = tempfile.TemporaryDirectory()
 _db_path = Path(_db_dir.name) / "plugin.db"
 core_plugins = types.ModuleType("plugins")
@@ -1075,6 +1079,14 @@ class ChildSessionTests(unittest.TestCase):
         self.assertIsNone(plugin._child_kind("s-plain"))
         self.assertIsNone(plugin._child_kind(""))
 
+    def test_child_cache_does_not_grow_without_bound(self):
+        with patch.object(plugin, "_MAX_CHILD_SESSIONS", 2):
+            plugin._child_kind("s-study")
+            plugin._child_kind("s-task")
+            plugin._child_kind("s-plain")
+        self.assertEqual(len(plugin._CHILD_SESSIONS), 2)
+        self.assertNotIn("s-study", plugin._CHILD_SESSIONS)
+
     def test_study_child_may_only_read_and_remember(self):
         hook = plugin._gate_tool_call
         self.assertIsNone(hook(tool_name="read_source", session_id="s-study"))
@@ -1174,9 +1186,13 @@ class QzoneFeedTests(unittest.TestCase):
 
         class Handler(http.server.BaseHTTPRequestHandler):
             def do_GET(self):  # noqa: N802
-                body = json.dumps({"ok": True, "items": [
-                    {"name": "小明", "time": "今天", "text": "晚饭吃了面", "comments": 1, "likes": 2},
-                ]}, ensure_ascii=False).encode()
+                if self.path.startswith("/health"):
+                    payload = {"ok": True, "logged_in": True, "auth": True, "version": 2}
+                else:
+                    payload = {"ok": True, "items": [
+                        {"name": "小明", "time": "今天", "text": "晚饭吃了面", "comments": 1, "likes": 2},
+                    ]}
+                body = json.dumps(payload, ensure_ascii=False).encode()
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()

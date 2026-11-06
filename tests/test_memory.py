@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 from contextlib import closing
 import multiprocessing
@@ -985,6 +986,36 @@ class TurnBudgetTests(unittest.TestCase):
         self.assertEqual(len(archives), 1)
         self.assertEqual(self.store.recall("old chat", now_ms=NOW)["matched"], 1)
         self.assertEqual(self.store.compact_turns(days=30, now_ms=NOW)["compacted"], 0)
+
+    def test_replay_reuses_files_that_did_not_change(self):
+        self.store.capture("hello", session_id="s", now_ms=NOW)
+        self.store.rebuild_index()
+        calls = []
+        original = Path.read_bytes
+
+        def counting(path):
+            calls.append(path)
+            return original(path)
+
+        with patch.object(Path, "read_bytes", counting):
+            self.store._replay()
+            self.store._replay()
+        self.assertEqual(calls, [])
+
+    def test_rotation_does_not_duplicate_rows_when_the_purge_did_not_land(self):
+        old = NOW - 40 * memory.DAY_MS
+        for index in range(2):
+            self.store.capture(f"old chat {index}", session_id="s", chat_id="c1",
+                               now_ms=old + index)
+        self.store.compact_turns(days=30, now_ms=NOW)
+        with patch.object(self.store, "_append", side_effect=lambda events, now_ms=None: None):
+            self.store.rotate_turns(days=30, now_ms=NOW)
+        # The purge never landed, so the retry sees the same rows again.
+        again = self.store.rotate_turns(days=30, now_ms=NOW)
+        target = next((self.store.directory / "archive").glob("*.jsonl.gz"))
+        lines = gzip.decompress(target.read_bytes()).decode("utf-8").splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(again["turns"], 0)
 
 
 class CrossDayMutationTests(unittest.TestCase):

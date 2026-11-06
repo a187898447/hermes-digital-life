@@ -208,6 +208,9 @@ class MemoryStore:
         self.embedder = embeddings.default_embedder() if embedder is None else embedder
         # The index is loaded once per process; writers then keep it current row by row.
         self._index_ready = False
+        # Per-file parse cache: (mtime_ns, size) -> (digest, events). Every capture and
+        # write replays the log; without this the hot path re-reads the whole history.
+        self._file_cache: dict[Path, tuple[tuple[int, int], str, list]] = {}
 
     def _state(self):
         return self.life_state()
@@ -238,24 +241,41 @@ class MemoryStore:
         purged: set[str] = set()
         self._seq_max: dict[str, int] = {}
         digest = hashlib.sha256()
-        events: list[tuple[str, int, bytes, dict]] = []
+        events: list[tuple[str, int, dict]] = []
         for path in self._paths():
-            data = path.read_bytes()
-            digest.update(str(path.relative_to(self.directory)).encode())
-            digest.update(data)
-            for index, line in enumerate(data.splitlines(keepends=True)):
-                if not line.endswith(b"\n"):
-                    logger.warning("Ignoring incomplete event tail in %s", path)
-                    continue
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            key = (stat.st_mtime_ns, stat.st_size)
+            cached = self._file_cache.get(path)
+            if cached is not None and cached[0] == key:
+                file_digest, file_events = cached[1], cached[2]
+            else:
                 try:
-                    event = json.loads(line)
-                except (ValueError, UnicodeDecodeError):
-                    logger.warning("Ignoring invalid memory event in %s", path)
+                    data = path.read_bytes()
+                except OSError:
                     continue
-                events.append((path.name, index, line, event))
+                file_digest = hashlib.sha256(data).hexdigest()
+                file_events = []
+                for index, line in enumerate(data.splitlines(keepends=True)):
+                    if not line.endswith(b"\n"):
+                        logger.warning("Ignoring incomplete event tail in %s", path)
+                        continue
+                    try:
+                        event = json.loads(line)
+                    except (ValueError, UnicodeDecodeError):
+                        logger.warning("Ignoring invalid memory event in %s", path)
+                        continue
+                    file_events.append((path.name, index, event))
+                self._file_cache[path] = (key, file_digest, file_events)
+            digest.update(str(path.relative_to(self.directory)).encode())
+            digest.update(file_digest.encode())
+            events.extend(file_events)
         # Replay every file in chronological order: a mutation may be written to a
         # later day file than its target's add (journal backdates, long-lived entries).
-        for name, _, _, event in sorted(events, key=lambda item: (item[0], item[1])):
+        for name, _, event in sorted(events, key=lambda item: (item[0], item[1])):
+
             try:
                 self._fold(entries, event)
                 if isinstance(event, dict) and event.get("op") == "purge":
@@ -876,12 +896,43 @@ class MemoryStore:
                 by_month.setdefault(row["date"][:7], []).append(row)
             archive = self.directory / "archive"
             archive.mkdir(parents=True, exist_ok=True)
+            archived = 0
+            kept: set[str] = set()
             for month, rows in sorted(by_month.items()):
                 target = archive / f"{month}.jsonl.gz"
-                with gzip.open(target, "at", encoding="utf-8") as handle:
-                    for row in sorted(rows, key=lambda item: (item["created_at"], item["id"])):
-                        handle.write(json.dumps(self._event_from_row(row), ensure_ascii=False) + "\n")
-            purges = [{"op": "purge", "id": row["id"], "purged_at": now_ms} for row in stale]
+                # The archive is written first, the purge second. If the purge write
+                # fails, the retry must not append the same rows twice.
+                existing = b""
+                try:
+                    existing = target.read_bytes()
+                except FileNotFoundError:
+                    pass
+                seen = set()
+                if existing:
+                    try:
+                        for line in gzip.decompress(existing).decode("utf-8").splitlines():
+                            try:
+                                seen.add(json.loads(line).get("id"))
+                            except ValueError:
+                                continue
+                    except (OSError, EOFError):
+                        logger.warning("Unreadable archive %s; leaving it untouched", target)
+                        # The month cannot be archived this round; keep its rows live
+                        # instead of purging raw turns we failed to preserve.
+                        kept.update(row["id"] for row in rows)
+                        continue
+                fresh = [row for row in sorted(rows, key=lambda item: (item["created_at"], item["id"]))
+                         if row["id"] not in seen]
+                if not fresh:
+                    continue
+                payload = "".join(json.dumps(self._event_from_row(row), ensure_ascii=False) + "\n"
+                                  for row in fresh).encode("utf-8")
+                tmp = target.with_name(target.name + ".tmp")
+                tmp.write_bytes(existing + gzip.compress(payload))
+                os.replace(tmp, target)
+                archived += len(fresh)
+            purges = [{"op": "purge", "id": row["id"], "purged_at": now_ms}
+                      for row in stale if row["id"] not in kept]
             self._append(purges, now_ms)
             if not self._index_events(purges):
                 try:
@@ -889,7 +940,7 @@ class MemoryStore:
                     self._save_index(full, full_digest)
                 except (sqlite3.Error, RuntimeError, OSError):
                     logger.warning("Rotated turns persisted but index update failed", exc_info=True)
-            return {"ok": True, "turns": len(stale), "months": len(by_month)}
+            return {"ok": True, "turns": archived, "months": len(by_month)}
 
     def peek(self, kind, k=10, *, chat_id="", include_global=True, now_ms=None):
         """Read-only top-k of one kind, ranked by current effective weight.

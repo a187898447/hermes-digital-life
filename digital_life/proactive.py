@@ -42,11 +42,14 @@ MAX_SENT_CHATS = 200
 # Order matters: a request that contains a quiet phrase must win over the
 # "主动" it may also contain ("不用主动找我").
 _DISABLE = re.compile(
-    r"(安静一点|安静点|安静些|别主动|不要主动|不用主动|别再主动|少主动|别找我|别烦|少说点|少发点|别打扰|消停|闭嘴|静音)"
+    r"(安静一点|安静点|安静些|别主动|不要主动|不用主动|别再主动|少主动|别找我|别烦|少说点|少发点|别打扰|消停|闭嘴|静音|别多聊|别聊|少聊|不要多聊)"
 )
 _ENABLE = re.compile(
     r"(主动一点|主动点|主动些|多主动|主动找我|多来找我|多找我|来找我|多理我|理我一下|活跃点|活泼点|多聊|多跟我说|主动聊|主动说)"
 )
+# A positive phrase can still sit under a negation ("别多聊"). The quiet words above
+# catch the common forms; this catches the rest by looking at the clause it starts.
+_NEGATION = re.compile(r"(别|不要|不用|甭|不必|少)")
 
 
 def classify(text: str) -> str | None:
@@ -56,7 +59,10 @@ def classify(text: str) -> str | None:
         return None
     if _DISABLE.search(body):
         return "remove"
-    if _ENABLE.search(body):
+    for match in _ENABLE.finditer(body):
+        clause = re.split(r"[，,。.!！?？\s]", body[:match.start()])[-1]
+        if _NEGATION.search(clause):
+            return "remove"
         return "add"
     return None
 
@@ -169,23 +175,26 @@ def can_send(chat_id: str) -> bool:
     return bool(chat_id) and chat_id in subscribed_chats() and not is_muted(chat_id)
 
 
-def _today(now_ms: float) -> str:
-    return time.strftime("%Y-%m-%d", time.localtime(now_ms / 1000.0))
+SEND_WINDOW_MS = 10 * 60 * 1000
 
 
 def claim_send(chat_id: str, now_ms: float | None = None) -> bool:
-    """One proactive message per chat per local day; False when it was already sent."""
+    """Allow one proactive message per chat per short window, not per day.
+
+    The beat job fires several times a day on purpose; the claim only stops a
+    duplicate delivery when two triggers land at almost the same time.
+    """
     now_ms = time.time() * 1000 if now_ms is None else now_ms
-    day = _today(now_ms)
     try:
         with _state_lock():
             raw = _read_dict(_sibling(SENT_FILE))
-            if raw.get("date") != day or not isinstance(raw.get("chats"), list):
-                raw = {"date": day, "chats": []}
-            if str(chat_id) in raw["chats"]:
+            sent = raw.get("chats") if isinstance(raw.get("chats"), dict) else {}
+            last = sent.get(str(chat_id))
+            if isinstance(last, (int, float)) and now_ms - last < SEND_WINDOW_MS:
                 return False
-            raw["chats"] = (raw["chats"] + [str(chat_id)])[-MAX_SENT_CHATS:]
-            _write_dict(_sibling(SENT_FILE), raw)
+            sent[str(chat_id)] = now_ms
+            kept = sorted(sent.items(), key=lambda item: item[1])[-MAX_SENT_CHATS:]
+            _write_dict(_sibling(SENT_FILE), {"chats": dict(kept)})
     except HostAPIUnavailable:
         logger.warning("hermes-lover: cannot record a beat send; refusing to double-send")
         return False
@@ -194,13 +203,12 @@ def claim_send(chat_id: str, now_ms: float | None = None) -> bool:
 
 def release_send(chat_id: str, now_ms: float | None = None) -> None:
     """Undo a claim when the send itself failed, so a retry stays possible."""
-    now_ms = time.time() * 1000 if now_ms is None else now_ms
     try:
         with _state_lock():
             raw = _read_dict(_sibling(SENT_FILE))
-            if raw.get("date") == _today(now_ms) and str(chat_id) in (raw.get("chats") or []):
-                raw["chats"] = [item for item in raw["chats"] if item != str(chat_id)]
-                _write_dict(_sibling(SENT_FILE), raw)
+            sent = raw.get("chats")
+            if isinstance(sent, dict) and sent.pop(str(chat_id), None) is not None:
+                _write_dict(_sibling(SENT_FILE), {"chats": sent})
     except HostAPIUnavailable:
         logger.warning("hermes-lover: host plugin storage is unavailable; send claim kept")
 

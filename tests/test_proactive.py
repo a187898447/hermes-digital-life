@@ -24,6 +24,10 @@ class ClassifyTests(unittest.TestCase):
     def test_quiet_wins_over_an_embedded_forward_word(self):
         self.assertEqual(proactive.classify("不用主动找我"), "remove")
 
+    def test_negated_forward_words_do_not_subscribe(self):
+        for text in ("别多聊", "不要多聊", "别多找我", "少聊两句"):
+            self.assertEqual(proactive.classify(text), "remove", text)
+
     def test_unrelated_messages_are_ignored(self):
         for text in ("帮我看看第几步了", "", "   ", "今天天气怎么样"):
             self.assertIsNone(proactive.classify(text), text)
@@ -114,11 +118,13 @@ class MuteAndSendTests(unittest.TestCase):
         self.assertFalse(proactive.can_send("A"))
         self.assertFalse(proactive.can_send(""))
 
-    def test_one_beat_per_chat_per_day(self):
+    def test_one_beat_per_chat_per_short_window(self):
         day = 1_700_000_000_000.0
         self.assertTrue(proactive.claim_send("A", day))
         self.assertFalse(proactive.claim_send("A", day + 60_000))
         self.assertTrue(proactive.claim_send("B", day + 60_000))
+        # The beat job fires several times a day; only a near-simultaneous duplicate
+        # is blocked, so a later slot still gets through.
         self.assertTrue(proactive.claim_send("A", day + 26 * 3_600_000))
         proactive.release_send("A", day + 26 * 3_600_000)
         self.assertTrue(proactive.claim_send("A", day + 26 * 3_600_000))

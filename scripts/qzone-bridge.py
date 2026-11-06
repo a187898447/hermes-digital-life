@@ -336,7 +336,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._json({"ok": False, "error": "unauthorized"}, 401)
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/health":
-            return self._json({"ok": True, "logged_in": bool(load_cookies())})
+            # `auth` tells the plugin whether this process actually checks tokens; an
+            # old bridge answering 200 here never sees the new token file.
+            return self._json({"ok": True, "logged_in": bool(load_cookies()),
+                               "auth": bool(self.token), "version": 2})
         if parsed.path == "/feed":
             q = urllib.parse.parse_qs(parsed.query)
             images = (q.get("images") or ["0"])[0] in ("1", "true", "yes")
@@ -347,11 +350,31 @@ class Handler(BaseHTTPRequestHandler):
         self._json({"ok": False, "error": "not found"}, 404)
 
 
+def pid_path() -> Path:
+    override = os.environ.get("QZONE_BRIDGE_PID_FILE")
+    if override:
+        return Path(override)
+    home = os.environ.get("HERMES_HOME") or os.path.expanduser("~/.hermes")
+    return Path(home) / "plugin-data" / "hermes-lover" / "qzone-bridge.pid"
+
+
 def serve(port: int) -> int:
     Handler.token = ensure_token()
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    pid = pid_path()
+    try:
+        pid.parent.mkdir(parents=True, exist_ok=True)
+        pid.write_text(str(os.getpid()), encoding="utf-8")
+    except OSError:
+        pass
     print(f"qzone-bridge listening on http://127.0.0.1:{port}")
-    server.serve_forever()
+    try:
+        server.serve_forever()
+    finally:
+        try:
+            pid.unlink()
+        except OSError:
+            pass
     return 0
 
 

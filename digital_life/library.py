@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import logging
 from pathlib import Path
@@ -24,10 +25,23 @@ MAX_CHARS = 6000
 PARAGRAPH = "\n"
 
 
-def root() -> Path:
-    from plugins.plugin_storage import plugin_data_dir  # noqa: PLC0415
+def _data_dir() -> Path:
+    """Host-provided data dir, with a plain fallback for CLI and tests.
 
-    path = Path(plugin_data_dir("hermes-lover")) / "library"
+    The URL path never needs the host plugin storage; the local path should not fail
+    just because the process was started outside the gateway.
+    """
+    try:
+        from plugins.plugin_storage import plugin_data_dir  # noqa: PLC0415
+
+        return Path(plugin_data_dir("hermes-lover"))
+    except (ImportError, RuntimeError, OSError):
+        home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
+        return Path(home) / "plugin-data" / "hermes-lover"
+
+
+def root() -> Path:
+    path = _data_dir() / "library"
     path.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -38,9 +52,7 @@ def inbox_root() -> Path:
     The chat can only ingest text from here: the model is talked to by strangers, so
     "read this path" must not reach the rest of the host filesystem.
     """
-    from plugins.plugin_storage import plugin_data_dir  # noqa: PLC0415
-
-    path = Path(plugin_data_dir("hermes-lover")) / "inbox"
+    path = _data_dir() / "inbox"
     path.mkdir(parents=True, exist_ok=True)
     return path
 

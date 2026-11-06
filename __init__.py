@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import re
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -201,6 +202,7 @@ def _maybe_wake(session_id: str = "") -> None:
 
 
 _CHILD_SESSIONS: dict[str, str | None] = {}
+_MAX_CHILD_SESSIONS = 256
 _CHILD_MARK = "[lover-child:"
 
 
@@ -231,6 +233,10 @@ def _child_kind(session_id: str) -> str | None:
         if end > start:
             kind = text[start + len(_CHILD_MARK):end].strip() or None
     _CHILD_SESSIONS[session_id] = kind
+    # Background sessions are one-shot; keep the cache from growing forever, and evict
+    # the oldest entry (dicts preserve insertion order).
+    while len(_CHILD_SESSIONS) > _MAX_CHILD_SESSIONS:
+        _CHILD_SESSIONS.pop(next(iter(_CHILD_SESSIONS)))
     return kind
 
 
@@ -1220,7 +1226,7 @@ def register(ctx) -> None:
                                "error": "this chat has not subscribed to proactive messages"},
                               ensure_ascii=False)
         if not _proactive.claim_send(chat_id):
-            return json.dumps({"ok": False, "error": "already sent to this chat today"},
+            return json.dumps({"ok": False, "error": "just sent one to this chat; give it a few minutes"},
                               ensure_ascii=False)
         delay = args.get("delay_seconds") or 0
         try:
@@ -1378,10 +1384,55 @@ def register(ctx) -> None:
             payload, _ = _bridge_get("/health")
             return payload
 
+        def stale(current) -> bool:
+            """An old bridge is up but ignores the token file; replace it."""
+            return bool(current and current.get("ok")) and current.get("auth") is not True
+
+        def stop_old(home_dir: str) -> bool:
+            """Stop the previous bridge only if it is really the bridge.
+
+            An upgrade leaves an old process that ignores the token file; it has to go
+            or every feed call keeps running unauthenticated. We kill it by its pidfile
+            (never by port) and only after checking the command line.
+            """
+            path = Path(os.environ.get("QZONE_BRIDGE_PID_FILE")
+                        or (Path(home_dir) / "plugin-data" / "hermes-lover" / "qzone-bridge.pid"))
+            try:
+                pid = int(path.read_text("utf-8").strip())
+            except (OSError, ValueError):
+                return False
+            try:
+                command = subprocess.run(["ps", "-p", str(pid), "-o", "command="],
+                                         capture_output=True, text=True, timeout=5).stdout
+            except (OSError, subprocess.SubprocessError):
+                return False
+            if "qzone-bridge.py" not in command:
+                return False
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                return False
+            return True
+
         if action == "start":
             current = state()
+            if stale(current):
+                # The plugin cannot tell an old bridge to re-read the token file; it has
+                # to be replaced, or every feed call keeps running unauthenticated.
+                if not stop_old(home):
+                    return json.dumps({"ok": False, "running": True,
+                                       "error": "旧版 bridge 还在跑，先手动结束它再启动"})
+                for _ in range(20):
+                    time.sleep(0.25)
+                    if not state():
+                        break
+                current = state()
+                if stale(current):
+                    return json.dumps({"ok": False, "running": True,
+                                       "error": "旧版 bridge 还在跑，先手动结束它再启动"})
             if current and current.get("ok"):
-                return json.dumps({"ok": True, "running": True, "logged_in": current.get("logged_in")})
+                return json.dumps({"ok": True, "running": True, "logged_in": current.get("logged_in"),
+                                   "auth": True})
             if not script.exists():
                 return json.dumps({"ok": False, "error": "bridge script missing", "path": str(script)})
             try:
@@ -1390,16 +1441,27 @@ def register(ctx) -> None:
                                  start_new_session=True, close_fds=True)
             except OSError as exc:
                 return json.dumps({"ok": False, "error": f"start failed: {exc}"})
+            saw_stale = False
             for _ in range(20):
                 time.sleep(0.25)
                 current = state()
                 if current and current.get("ok"):
-                    return json.dumps({"ok": True, "running": True, "logged_in": current.get("logged_in")})
+                    if current.get("auth") is True:
+                        return json.dumps({"ok": True, "running": True, "logged_in": current.get("logged_in"),
+                                           "auth": True})
+                    saw_stale = True  # an old process still owns the port; keep waiting
+            if saw_stale:
+                return json.dumps({"ok": False, "running": True,
+                                   "error": "旧版 bridge 还在跑，先手动结束它再启动"})
             return json.dumps({"ok": False, "running": False, "error": "bridge did not come up"})
         current = state()
-        return json.dumps({"ok": bool(current and current.get("ok")),
-                           "running": bool(current and current.get("ok")),
-                           "logged_in": (current or {}).get("logged_in")})
+        running = bool(current and current.get("ok"))
+        answer = {"ok": running, "running": running,
+                  "logged_in": (current or {}).get("logged_in"),
+                  "auth": bool(current and current.get("auth") is True)}
+        if running and not answer["auth"]:
+            answer["warning"] = "旧版 bridge 没有鉴权；qzone_bridge start 会换掉它"
+        return json.dumps(answer)
 
     def read_source(args, session_id="", **kwargs):
         from .digital_life import budget, library  # noqa: PLC0415
@@ -1480,6 +1542,14 @@ def register(ctx) -> None:
         want_images = bool(args.get("images"))
         include_seen = bool(args.get("include_seen"))
         pos = max(0, int(args.get("pos") or 0))
+        health, _ = _bridge_get("/health")
+        if health and health.get("ok") and health.get("auth") is not True:
+            # The bridge answered 200 without checking tokens: a pre-upgrade process.
+            restarted = json.loads(qzone_bridge({"action": "start"}))
+            if not restarted.get("ok"):
+                return json.dumps({"ok": False,
+                                   "error": "旧版 qzone bridge 没有鉴权，自动重启失败",
+                                   "detail": restarted.get("error")}, ensure_ascii=False)
         path = f"/feed?count={count}&pos={pos}"
         if want_images:
             path += "&images=1"

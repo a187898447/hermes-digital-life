@@ -96,3 +96,6 @@ class HandlerAuthTests(unittest.TestCase):
             headers={"X-Bridge-Token": "secret"})
         payload = json.loads(urllib.request.urlopen(request, timeout=3).read())
         self.assertTrue(payload["ok"])
+        # Health advertises the auth contract so an old bridge can be spotted.
+        self.assertIs(payload["auth"], True)
+        self.assertEqual(payload["version"], 2)
