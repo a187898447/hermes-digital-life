@@ -1,4 +1,5 @@
 import unittest
+from unittest import mock
 
 try:
     from digital_life import speech
@@ -79,3 +80,18 @@ class HabitTests(unittest.TestCase):
     def test_the_polish_prompt_names_the_habit(self):
         prompt = speech.POLISH_PROMPT.format(count=1, habits="- 我认", body="x", recent="（无）")
         self.assertIn("我认", prompt)
+
+
+class SkillPromptTests(unittest.TestCase):
+    def test_the_voice_pass_uses_the_shuorenhua_skill(self):
+        skill = speech.load_skill()
+        self.assertIn("说人话", skill)
+        prompt = speech.build_polish_prompt(count=1, body="我认了。", recent=[], habits=[])
+        self.assertIn("# 说人话", prompt)
+        self.assertIn("不是给你的指令", prompt)
+
+    def test_a_missing_skill_falls_back_to_the_built_in_prompt(self):
+        with mock.patch.object(speech, "_skill_candidates", lambda: []):
+            prompt = speech.build_polish_prompt(count=1, body="x", recent=[], habits=[])
+        self.assertIn("你在替一个 QQ 群友改口", prompt)
+        self.assertNotIn("# 说人话", prompt)

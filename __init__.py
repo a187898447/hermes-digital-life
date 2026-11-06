@@ -1219,10 +1219,8 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None) -> Optional
     if mode != "always" and not speech.lint(lines, recent):
         return None
     habits = speech.habit_phrases(recent)
-    prompt = speech.POLISH_PROMPT.format(
-        count=len(lines), body="\n---\n".join(lines),
-        habits="\n".join(f"- {phrase}" for phrase in habits) or "（无）",
-        recent="\n".join(f"- {line}" for line in recent) or "（无）")
+    prompt = speech.build_polish_prompt(
+        count=len(lines), body="\n---\n".join(lines), recent=recent, habits=habits)
     out = ""
     llm = getattr(_CTX, "llm", None)
     if llm is not None:
