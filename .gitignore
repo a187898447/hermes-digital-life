@@ -4,3 +4,11 @@ __pycache__/
 .mypy_cache/
 .venv/
 .DS_Store
+
+# runtime data (never committed; lives under plugin-data or the profile)
+.audit/
+plugin-data/
+memory/
+memory-index.db
+inbox/
+*.log

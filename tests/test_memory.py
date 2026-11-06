@@ -955,23 +955,17 @@ class SimilarLearnedTests(unittest.TestCase):
         self.assertEqual(m.similar_learned("有人骂我 → 先接情绪不解释", entries), "")
 
 class StudyLearnedTests(unittest.TestCase):
-    def test_third_habit_is_rejected(self):
+    def test_count_is_not_capped(self):
         from digital_life import memory as m
-        entries = {f"hp-{i}": {"kind": "learned", "text": f"场景{i} → 说法{i}", "source_session_id": "s1"} for i in (1, 2)}
-        self.assertIn("already wrote 2", m.study_learned_problem("场景3 → 说法3", entries, "s1", cap=2))
-
-    def test_large_source_allows_more(self):
-        from digital_life import memory as m
-        days = ["周一", "周二", "周三", "周四", "周五"]
+        days = ["周一", "周二", "周三", "周五", "周六"]
         entries = {f"hp-{i}": {"kind": "learned", "text": f"{d} → 说法{i}", "source_session_id": "s1"}
                    for i, d in enumerate(days)}
-        self.assertEqual("", m.study_learned_problem("周六 → 说法9", entries, "s1", cap=8))
+        self.assertEqual("", m.study_learned_problem("周日 → 说法9", entries, "s1"))
 
-    def test_same_occasion_is_capped(self):
+    def test_same_occasion_must_merge(self):
         from digital_life import memory as m
-        entries = {"hp-1": {"kind": "learned", "text": "周四求姻缘 → 借疯狂星期寺要钱", "source_session_id": "s1"},
-                   "hp-2": {"kind": "learned", "text": "周四装可怜 → 天桥底下没饭吃", "source_session_id": "s1"}}
-        self.assertIn("疯四 already has 2", m.study_learned_problem("周四 → 换个说法", entries, "s1", cap=8))
+        entries = {"hp-1": {"kind": "learned", "text": "周四求姻缘 → 借疯狂星期寺要钱", "source_session_id": "s1"}}
+        self.assertIn("merge the detail", m.study_learned_problem("周四 → 换个说法", entries, "s1"))
 
     def test_occasion_grouping(self):
         from digital_life import memory as m
