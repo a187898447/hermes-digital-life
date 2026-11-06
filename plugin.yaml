@@ -30,6 +30,7 @@ provides_tools:
   - beat_targets
   - beat_send
   - search_later
+  - study_source
   - background_task
   - qzone_feed
   - qzone_bridge

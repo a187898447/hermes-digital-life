@@ -199,6 +199,8 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
                                                  "last_write": ""})
     if tool_name == "memory_recall":
         counts["recall"] = counts.get("recall", 0) + 1
+    if tool_name == "read_source":
+        counts["read"] = counts.get("read", 0) + 1
     if tool_name == "memory_write":
         payload = kwargs.get("args") or kwargs.get("arguments") or {}
         text = str(payload.get("text") or "") if isinstance(payload, dict) else ""
@@ -210,8 +212,11 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     # duplicate guard already bound them. The budget is for tools that hit the
     # outside world (search, zone, terminal, background jobs).
     if tool_name in ("read_source", "library_list", "memory_write", "memory_recall",
-                     "memory_revoke", "digital_life_status"):
+                     "memory_revoke", "digital_life_status", "study_source"):
         return None
+    if tool_name in ("web_search", "web_extract") and counts.get("read"):
+        return {"action": "block",
+                "message": "这一轮已经用 read_source 读了，别再搜网页。先把读到的回话；没读完的部分交给 study_source 后台读。"}
     if tool_name == "qzone_feed" and counts.get("recall", 0) == 0:
         return {"action": "block",
                 "message": "先查记忆：这段你看过没有，用 memory_recall 查一下。已经读过的直接从记忆里答，不要再抓一遍。"}
@@ -1153,6 +1158,36 @@ def register(ctx) -> None:
                 }, "required": ["question"], "additionalProperties": False}},
         handler=search_later,
         description="Background web search; the answer is sent to the chat when ready.",
+    )
+    def study_source(args, session_id="", **kwargs):
+        source = str(args.get("source") or "").strip()
+        if not source:
+            return json.dumps({"ok": False, "error": "source is required"})
+        chat_id, _ = _session_scope(session_id)
+        if not chat_id:
+            return json.dumps({"ok": False, "error": "no chat context for this session"})
+        from .digital_life import research as _research  # noqa: PLC0415
+        prompt = (
+            "你在后台读完一份资料，不要把原文贴回来。用 read_source 读 "
+            f"{source} ，一次读不完就用 name 加 part 续读直到 finished；材料写了星期就用 applies_dow"
+            "（0=周一…3=周四…6=周日）。边读边把能在群里直接说出口的说法用 memory_write 记成 learned"
+            "（text 写成「什么时候→你会怎么说」，自己的话，别抄原文），来源和结构用 note 记。"
+            "最后只回一句话：读完了、记了几条。"
+        )
+        started = _research.spawn_task(prompt, chat_id, _send_qq)
+        if not started:
+            return json.dumps({"ok": False, "error": "a background task for this chat is already running"})
+        return json.dumps({"ok": True, "note": "Reply to the user now; I will read it in the background and message you when done."})
+
+    ctx.register_tool(
+        name="study_source", toolset="digital_life",
+        schema={"name": "study_source",
+                "description": "Read a long link/file in the background, extract habits into memory, and message the chat when done. Reply to the user first instead of waiting.",
+                "parameters": {"type": "object", "properties": {
+                    "source": {"type": "string", "maxLength": 2000},
+                }, "required": ["source"], "additionalProperties": False}},
+        handler=study_source,
+        description="Background reader for long material; sends a short done message later.",
     )
     def background_task(args, session_id="", **kwargs):
         task = str(args.get("task") or "").strip()
