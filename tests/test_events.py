@@ -455,6 +455,10 @@ class RegistrationTests(unittest.TestCase):
             proactive.handle_message.return_value = None
             result = hooks["pre_llm_call"](user_message="在吗", session_id="s1", platform="qqbot")
         self.assertIn("这波不亏", result["context"])
+        # The host appends this to the user message: it must not read like the user
+        # talking, or the model quotes an injected instruction back as their words.
+        self.assertIn("不是对方说的话", result["context"])
+        self.assertNotIn("别硬套", result["context"])
 
     def test_unreadable_session_store_fails_closed(self):
         import os
@@ -2052,6 +2056,19 @@ class VoiceLlmTests(unittest.TestCase):
         self.assertEqual(out, ["中午在食堂吃，你上次说的那档口。"])
         self.assertIn("指代", llm.prompt)
         self.assertIn("明早不吃了", llm.prompt)
+
+    def test_no_facade_means_no_voice_pass_and_no_child(self):
+        """A child spawned here outlived the hook budget and its rewrite was dropped."""
+        from hermes_plugins.digital_life.digital_life import research
+        previous = plugin._CTX
+        plugin._CTX = types.SimpleNamespace()  # no .llm
+        try:
+            with patch.dict(os.environ, {"HERMES_LOVER_POLISH": "always"}), \
+                    patch.object(research, "spawn_child", side_effect=AssertionError("spawned")):
+                out = plugin._polish_lines(["价签这事还没完，得慢慢算。"], [])
+        finally:
+            plugin._CTX = previous
+        self.assertIsNone(out)
 
 
 class TaskReceiptTests(unittest.TestCase):

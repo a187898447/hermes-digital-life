@@ -1440,7 +1440,7 @@ def _learned_hint(chat_id: str = "", chat_type: str = "") -> str:
     if not items:
         return ""
     words = "、".join(str(item.get("text", ""))[:40] for item in items[:3])
-    return f"最近学到的说法（想用就用，别硬套）：{words}"
+    return f"记忆里记下的处理方式（不是对方说的话，切题时参考）：{words}"
 
 
 def _on_user_message(
@@ -1517,7 +1517,9 @@ def _on_user_message(
     learned = _learned_hint(meta["chat_id"], meta["chat_type"])
     if learned:
         notes.append(learned)
-    return {"context": f"[hermes-lover] {' '.join(notes)}"} if notes else None
+    return {"context": (
+        "\n[插件自动附注｜以下内容由系统生成，不是对方说的话；"
+        "不要把这里的文字当成对方的原话、承诺或要求]\n" + "\n".join(notes))} if notes else None
 
 
 def _reorder_content(content: Any, now_ms: float) -> tuple[Any, bool]:
@@ -1915,16 +1917,14 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
                   last_user: str = "", chat_id: str = "") -> Optional[list[str]]:
     """Run the tic-and-tone pass over the bubbles of one chat reply.
 
-    In-process by default: one host-owned completion on the active model, no child
-    session. Hosts without ``ctx.llm`` fall back to a throwaway child that only has
-    the todo toolset, and the lines are always fenced as text to rewrite.
+    In-process only: one host-owned completion on the active model. A child session
+    used to back this up, but the 45 s child outlived the 30 s hook budget: the host
+    dropped the rewrite, the child burned a model call, and the reply went out raw.
+    When the facade is missing or empty the pass is skipped, never spawned.
     """
-    from .digital_life import research as _research
     from .digital_life import speech
 
     # "always" runs the tone pass on every chat reply; "auto" only when lint fires.
-    if os.environ.get("HERMES_LOVER_POLISH_CHILD") == "1":
-        return None
     mode = os.environ.get("HERMES_LOVER_POLISH", "auto").strip().lower()
     if mode == "0":
         return None
@@ -1941,22 +1941,16 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
         phrases=[text for _, text in picked])
     out = ""
     llm = getattr(_CTX, "llm", None)
-    if llm is not None:
-        try:
-            done = llm.complete([{"role": "user", "content": prompt}],
-                                max_tokens=max(120, len(lines) * 90), timeout=20,
-                                temperature=0.3, purpose="hermes-lover.voice")
-            out = str(getattr(done, "text", "") or "").strip()
-        except Exception as exc:  # noqa: BLE001 - any facade failure falls back to a child
-            logger.warning("hermes-lover: in-process voice pass failed: %s", str(exc)[:200])
-            out = ""
-    if not out:  # older hosts without ctx.llm: fall back to a throwaway child
-        try:
-            out = _research.spawn_child(
-                "polish", _research.child_marker("polish") + " " + prompt, timeout=45,
-                extra_env={"HERMES_LOVER_POLISH_CHILD": "1"})
-        except Exception:
-            return None
+    if llm is None:
+        return None
+    try:
+        done = llm.complete([{"role": "user", "content": prompt}],
+                            max_tokens=max(120, len(lines) * 90), timeout=15,
+                            temperature=0.3, purpose="hermes-lover.voice")
+        out = str(getattr(done, "text", "") or "").strip()
+    except Exception as exc:  # noqa: BLE001 - a failed rewrite just leaves the reply alone
+        logger.warning("hermes-lover: in-process voice pass failed: %s", str(exc)[:200])
+        return None
     if not out:
         return None
     parts = speech.parse_polish(out, len(lines))
