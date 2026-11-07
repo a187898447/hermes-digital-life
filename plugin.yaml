@@ -34,6 +34,7 @@ provides_tools:
   - close_gap
   - share_video
   - make_image
+  - make_speech
   - make_video
   - transcribe_audio
   - beat_targets

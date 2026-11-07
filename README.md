@@ -166,6 +166,7 @@ QQ 会话里模型能调用的工具分几组，权限和预算都不一样：
 - **MiniMax 媒体**（toolset `minimax_media`，只有当前模型是 MiniMax 时才放行）：
   `make_video` 用一句描述生成 6/10 秒视频（每天 3 条、最多 2 个并发，后台做完直接发）；
   `make_image` 用 `image-01` 出图（1:1 到 21:9，可选参考图 URL，每天 6 张，直接发）；
+  `make_speech` 用 `speech-2.8-hd` 把一段文字读成 mp3 发过来（≤5000 字，每天 10 段，可选音色与 0.5–2.0 倍速）；
   `transcribe_audio` 用 `asr-1.0` 转写 `inbox/` 或 `outbox/` 里的一段音频（≤50MB、≤500 秒，每天 20 段）。
   生成的视频/图片落在 `plugin-data/<profile>/outbox/`，需要主动重发时用 `share_video`。
 

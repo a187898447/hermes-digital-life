@@ -52,8 +52,9 @@ READ_SOURCE_DAILY_INGESTS = 40
 VIDEO_PER_DAY = 2
 VIDEO_GEN_PER_DAY = 3
 IMAGE_GEN_PER_DAY = 6
+SPEECH_PER_DAY = 10
 TRANSCRIBE_PER_DAY = 20
-MINIMAX_TOOLS = ("make_video", "make_image", "transcribe_audio")
+MINIMAX_TOOLS = ("make_video", "make_image", "make_speech", "transcribe_audio")
 _MODEL_SEEN = {"name": ""}
 OPEN_LOOP_SHOWN = 3
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
@@ -446,7 +447,7 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     # outside world (search, zone, terminal, background jobs).
     if tool_name in ("read_source", "library_list", "memory_write", "memory_recall",
                      "memory_revoke", "digital_life_status", "close_gap", "share_video",
-                     "make_video", "make_image", "transcribe_audio",
+                     "make_video", "make_image", "make_speech", "transcribe_audio",
                      "study_source", "background_task", "search_later"):
         return None
     if tool_name == "skill_manage":
@@ -841,6 +842,45 @@ def _make_image(args, session_id="", **kwargs):
         return json.dumps({"ok": False, "error": f"画好了但没发出去：{str(exc)[:120]}"},
                           ensure_ascii=False)
     return json.dumps({"ok": True, "sent": str(path), "caption": caption}, ensure_ascii=False)
+
+
+def _make_speech(args, session_id="", **kwargs):
+    chat_id, platform = _media_chat(session_id)
+    if not chat_id:
+        return json.dumps({"ok": False, "error": "no chat to send to"}, ensure_ascii=False)
+    if platform != "qqbot":
+        return json.dumps({"ok": False, "error": "speech only goes to QQ chats"}, ensure_ascii=False)
+    text = str(args.get("text") or "").strip()
+    if not text:
+        return json.dumps({"ok": False, "error": "nothing to say"}, ensure_ascii=False)
+    voice = str(args.get("voice") or "female-shaonv").strip()
+    try:
+        speed = float(args.get("speed") or 1.0)
+    except (TypeError, ValueError):
+        speed = 1.0
+    from .digital_life import budget as _budget, minimax as _minimax  # noqa: PLC0415
+
+    if not _budget.spend(f"speech:{chat_id}", SPEECH_PER_DAY):
+        return json.dumps({"ok": False, "error": "今天已经说过 10 段了，明天再说。"}, ensure_ascii=False)
+    try:
+        path = _minimax.create_speech(text, voice=voice, speed=speed)
+    except Exception as exc:  # noqa: BLE001 - report any provider failure as text
+        _budget.refund(f"speech:{chat_id}")
+        return json.dumps({"ok": False, "error": f"语音没做出来：{exc}"}, ensure_ascii=False)
+    caption = str(args.get("caption") or "").strip()
+    sender = _host_send_message_tool()
+    if sender is None:
+        _budget.refund(f"speech:{chat_id}")
+        return json.dumps({"ok": False, "error": "this host cannot send media"}, ensure_ascii=False)
+    message = f"{caption}\nMEDIA:{path}" if caption else f"MEDIA:{path}"
+    try:
+        sender({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hermes-lover could not send generated speech", exc_info=True)
+        _budget.refund(f"speech:{chat_id}")
+        return json.dumps({"ok": False, "error": f"做好音了但没发出去：{str(exc)[:120]}"},
+                          ensure_ascii=False)
+    return json.dumps({"ok": True, "sent": str(path)}, ensure_ascii=False)
 
 
 def _transcribe_audio(args, session_id="", **kwargs):
@@ -2308,6 +2348,25 @@ def register(ctx) -> None:
                 }, "required": ["prompt"], "additionalProperties": False}},
         handler=_make_image,
         description="Generate an image and send it to the chat.",
+    )
+    ctx.register_tool(
+        name="make_speech",
+        toolset="minimax_media",
+        schema={"name": "make_speech",
+                "description": ("Speak a piece of text with MiniMax speech-2.8-hd and send the mp3 "
+                                "to this chat. At most 5000 characters and ten clips per chat per "
+                                "day. Only MiniMax models may call this."),
+                "parameters": {"type": "object", "properties": {
+                    "text": {"type": "string", "maxLength": 5000,
+                             "description": "Exactly what should be spoken."},
+                    "voice": {"type": "string", "maxLength": 40,
+                              "description": "Optional voice id (default female-shaonv)."},
+                    "speed": {"type": "number", "minimum": 0.5, "maximum": 2.0, "default": 1.0},
+                    "caption": {"type": "string", "maxLength": 120,
+                                "description": "Optional one line to send with it."},
+                }, "required": ["text"], "additionalProperties": False}},
+        handler=_make_speech,
+        description="Speak text out loud and send the audio.",
     )
     ctx.register_tool(
         name="transcribe_audio",

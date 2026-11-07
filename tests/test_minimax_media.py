@@ -179,6 +179,27 @@ class HandlerTests(unittest.TestCase):
         self.assertTrue(out["ok"])
         self.assertEqual(out["text"], "你好")
 
+    def test_speech_is_made_and_sent_with_a_media_line(self):
+        from pathlib import Path as P
+        with mock.patch.object(self.minimax, "create_speech", return_value=P("/tmp/v.mp3")), \
+                mock.patch.object(self.budget, "spend", return_value=True):
+            out = json.loads(self.hl._make_speech({"text": "晚安", "caption": "听一下"},
+                                                  session_id="s-media"))
+        self.assertTrue(out["ok"])
+        self.assertIn("MEDIA:/tmp/v.mp3", self.sent[0]["message"])
+        self.assertIn("听一下", self.sent[0]["message"])
+
+    def test_speech_quota_and_failures_refund(self):
+        with mock.patch.object(self.budget, "spend", return_value=False):
+            out = json.loads(self.hl._make_speech({"text": "x"}, session_id="s-media"))
+        self.assertFalse(out["ok"])
+        with mock.patch.object(self.minimax, "create_speech", side_effect=RuntimeError("boom")), \
+                mock.patch.object(self.budget, "spend", return_value=True), \
+                mock.patch.object(self.budget, "refund") as refund:
+            out = json.loads(self.hl._make_speech({"text": "x"}, session_id="s-media"))
+        self.assertFalse(out["ok"])
+        refund.assert_called_once()
+
     def test_audio_outside_the_folders_is_refused(self):
         out = json.loads(self.hl._transcribe_audio({"name": "/etc/passwd"}, session_id="s-media"))
         self.assertFalse(out["ok"])

@@ -120,3 +120,53 @@ class DownloadTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SpeechTests(unittest.TestCase):
+    def _fake(self, statuses):
+        calls = []
+
+        def fake(path, *, key="", payload=None, timeout=60.0):
+            calls.append(path)
+            if path == "/v1/t2a_async_v2":
+                return {"task_id": "t-1"}
+            return statuses.pop(0)
+
+        return fake, calls
+
+    def test_polls_the_task_until_the_audio_is_ready(self):
+        fake, calls = self._fake([{"status": "Processing"}, {"status": "success", "file_id": "f-1"}])
+        with patch.object(hailuo, "keys", lambda: ["k"]), \
+                patch.object(hailuo, "_request", fake), \
+                patch.object(hailuo, "_download_file", return_value=__import__("pathlib").Path("/tmp/a.mp3")) as dl:
+            path = hailuo.create_speech("你好", sleep=lambda *_a: None)
+        self.assertEqual(path.name, "a.mp3")
+        self.assertEqual(calls[0], "/v1/t2a_async_v2")
+        self.assertIn("t2a_async_query_v2", calls[1])
+        dl.assert_called_once_with("f-1", key="k")
+
+    def test_a_failed_task_raises(self):
+        fake, _ = self._fake([{"status": "failed"}])
+        with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", fake):
+            with self.assertRaises(hailuo.MiniMaxError):
+                hailuo.create_speech("x", sleep=lambda *_a: None)
+
+    def test_empty_text_is_refused(self):
+        with self.assertRaises(hailuo.MiniMaxError):
+            hailuo.create_speech("   ")
+
+    def test_the_voice_and_speed_reach_the_task(self):
+        seen = {}
+
+        def fake(path, *, key="", payload=None, timeout=60.0):
+            if path == "/v1/t2a_async_v2":
+                seen.update(payload or {})
+                return {"task_id": "t-1"}
+            return {"status": "success", "file_id": "f-1"}
+
+        with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", fake), \
+                patch.object(hailuo, "_download_file", return_value=__import__("pathlib").Path("/tmp/a.mp3")):
+            hailuo.create_speech("你好", voice="male-qn-qingse", speed=1.4, sleep=lambda *_a: None)
+        self.assertEqual(seen["voice_setting"]["voice_id"], "male-qn-qingse")
+        self.assertEqual(seen["voice_setting"]["speed"], 1.4)
+        self.assertEqual(seen["audio_setting"]["format"], "mp3")

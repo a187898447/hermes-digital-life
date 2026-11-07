@@ -1,9 +1,8 @@
-"""MiniMax media calls (video, image, speech-to-text) for one chat at a time.
+"""MiniMax media calls (video, image, speech, speech-to-text) for one chat at a time.
 
 The model never touches the network here: it writes a prompt or names an audio file,
-and this module turns that into an mp4/jpeg/text. Video is asynchronous on MiniMax's
-side, so its tool call returns a task id immediately; images and transcripts are fast
-enough to finish inside the call.
+and this module turns that into an mp4/jpeg/mp3/text. Video and long-form speech are
+asynchronous on MiniMax's side; images and transcripts finish inside the call.
 """
 
 from __future__ import annotations
@@ -157,6 +156,72 @@ ASR_MODEL = os.environ.get("HERMES_LOVER_ASR_MODEL", "asr-1.0")
 ASR_MAX_BYTES = 50 * 1024 * 1024
 ASR_MAX_SECONDS = 500
 AUDIO_SUFFIXES = (".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".aiff", ".alac")
+
+
+TTS_MODEL = os.environ.get("HERMES_LOVER_TTS_MODEL", "speech-2.8-hd")
+TTS_VOICES = ("female-shaonv", "female-yujie", "female-chengshu", "female-tianmei",
+              "male-qn-qingse", "male-qn-jingying", "audiobook_male_1", "audiobook_female_1")
+TTS_MAX_CHARS = 5000
+
+
+def create_speech(text: str, *, voice: str = "female-shaonv", speed: float = 1.0,
+                  timeout: float = TIMEOUT_SECONDS, sleep=time.sleep) -> Path:
+    """Speak one piece of text into an mp3 in the outbox (async task + poll)."""
+    body = " ".join(str(text or "").split())
+    if not body:
+        raise MiniMaxError("nothing to say")
+    if len(body) > TTS_MAX_CHARS:
+        raise MiniMaxError(f"that is {len(body)} characters; one clip at most {TTS_MAX_CHARS}")
+    speed = min(2.0, max(0.5, float(speed or 1.0)))
+    payload = {
+        "model": TTS_MODEL,
+        "text": body,
+        "language_boost": "auto",
+        "voice_setting": {"voice_id": voice or "female-shaonv", "speed": speed,
+                          "vol": 1, "pitch": 0},
+        "audio_setting": {"audio_sample_rate": 32000, "bitrate": 128000,
+                          "format": "mp3", "channel": 1},
+    }
+    if not keys():
+        raise MiniMaxError("no MiniMax key is configured (MINIMAX_CN_API_KEY)")
+    last_error: Exception | None = None
+    key = ""
+    for key in keys():
+        try:
+            created = _request("/v1/t2a_async_v2", key=key, payload=payload, timeout=60.0)
+            break
+        except MiniMaxError as exc:
+            last_error = exc
+    else:
+        raise last_error or MiniMaxError("no key could start a speech task")
+    task_id = str((created.get("task_id") or (created.get("data") or {}).get("task_id") or "")).strip()
+    if not task_id:
+        raise MiniMaxError("MiniMax returned no task id")
+    deadline = time.time() + max(60.0, float(timeout))
+    file_id = ""
+    while time.time() < deadline:
+        answer = _request(f"/v1/query/t2a_async_query_v2?task_id={urllib.request.quote(task_id)}",
+                          key=key, timeout=60.0)
+        status = str(answer.get("status") or "").strip().lower()
+        if status == "success":
+            file_id = str(answer.get("file_id") or "").strip()
+            break
+        if status in ("failed", "expired"):
+            raise MiniMaxError(f"the speech task {status}")
+        sleep(POLL_SECONDS)
+    if not file_id:
+        raise MiniMaxError("the speech task did not finish in time")
+    return _download_file(file_id, key=key)
+
+
+def _download_file(file_id: str, *, key: str = "") -> Path:
+    url = f"{API}/v1/files/retrieve_content?file_id={urllib.request.quote(file_id)}"
+    request = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
+    with urllib.request.urlopen(request, timeout=180) as response:
+        body = response.read(MAX_DOWNLOAD_BYTES + 1)
+    if len(body) > MAX_DOWNLOAD_BYTES:
+        raise MiniMaxError("the generated audio is larger than 200 MB")
+    return outbox.write_bytes(f"speech-{int(time.time())}-{file_id[-6:]}.mp3", body)
 
 
 def create_image(prompt: str, *, aspect_ratio: str = "1:1", reference: str = "") -> Path:

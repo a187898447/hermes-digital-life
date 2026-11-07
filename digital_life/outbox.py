@@ -16,7 +16,8 @@ from .library import _data_dir
 
 VIDEO_SUFFIXES = {".mp4", ".mov", ".m4v", ".webm"}
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
-MEDIA_SUFFIXES = VIDEO_SUFFIXES | IMAGE_SUFFIXES
+AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus"}
+MEDIA_SUFFIXES = VIDEO_SUFFIXES | IMAGE_SUFFIXES | AUDIO_SUFFIXES
 MAX_MB = int(os.environ.get("HERMES_LOVER_VIDEO_MAX_MB", "30"))
 MAX_BYTES = MAX_MB * 1024 * 1024
 
@@ -46,7 +47,7 @@ def resolve(name: str) -> Path:
     if not candidate.is_file():
         raise ValueError(f"no such file: {raw} (put it in {root} first)")
     if candidate.suffix.lower() not in MEDIA_SUFFIXES:
-        raise ValueError("only videos and images can be sent")
+        raise ValueError("only videos, images and audio can be sent")
     size = candidate.stat().st_size
     if size > MAX_BYTES:
         raise ValueError(f"the video is {size / 1024 / 1024:.1f} MB; QQ takes at most {MAX_MB} MB")
@@ -58,7 +59,7 @@ def write_bytes(name: str, data: bytes) -> Path:
     root = root_dir()
     target = (root / Path(str(name)).name).resolve()
     if target.suffix.lower() not in MEDIA_SUFFIXES:
-        raise ValueError("only videos and images can be stored")
+        raise ValueError("only videos, images and audio can be stored")
     with tempfile.NamedTemporaryFile(dir=root, suffix=target.suffix, delete=False) as handle:
         handle.write(data)
         temp = Path(handle.name)
