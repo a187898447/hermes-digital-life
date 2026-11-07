@@ -113,6 +113,27 @@ class MemoryTests(unittest.TestCase):
             self.assertEqual(json.loads(handlers["memory_recall"]({}))["returned"], 1)
             self.assertEqual(files(self.root), before)
 
+    def test_recall_takes_the_life_kind_used_by_the_distillation_prompt(self):
+        from test_events import plugin, RecordingContext
+        import importlib
+        host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        ctx = RecordingContext()
+        plugin.register(ctx)
+        handlers = {tool["name"]: tool["handler"] for tool in ctx.tools}
+        schema = next(tool["schema"] for tool in ctx.tools if tool["name"] == "memory_recall")
+        self.assertIn("life", schema["parameters"]["properties"]["kind"]["enum"])
+        self.store.write("那天读了十页", kind="life", day="2026-11-01", chat_id="chat-a")
+        with (
+            patch.object(host_storage, "data_root", return_value=self.root),
+            patch.object(host_storage, "plugin_db",
+                         side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+            patch.object(plugin, "_child_kind", return_value=None),
+            patch.object(plugin, "_session_scope", return_value=("chat-a", "dm")),
+        ):
+            out = json.loads(handlers["memory_recall"]({"day": "2026-11-01", "kind": "life"}))
+        self.assertEqual(out["returned"], 1)
+        self.assertEqual(out["shown"][0]["kind"], "life")
+
     def test_journal_gate_is_per_chat_and_speaker_is_per_session(self):
         from test_events import plugin, RecordingContext
         import importlib
