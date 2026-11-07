@@ -98,7 +98,7 @@ def _session_scope(session_id: str) -> tuple[str, str]:
         return cached
     chat_id, chat_type = "", ""
     try:
-        home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+        home = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes"))
         connection = sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True, timeout=1)
         try:
             row = connection.execute(
@@ -125,7 +125,7 @@ def _session_source(session_id: str) -> str | None:
         return cached
     source: str | None = ""
     try:
-        home = Path(os.environ.get("HERMES_HOME") or (Path.home() / ".hermes"))
+        home = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes"))
         connection = sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True, timeout=1)
         try:
             row = connection.execute(
@@ -428,16 +428,38 @@ def _listening_pids(port: str) -> list[int]:
     return pids
 
 
+def _remember_child(session_id: str, kind: str | None) -> None:
+    """Cache one child lookup and keep the cache from growing forever.
+
+    Background sessions are one-shot; evict the oldest entry (dicts preserve
+    insertion order).
+    """
+    _CHILD_SESSIONS[session_id] = kind
+    while len(_CHILD_SESSIONS) > _MAX_CHILD_SESSIONS:
+        oldest = next(iter(_CHILD_SESSIONS))
+        _CHILD_SESSIONS.pop(oldest)
+        _CHILD_CHATS.pop(oldest, None)
+
+
 def _child_kind(session_id: str) -> str | None:
     """Which background child this session is ("study"/"task"/"search"), else None.
 
     A child is a gateway-hosted one-shot session, so env vars set by the spawner never
     reach it; the prompt tag does, and it survives the queue.
+
+    The tag is user text, so anyone can type it. Only a session the host itself
+    opened as a one-shot can be treated as a child; a chat that merely contains
+    "[lover-child:...]" stays an ordinary chat and keeps its own scope.
     """
     if not session_id:
         return None
     if session_id in _CHILD_SESSIONS:
         return _CHILD_SESSIONS[session_id]
+    source = _session_source(session_id)
+    if source != "oneshot":
+        if source is not None:  # remember "not a child"; on a read error, retry later
+            _remember_child(session_id, None)
+        return None
     db = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
     try:
         with sqlite3.connect(str(db), timeout=2) as conn:
@@ -458,13 +480,7 @@ def _child_kind(session_id: str) -> str | None:
             kind = kind.strip() or None
             if chat.strip():
                 _CHILD_CHATS[session_id] = chat.strip()
-    _CHILD_SESSIONS[session_id] = kind
-    # Background sessions are one-shot; keep the cache from growing forever, and evict
-    # the oldest entry (dicts preserve insertion order).
-    while len(_CHILD_SESSIONS) > _MAX_CHILD_SESSIONS:
-        oldest = next(iter(_CHILD_SESSIONS))
-        _CHILD_SESSIONS.pop(oldest)
-        _CHILD_CHATS.pop(oldest, None)
+    _remember_child(session_id, kind)
     return kind
 
 
@@ -1896,9 +1912,13 @@ def register(ctx) -> None:
                     return json.dumps({"ok": False, "error": "phrase rejected: " + problem},
                                       ensure_ascii=False)
             if _child_kind(session_id) is not None:
-                # Background work belongs to the chat that asked for it; without a tag it is
-                # global, never the child's own throwaway local session.
-                chat_id, chat_type = _child_chat(session_id), "child"
+                # Background work belongs to the chat that asked for it. A child whose
+                # tag names no chat has nowhere safe to write: refuse instead of
+                # falling back to the global bucket.
+                chat_id = _child_chat(session_id)
+                if not chat_id:
+                    raise ValueError("this background session has no chat scope; refusing to write")
+                chat_type = "child"
             else:
                 chat_id, chat_type = _session_scope(session_id)
             result = memory_store().write(args.get("text"), kind=args.get("kind", "note"),
@@ -1921,6 +1941,8 @@ def register(ctx) -> None:
         try:
             if _child_kind(session_id) is not None:
                 chat_id = _child_chat(session_id)
+                if not chat_id:
+                    raise ValueError("this background session has no chat scope; refusing an unscoped recall")
             else:
                 chat_id, _chat_type = _session_scope(session_id)
             source = _session_source(session_id)

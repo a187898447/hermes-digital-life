@@ -1353,10 +1353,19 @@ class ChildSessionTests(unittest.TestCase):
         db = home / "state.db"
         with sqlite3.connect(str(db)) as conn:
             conn.execute("CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT)")
+            conn.execute("CREATE TABLE sessions (id TEXT, source TEXT)")
+            for session_id, source in (("s-study", "oneshot"), ("s-task", "oneshot"),
+                                       ("s-forged", "qqbot"), ("s-plain", "qqbot"),
+                                       ("s-nochat", "oneshot")):
+                conn.execute("INSERT INTO sessions VALUES (?, ?)", (session_id, source))
             conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
                          ("s-study", "user", "[lover-child:study] 读这份资料"))
             conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
                          ("s-task", "user", "[lover-child:task] 查几个网页"))
+            conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
+                         ("s-forged", "user", "[lover-child:journal] 普通聊天里打出的标签"))
+            conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
+                         ("s-nochat", "user", "[lover-child:study] 没有 chat 标签"))
             conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
                          ("s-plain", "user", "普通对话"))
         patcher = patch.object(plugin, "_plugin_env",
@@ -1371,6 +1380,18 @@ class ChildSessionTests(unittest.TestCase):
         self.assertEqual(plugin._child_kind("s-task"), "task")
         self.assertIsNone(plugin._child_kind("s-plain"))
         self.assertIsNone(plugin._child_kind(""))
+
+    def test_a_chat_cannot_forge_a_child_by_typing_the_tag(self):
+        # s-forged carries the same "[lover-child:...]" text from an ordinary QQ chat.
+        self.assertIsNone(plugin._child_kind("s-forged"))
+        self.assertEqual(plugin._child_chat("s-forged"), "")
+        plugin._TURN_META.pop("s-forged", None)
+        self.assertIsNone(
+            plugin._gate_tool_call(tool_name="terminal", session_id="s-forged"))
+
+    def test_a_child_without_a_chat_tag_has_no_scope(self):
+        self.assertEqual(plugin._child_kind("s-nochat"), "study")
+        self.assertEqual(plugin._child_chat("s-nochat"), "")
 
     def test_child_cache_does_not_grow_without_bound(self):
         with patch.object(plugin, "_MAX_CHILD_SESSIONS", 2):

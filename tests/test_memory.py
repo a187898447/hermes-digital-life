@@ -197,7 +197,7 @@ class MemoryTests(unittest.TestCase):
                           if e["text"] == "子会话写的一条"))
         self.assertEqual(entry["chat_id"], "chat-9")
 
-    def test_a_child_without_a_chat_tag_writes_globally_not_into_its_local_session(self):
+    def test_a_child_without_a_chat_tag_is_refused_instead_of_writing_globally(self):
         from test_events import plugin, RecordingContext
         import importlib
         host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
@@ -215,10 +215,10 @@ class MemoryTests(unittest.TestCase):
         ):
             result = json.loads(handlers["memory_write"](
                 {"text": "没带 chat 的子会话写的", "kind": "fact"}, session_id="child-2"))
-        self.assertTrue(result["ok"])
-        entry = next(iter(e for e in self.store.read_entries().values()
-                          if e["text"] == "没带 chat 的子会话写的"))
-        self.assertEqual(entry["chat_id"], "")
+        self.assertFalse(result["ok"])
+        self.assertIn("no chat scope", result["error"])
+        self.assertFalse(any(e["text"] == "没带 chat 的子会话写的"
+                             for e in self.store.read_entries().values()))
 
     def test_scheduled_runs_may_recall_a_named_chat(self):
         from test_events import plugin, RecordingContext
