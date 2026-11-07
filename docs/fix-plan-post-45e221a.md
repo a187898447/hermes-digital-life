@@ -14,8 +14,8 @@
    - P0-2：`reference` 是模型能填的任意字符串，却被当作可信文件路径。
    - P0-3：计费与执行顺序、以及「记不了账就放行」的 fail-open，让配额从约束变成装饰。
 2. 修法都落在**代码边界**：身份看 `state.db.sessions.source`（宿主写入），路径先 `resolve` 再 `is_relative_to`，计费先判上限再原子落盘。没有在提示词或输出上做过滤。
-3. 当前状态：P0、P1-4、P1-5、P2 全部改完，`596 tests OK`（原 557，新增 39 条回归）。
-   复核后补了两处：library 素材的 chat 归属（§2.1）、`_share_video` 的两级计费。
+3. 当前状态：P0、P1-4、P1-5、P2 全部改完，`599 tests OK`（原 557，新增 42 条回归）。
+   复核后补了：library 素材的 chat 归属（§2.1）、`_share_video` 的两级计费、以及 §3.1 的三处低危收口。
 4. P1-4/P1-5 的本质是**生活层和媒体目录默认全局**；修法是让「没有 chat 的产物」显式标注，而不是默认共享。
 
 ---
@@ -136,11 +136,25 @@
 - **P2-12 vendored 提示词完整性**（`digital_life/speech.py`）：profile 里的 shuorenhua 副本与插件内随包副本做 sha256 对照，
   不一致记日志并跳过（`load_skill` 与 `no_say` 都走 `_trusted_copy`）。回归：`tests/test_speech.py::SkillIntegrityTests`。
 
+### 3.1 复核后的低危收口
+
+- **子会话识别改为 nonce**（`digital_life/research.py`、`__init__.py`）：`issue_nonce`/`resolve_nonce`/`child_tag`
+  给每次 spawn 发一个随机 token 写进标签；`_child_kind` 只认自己发过的 nonce，不再依赖宿主会话来源名
+  （`source=="oneshot"` 改名不再静默失效）。用户手打 `[lover-child:...]` 拿不到 nonce，仍按普通会话处理。
+  回归：`tests/test_events.py::ChildSessionTests`（伪造标签仍拒、无 chat 标签仍无作用域）、`tests/test_research.py`、
+  `tests/test_memory.py` 的 journal 标签断言。
+- **带密钥的请求统一收口**（`digital_life/minimax.py`）：`_request`、`_download_file`、`transcribe` 全走 `_open_signed`——
+  只允许 `https`、拒绝重定向（避免 Authorization 被带到别处）、读上限不变。回归：`test_generated_audio_is_not_fetched_over_plain_http`、
+  `test_a_redirect_cannot_forward_the_key`、转写 multipart 测试改为 patch `_open_signed`。
+- **旧 outbox 生成物迁移**（`digital_life/outbox.py`）：`quarantine_legacy_generated()` 在 register 时每进程跑一次，
+  把共享根目录里 `video-*`/`speech-*`/`image-*` 的旧生成物移进 `legacy/`（子目录名 `resolve` 一律拒绝），
+  operator 手放的共享文件不受影响；`legacy/` 可随时手动清掉。回归：`tests/test_outbox.py::test_legacy_generated_media_leaves_the_shared_root`。
+
 ## 4. 发布
 
 1. 已按项拆 commit（每项测试独立可跑）：`f481d74` 子会话、`7476dd7` 图片 reference、`551da4f` 计费、
    `48cec99` 媒体目录归属、`ad31de9` 生活层归属、`f2f693f` 下载边界、`9985eb4` outbox 写入与清理、
-   `6040434` 日界、`478ad3d` 心跳/闸门/语音。
+   `6040434` 日界、`478ad3d` 心跳/闸门/语音；复核补漏：`2812b51` library 归属 + `_share_video` 计费。
 2. profile 的插件是软链，改动即线上代码；`/restart`（或 `hermes gateway restart`）后才加载。
 3. canary（照审查报告 124-130）：
    - 在普通 QQ 会话发 `[lover-child:journal]`，确认 memory 工具不再被放行、recall 不返回全库。
