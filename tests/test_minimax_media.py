@@ -81,7 +81,7 @@ class TranscriptionTests(unittest.TestCase):
             def __exit__(self, *exc):
                 return False
 
-        def fake_urlopen(request, timeout=0):
+        def fake_open(request, timeout=0):
             captured["url"] = request.full_url
             captured["body"] = request.data
             captured["headers"] = dict(request.header_items())
@@ -91,7 +91,7 @@ class TranscriptionTests(unittest.TestCase):
             audio = Path(tmp) / "voice.mp3"
             audio.write_bytes(b"ID3fake")
             with mock.patch.object(minimax, "keys", lambda: ["k1"]), \
-                    mock.patch.object(minimax.urllib.request, "urlopen", fake_urlopen):
+                    mock.patch.object(minimax, "_open_signed", fake_open):
                 result = minimax.transcribe(audio, language="en")
         self.assertEqual(result["text"], "hello there")
         self.assertEqual(result["duration"], 12.5)

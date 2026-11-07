@@ -60,6 +60,21 @@ def api_key() -> str:
     return found[0]
 
 
+class _RefuseRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect would replay our Authorization header at another URL."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001
+        raise MiniMaxError(f"MiniMax redirected the request ({code}); refusing to forward the key")
+
+
+def _open_signed(request: urllib.request.Request, timeout: float):
+    """Open a request that carries the API key: https only, no redirects followed."""
+    if not request.full_url.startswith("https://"):
+        raise MiniMaxError("refusing to send the MiniMax key over plain http")
+    opener = urllib.request.build_opener(_RefuseRedirect)
+    return opener.open(request, timeout=timeout)
+
+
 def _request(path: str, *, key: str = "", payload: dict | None = None,
              timeout: float = 60.0) -> dict:
     url = f"{API}{path}"
@@ -68,7 +83,7 @@ def _request(path: str, *, key: str = "", payload: dict | None = None,
     request.add_header("Authorization", f"Bearer {key or api_key()}")
     request.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
+        with _open_signed(request, timeout) as response:
             body = response.read(MAX_API_BYTES + 1)
     except urllib.error.HTTPError as exc:
         # The remote body may echo the request or contain provider internals; it goes
@@ -263,7 +278,7 @@ def create_speech(text: str, *, voice: str = "", speed: float = 1.0,
 def _download_file(file_id: str, *, key: str = "", chat_id: str = "") -> Path:
     url = f"{API}/v1/files/retrieve_content?file_id={urllib.request.quote(file_id)}"
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
-    with urllib.request.urlopen(request, timeout=180) as response:
+    with _open_signed(request, 180) as response:
         body = response.read(MAX_DOWNLOAD_BYTES + 1)
     if len(body) > MAX_DOWNLOAD_BYTES:
         raise MiniMaxError("the generated audio is larger than 200 MB")
@@ -365,7 +380,7 @@ def transcribe(path: Path, *, language: str = "") -> dict:
         if language.strip():
             request.add_header("language", language.strip())
         try:
-            with urllib.request.urlopen(request, timeout=300) as response:
+            with _open_signed(request, 300) as response:
                 parsed = json.loads(response.read(MAX_API_BYTES + 1) or b"{}")
         except urllib.error.HTTPError as exc:
             LOG.warning("MiniMax ASR HTTP %s: %s", exc.code,

@@ -163,10 +163,20 @@ class DownloadTests(unittest.TestCase):
             def __exit__(self, *_exc):
                 return False
 
-        with patch.object(hailuo.urllib.request, "urlopen", lambda req, timeout=180: Response()), \
+        with patch.object(hailuo, "_open_signed", lambda req, timeout: Response()), \
                 patch.object(hailuo.outbox, "write_bytes", fake_write):
             hailuo._download_file("file-9", key="k", chat_id="chat-1")
         self.assertEqual(written["chat_id"], "chat-1")
+
+    def test_generated_audio_is_not_fetched_over_plain_http(self):
+        with patch.object(hailuo, "API", "http://api.minimax.cn"):
+            with self.assertRaisesRegex(hailuo.MiniMaxError, "plain http"):
+                hailuo._download_file("f", key="k")
+
+    def test_a_redirect_cannot_forward_the_key(self):
+        with self.assertRaises(hailuo.MiniMaxError):
+            hailuo._RefuseRedirect().redirect_request(
+                None, None, 302, "Found", {}, "https://evil.example/x")
 
 
 class ReferenceTests(unittest.TestCase):
