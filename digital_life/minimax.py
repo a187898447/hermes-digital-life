@@ -9,13 +9,19 @@ from __future__ import annotations
 
 import base64
 import json
+import logging
 import os
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
 
-from . import outbox
+from . import netguard, outbox
+
+LOG = logging.getLogger(__name__)
+
+# A JSON API response is small except for a base64 image (up to 20 MB, ~27 MB encoded).
+MAX_API_BYTES = 48 * 1024 * 1024
 
 API = os.environ.get("MINIMAX_VIDEO_API", "https://api.minimax.cn").rstrip("/")
 MODEL = os.environ.get("HERMES_LOVER_VIDEO_MODEL", "MiniMax-Hailuo-2.3")
@@ -63,12 +69,17 @@ def _request(path: str, *, key: str = "", payload: dict | None = None,
     request.add_header("Content-Type", "application/json")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read()
+            body = response.read(MAX_API_BYTES + 1)
     except urllib.error.HTTPError as exc:
-        detail = exc.read()[:300].decode("utf-8", "replace")
-        raise MiniMaxError(f"MiniMax HTTP {exc.code}: {detail}") from exc
+        # The remote body may echo the request or contain provider internals; it goes
+        # to the log, never into a message a QQ user can read.
+        LOG.warning("MiniMax HTTP %s: %s", exc.code,
+                    exc.read()[:300].decode("utf-8", "replace"))
+        raise MiniMaxError(f"MiniMax HTTP {exc.code}") from exc
     except (urllib.error.URLError, OSError) as exc:
         raise MiniMaxError(f"MiniMax is unreachable: {exc}") from exc
+    if len(body) > MAX_API_BYTES:
+        raise MiniMaxError("MiniMax returned more data than this client accepts")
     try:
         parsed = json.loads(body or b"{}")
     except ValueError as exc:
@@ -162,10 +173,18 @@ def download(file_id: str, *, key: str = "", name: str = "", chat_id: str = "") 
     url = str(((data.get("file") or {}).get("download_url")) or "").strip()
     if not url:
         raise MiniMaxError("MiniMax returned no download url")
-    request = urllib.request.Request(url)
-    with urllib.request.urlopen(request, timeout=180) as response:
-        body = response.read(MAX_DOWNLOAD_BYTES + 1)
-    if len(body) > MAX_DOWNLOAD_BYTES:
+    if not url.lower().startswith("https://"):
+        raise MiniMaxError("MiniMax returned a download link that is not https")
+    # The signed URL is remote input: validate the host, re-check every redirect and
+    # never send the API key along (netguard builds its own opener without headers).
+    try:
+        body, _final, truncated = netguard.fetch_public(
+            url, max_bytes=MAX_DOWNLOAD_BYTES, timeout=180.0)
+    except netguard.BlockedURL as exc:
+        raise MiniMaxError(f"the download link was refused: {exc}") from None
+    except (urllib.error.URLError, OSError) as exc:
+        raise MiniMaxError(f"could not fetch the generated video: {exc}") from exc
+    if truncated:
         raise MiniMaxError("the generated video is larger than 200 MB")
     filename = name or f"hailuo-{file_id[:12]}.mp4"
     return outbox.write_bytes(filename, body, chat_id=chat_id)
@@ -178,7 +197,8 @@ IMAGE_RATIOS = ("1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9")
 IMAGE_MAX_BYTES = 20 * 1024 * 1024
 ASR_MODEL = os.environ.get("HERMES_LOVER_ASR_MODEL", "asr-1.0")
 ASR_MAX_BYTES = 50 * 1024 * 1024
-ASR_MAX_SECONDS = 500
+# The ASR API only reports duration after the upload, so the only pre-flight bound
+# that can actually stop work is the byte cap; there is no seconds check to keep.
 AUDIO_SUFFIXES = (".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".aiff", ".alac")
 
 
@@ -237,10 +257,10 @@ def create_speech(text: str, *, voice: str = "", speed: float = 1.0,
         sleep(POLL_SECONDS)
     if not file_id:
         raise MiniMaxError("the speech task did not finish in time")
-    return _download_file(file_id, key=key)
+    return _download_file(file_id, key=key, chat_id=chat_id)
 
 
-def _download_file(file_id: str, *, key: str = "") -> Path:
+def _download_file(file_id: str, *, key: str = "", chat_id: str = "") -> Path:
     url = f"{API}/v1/files/retrieve_content?file_id={urllib.request.quote(file_id)}"
     request = urllib.request.Request(url, headers={"Authorization": f"Bearer {key}"})
     with urllib.request.urlopen(request, timeout=180) as response:
@@ -346,10 +366,11 @@ def transcribe(path: Path, *, language: str = "") -> dict:
             request.add_header("language", language.strip())
         try:
             with urllib.request.urlopen(request, timeout=300) as response:
-                parsed = json.loads(response.read() or b"{}")
+                parsed = json.loads(response.read(MAX_API_BYTES + 1) or b"{}")
         except urllib.error.HTTPError as exc:
-            detail = exc.read()[:300].decode("utf-8", "replace")
-            last = MiniMaxError(f"MiniMax HTTP {exc.code}: {detail}")
+            LOG.warning("MiniMax ASR HTTP %s: %s", exc.code,
+                        exc.read()[:300].decode("utf-8", "replace"))
+            last = MiniMaxError(f"MiniMax HTTP {exc.code}")
             continue
         except (urllib.error.URLError, OSError, ValueError) as exc:
             last = MiniMaxError(f"MiniMax is unreachable: {exc}")

@@ -81,20 +81,18 @@ class WaitTests(unittest.TestCase):
 
 
 class DownloadTests(unittest.TestCase):
+    def _fetch(self, *, body=b"mp4", truncated=False, url="https://x/v.mp4"):
+        calls = {}
+
+        def fake_fetch(target, *, max_bytes, timeout):
+            calls["url"] = target
+            calls["max_bytes"] = max_bytes
+            calls["timeout"] = timeout
+            return body, target, truncated
+
+        return fake_fetch, calls
+
     def test_download_writes_into_the_outbox(self):
-        class Response:
-            def __init__(self, body):
-                self._body = body
-
-            def read(self, *_args):
-                return self._body
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_exc):
-                return False
-
         written = {}
 
         def fake_write(name, data, chat_id=""):
@@ -103,11 +101,14 @@ class DownloadTests(unittest.TestCase):
             written["chat_id"] = chat_id
             return "path/" + name
 
+        fetch, calls = self._fetch()
         with patch.object(hailuo, "_request",
                           lambda p, **k: {"file": {"download_url": "https://x/v.mp4"}}), \
-                patch.object(hailuo.urllib.request, "urlopen", lambda req, timeout=180: Response(b"mp4")), \
+                patch.object(hailuo.netguard, "fetch_public", fetch), \
                 patch.object(hailuo.outbox, "write_bytes", fake_write):
             path = hailuo.download("file-9", chat_id="chat-1")
+        self.assertEqual(calls["url"], "https://x/v.mp4")
+        self.assertEqual(calls["max_bytes"], hailuo.MAX_DOWNLOAD_BYTES)
         self.assertEqual(written["data"], b"mp4")
         self.assertEqual(written["chat_id"], "chat-1")
         self.assertTrue(written["name"].startswith("hailuo-file-9"))
@@ -119,9 +120,53 @@ class DownloadTests(unittest.TestCase):
             with self.assertRaises(hailuo.HailuoError):
                 hailuo.download("f")
 
+    def test_a_plain_http_link_is_refused(self):
+        with patch.object(hailuo, "_request",
+                          lambda p, **k: {"file": {"download_url": "http://x/v.mp4"}}), \
+                patch.object(hailuo.netguard, "fetch_public",
+                             side_effect=AssertionError("must not fetch")):
+            with self.assertRaisesRegex(hailuo.HailuoError, "not https"):
+                hailuo.download("f")
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_a_blocked_link_is_refused(self):
+        with patch.object(hailuo, "_request",
+                          lambda p, **k: {"file": {"download_url": "https://127.0.0.1/v.mp4"}}), \
+                patch.object(hailuo.netguard, "fetch_public",
+                             side_effect=hailuo.netguard.BlockedURL("non-public")):
+            with self.assertRaisesRegex(hailuo.HailuoError, "refused"):
+                hailuo.download("f")
+
+    def test_a_truncated_download_is_an_error(self):
+        fetch, _calls = self._fetch(truncated=True)
+        with patch.object(hailuo, "_request",
+                          lambda p, **k: {"file": {"download_url": "https://x/v.mp4"}}), \
+                patch.object(hailuo.netguard, "fetch_public", fetch), \
+                patch.object(hailuo.outbox, "write_bytes",
+                             side_effect=AssertionError("must not write")):
+            with self.assertRaisesRegex(hailuo.HailuoError, "200 MB"):
+                hailuo.download("f")
+
+    def test_speech_download_keeps_its_chat(self):
+        written = {}
+
+        def fake_write(name, data, chat_id=""):
+            written["chat_id"] = chat_id
+            return "path/" + name
+
+        class Response:
+            def read(self, *_args):
+                return b"mp3"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc):
+                return False
+
+        with patch.object(hailuo.urllib.request, "urlopen", lambda req, timeout=180: Response()), \
+                patch.object(hailuo.outbox, "write_bytes", fake_write):
+            hailuo._download_file("file-9", key="k", chat_id="chat-1")
+        self.assertEqual(written["chat_id"], "chat-1")
 
 
 class ReferenceTests(unittest.TestCase):
@@ -204,7 +249,7 @@ class SpeechTests(unittest.TestCase):
         self.assertEqual(path.name, "a.mp3")
         self.assertEqual(calls[0], "/v1/t2a_async_v2")
         self.assertIn("t2a_async_query_v2", calls[1])
-        dl.assert_called_once_with("f-1", key="k")
+        dl.assert_called_once_with("f-1", key="k", chat_id="")
 
     def test_a_failed_task_raises(self):
         fake, _ = self._fake([{"status": "failed"}])
