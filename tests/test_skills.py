@@ -75,3 +75,26 @@ class PracticeTests(unittest.TestCase):
         trace = life._finish_practice({"title": "练一练画图"}, {"type": "skill", "name": "make_image"}, 1.0)
         self.assertIn("画图", trace["text"])
         self.assertEqual(trace["source"]["name"], "make_image")
+
+
+class DegradeTests(unittest.TestCase):
+    def test_a_new_hand_gets_a_small_rough_copy(self):
+        import tempfile
+        from pathlib import Path as P
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as tmp:
+            src = P(tmp) / "a.jpg"
+            Image.new("RGB", (1024, 1024), (40, 80, 160)).save(src)
+            out = skills.degrade(src, 0)
+            self.assertNotEqual(out, src)
+            with Image.open(out) as img:
+                self.assertEqual(img.size, (384, 384))
+
+    def test_a_steady_hand_keeps_the_clean_picture(self):
+        import tempfile
+        from pathlib import Path as P
+        from PIL import Image
+        with tempfile.TemporaryDirectory() as tmp:
+            src = P(tmp) / "a.jpg"
+            Image.new("RGB", (512, 512), (40, 80, 160)).save(src)
+            self.assertEqual(skills.degrade(src, 3), src)

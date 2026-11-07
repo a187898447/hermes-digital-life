@@ -185,6 +185,11 @@ def _skill_craft(name: str, prompt: str) -> str:
     return digital_life.skills.craft(name, digital_life.skills.level(state, name), prompt)
 
 
+def _skill_level(name: str) -> int:
+    state = digital_life.storage.read_state(time.time() * 1000)
+    return digital_life.skills.level(state, name)
+
+
 def _skill_grant(name: str, *, ok: bool) -> None:
     now_ms = time.time() * 1000
     digital_life.storage.update_state(now_ms, lambda state: _note_skill(state, name, ok, now_ms))
@@ -916,11 +921,13 @@ def _make_image(args, session_id="", **kwargs):
     caption = " ".join(str(args.get("caption") or "").split())
 
     skilled = _skill_craft("make_image", prompt)
+    level = _skill_level("make_image")
 
     def work() -> None:
         from .digital_life import budget as budget_mod, minimax as media_mod  # noqa: PLC0415
         try:
             path = media_mod.create_image(skilled, aspect_ratio=aspect, reference=reference)
+            path = digital_life.skills.degrade(path, level)
             _send_media_now(chat_id, path, caption)
             _skill_grant("make_image", ok=True)
         except Exception as exc:  # noqa: BLE001
