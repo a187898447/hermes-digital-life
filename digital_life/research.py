@@ -33,9 +33,16 @@ _ACTIVE: set[str] = set()
 _SLOTS = threading.BoundedSemaphore(MAX_CHILDREN)
 
 
-def child_marker(kind: str) -> str:
-    """The prompt prefix a child session carries; the plugin reads it back from state.db."""
-    return f"[lover-child:{kind}]"
+def child_marker(kind: str, chat: str = "") -> str:
+    """The prompt prefix a child session carries; the plugin reads it back from state.db.
+
+    The origin chat rides along so background work writes memories where the
+    conversation can see them, instead of under the child's own local session.
+    """
+    tag = f"[lover-child:{kind}"
+    if chat:
+        tag += f" chat={chat}"
+    return tag + "]"
 
 
 def spawn_child(kind: str, prompt: str, *, timeout: float,

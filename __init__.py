@@ -1514,9 +1514,12 @@ def register(ctx) -> None:
                 if problem:
                     return json.dumps({"ok": False, "error": "phrase rejected: " + problem},
                                       ensure_ascii=False)
-            chat_id, chat_type = _session_scope(session_id)
-            if not chat_id:
-                chat_id = _child_chat(session_id)
+            if _child_kind(session_id) is not None:
+                # Background work belongs to the chat that asked for it; without a tag it is
+                # global, never the child's own throwaway local session.
+                chat_id, chat_type = _child_chat(session_id), "child"
+            else:
+                chat_id, chat_type = _session_scope(session_id)
             result = memory_store().write(args.get("text"), kind=args.get("kind", "note"),
                                           weight=args.get("weight"), session_id=session_id,
                                           day=args.get("day") or None,
@@ -1535,16 +1538,18 @@ def register(ctx) -> None:
 
     def memory_recall(args, session_id="", **kwargs):
         try:
-            chat_id, _chat_type = _session_scope(session_id)
-            if not chat_id:
+            if _child_kind(session_id) is not None:
                 chat_id = _child_chat(session_id)
+            else:
+                chat_id, _chat_type = _session_scope(session_id)
             source = _session_source(session_id)
             explicit = str(args.get("chat_id") or "").strip()
             if explicit:
                 if source != "cron":
                     raise ValueError("chat_id is only accepted from scheduled runs")
                 chat_id = explicit
-            elif not chat_id and session_id and (source is None or source in ("", "qqbot")):
+            elif (not chat_id and session_id and _child_kind(session_id) is None
+                  and (source is None or source in ("", "qqbot"))):
                 raise ValueError("cannot verify the calling session; refusing an unscoped recall")
             try:
                 wanted = int(args.get("k", 8) or 8)
@@ -1738,7 +1743,7 @@ def register(ctx) -> None:
             return json.dumps({"ok": False, "error": "no chat context for this session"})
         from .digital_life import research as _research  # noqa: PLC0415
         prompt = (
-            _research.child_marker("study") + " 你在后台读完一份资料，不要把原文贴回来。用 read_source 读 "
+            _research.child_marker("study", chat_id) + " 你在后台读完一份资料，不要把原文贴回来。用 read_source 读 "
             f"{source} ，一次读不完就用 name 加 part 续读直到 finished；材料写了星期就用 applies_dow"
             "（0=周一…3=周四…6=周日）。"
             "先判断材料类型：教程/文档/知识 → 提炼可复用的做法；段子库、文案集、小说 → 提炼"
@@ -1784,7 +1789,7 @@ def register(ctx) -> None:
         from .digital_life import research as _research  # noqa: PLC0415
         loop_id = str(args.get("loop_id") or "").strip()
         started = _research.spawn_task(
-            _research.child_marker("task") + " " + task, chat_id, _send_qq,
+            _research.child_marker("task", chat_id) + " " + task, chat_id, _send_qq,
             on_done=_task_done(chat_id, subject=f"「{task[:40]}」", loop_id=loop_id))
         if not started:
             return json.dumps({"ok": False, "error": "a background task for this chat is already running"})

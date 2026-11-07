@@ -47,6 +47,8 @@ class SpawnCommandTests(unittest.TestCase):
 
     def test_marker_is_what_the_plugin_reads_back(self):
         self.assertEqual(research.child_marker("study"), "[lover-child:study]")
+        self.assertEqual(research.child_marker("study", "chat-1"),
+                         "[lover-child:study chat=chat-1]")
 
 
 class PolishTests(unittest.TestCase):

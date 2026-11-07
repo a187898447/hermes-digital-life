@@ -186,6 +186,7 @@ class MemoryTests(unittest.TestCase):
             patch.object(host_storage, "data_root", return_value=self.root),
             patch.object(host_storage, "plugin_db",
                          side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+            patch.object(plugin, "_child_kind", lambda session_id: "journal"),
             patch.object(plugin, "_session_scope", lambda session_id: ("", "")),
             patch.object(plugin, "_child_chat", lambda session_id: "chat-9"),
         ):
@@ -195,6 +196,29 @@ class MemoryTests(unittest.TestCase):
         entry = next(iter(e for e in self.store.read_entries().values()
                           if e["text"] == "子会话写的一条"))
         self.assertEqual(entry["chat_id"], "chat-9")
+
+    def test_a_child_without_a_chat_tag_writes_globally_not_into_its_local_session(self):
+        from test_events import plugin, RecordingContext
+        import importlib
+        host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default: True
+        plugin.register(ctx)
+        handlers = {tool["name"]: tool["handler"] for tool in ctx.tools}
+        with (
+            patch.object(host_storage, "data_root", return_value=self.root),
+            patch.object(host_storage, "plugin_db",
+                         side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+            patch.object(plugin, "_child_kind", lambda session_id: "study"),
+            patch.object(plugin, "_child_chat", lambda session_id: ""),
+            patch.object(plugin, "_session_scope", lambda session_id: ("local-child", "local")),
+        ):
+            result = json.loads(handlers["memory_write"](
+                {"text": "没带 chat 的子会话写的", "kind": "fact"}, session_id="child-2"))
+        self.assertTrue(result["ok"])
+        entry = next(iter(e for e in self.store.read_entries().values()
+                          if e["text"] == "没带 chat 的子会话写的"))
+        self.assertEqual(entry["chat_id"], "")
 
     def test_scheduled_runs_may_recall_a_named_chat(self):
         from test_events import plugin, RecordingContext
