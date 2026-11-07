@@ -155,6 +155,21 @@ class SpeechTests(unittest.TestCase):
         with self.assertRaises(hailuo.MiniMaxError):
             hailuo.create_speech("   ")
 
+    def test_the_default_voice_is_the_sweet_chinese_girl(self):
+        seen = {}
+
+        def fake(path, *, key="", payload=None, timeout=60.0):
+            if path == "/v1/t2a_async_v2":
+                seen.update(payload or {})
+                return {"task_id": "t-1"}
+            return {"status": "success", "file_id": "f-1"}
+
+        with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", fake), \
+                patch.object(hailuo, "_download_file", return_value=__import__("pathlib").Path("/tmp/a.mp3")):
+            hailuo.create_speech("你好", sleep=lambda *_a: None)
+        self.assertEqual(seen["voice_setting"]["voice_id"], hailuo.TTS_DEFAULT_VOICE)
+        self.assertEqual(hailuo.TTS_DEFAULT_VOICE, "Chinese_sweet_girl_nv1")
+
     def test_the_voice_and_speed_reach_the_task(self):
         seen = {}
 

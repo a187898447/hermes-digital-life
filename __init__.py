@@ -894,7 +894,7 @@ def _make_speech(args, session_id="", **kwargs):
     text = str(args.get("text") or "").strip()
     if not text:
         return json.dumps({"ok": False, "error": "nothing to say"}, ensure_ascii=False)
-    voice = str(args.get("voice") or "female-shaonv").strip()
+    voice = str(args.get("voice") or "").strip()  # empty means the module default
     try:
         speed = float(args.get("speed") or 1.0)
     except (TypeError, ValueError):
@@ -2400,7 +2400,7 @@ def register(ctx) -> None:
                     "text": {"type": "string", "maxLength": 5000,
                              "description": "Exactly what should be spoken."},
                     "voice": {"type": "string", "maxLength": 40,
-                              "description": "Optional voice id (default female-shaonv)."},
+                              "description": "Optional voice id (default Chinese_sweet_girl_nv1)."},
                     "speed": {"type": "number", "minimum": 0.5, "maximum": 2.0, "default": 1.0},
                     "caption": {"type": "string", "maxLength": 120,
                                 "description": "Optional one line to send with it."},

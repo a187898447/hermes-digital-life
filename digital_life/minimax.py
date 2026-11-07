@@ -159,12 +159,14 @@ AUDIO_SUFFIXES = (".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".opus", ".ai
 
 
 TTS_MODEL = os.environ.get("HERMES_LOVER_TTS_MODEL", "speech-2.8-hd")
-TTS_VOICES = ("female-shaonv", "female-yujie", "female-chengshu", "female-tianmei",
-              "male-qn-qingse", "male-qn-jingying", "audiobook_male_1", "audiobook_female_1")
+TTS_DEFAULT_VOICE = os.environ.get("HERMES_LOVER_TTS_VOICE", "Chinese_sweet_girl_nv1")
+TTS_VOICES = (TTS_DEFAULT_VOICE, "female-shaonv", "female-yujie", "female-chengshu",
+              "female-tianmei", "male-qn-qingse", "male-qn-jingying",
+              "audiobook_male_1", "audiobook_female_1")
 TTS_MAX_CHARS = 5000
 
 
-def create_speech(text: str, *, voice: str = "female-shaonv", speed: float = 1.0,
+def create_speech(text: str, *, voice: str = "", speed: float = 1.0,
                   timeout: float = TIMEOUT_SECONDS, sleep=time.sleep) -> Path:
     """Speak one piece of text into an mp3 in the outbox (async task + poll)."""
     body = " ".join(str(text or "").split())
@@ -177,7 +179,7 @@ def create_speech(text: str, *, voice: str = "female-shaonv", speed: float = 1.0
         "model": TTS_MODEL,
         "text": body,
         "language_boost": "auto",
-        "voice_setting": {"voice_id": voice or "female-shaonv", "speed": speed,
+        "voice_setting": {"voice_id": voice or TTS_DEFAULT_VOICE, "speed": speed,
                           "vol": 1, "pitch": 0},
         "audio_setting": {"audio_sample_rate": 32000, "bitrate": 128000,
                           "format": "mp3", "channel": 1},
