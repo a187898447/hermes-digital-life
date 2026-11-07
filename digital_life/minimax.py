@@ -79,8 +79,27 @@ def _request(path: str, *, key: str = "", payload: dict | None = None,
     return parsed if isinstance(parsed, dict) else {}
 
 
-def create(prompt: str, *, duration: int = 6, resolution: str = "768P") -> tuple[str, str]:
-    """Submit one text-to-video task and return its task id."""
+def _as_reference(value: str) -> str:
+    """A reference may be a URL, a data URI, or a local image path (sent as base64)."""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    if text.startswith(("http://", "https://", "data:")):
+        return text
+    path = Path(text).expanduser()
+    if not path.is_file():
+        raise MiniMaxError(f"reference image not found: {path}")
+    raw = path.read_bytes()
+    if len(raw) > 10 * 1024 * 1024:
+        raise MiniMaxError("the reference image is larger than 10 MB")
+    suffix = path.suffix.lower()
+    mime = {".png": "image/png", ".webp": "image/webp"}.get(suffix, "image/jpeg")
+    return f"data:{mime};base64," + base64.b64encode(raw).decode()
+
+
+def create(prompt: str, *, duration: int = 6, resolution: str = "768P",
+           first_frame: str = "") -> tuple[str, str]:
+    """Submit one video task (text, or image-to-video with a first frame)."""
     text = " ".join(str(prompt or "").split())
     if not text:
         raise MiniMaxError("the prompt is empty")
@@ -95,6 +114,9 @@ def create(prompt: str, *, duration: int = 6, resolution: str = "768P") -> tuple
         "resolution": resolution,
         "prompt_optimizer": True,
     }
+    frame = _as_reference(first_frame)
+    if frame:
+        payload["first_frame_image"] = frame
     available = keys()
     if not available:
         raise MiniMaxError("no MiniMax key is configured (MINIMAX_CN_API_KEY)")
@@ -240,8 +262,9 @@ def create_image(prompt: str, *, aspect_ratio: str = "1:1", reference: str = "")
         "response_format": "base64",
         "n": 1,
     }
-    if reference.strip():
-        payload["subject_reference"] = [{"type": "character", "image_file": reference.strip()}]
+    face = _as_reference(reference)
+    if face:
+        payload["subject_reference"] = [{"type": "character", "image_file": face}]
     available = keys()
     if not available:
         raise MiniMaxError("no MiniMax key is configured (MINIMAX_CN_API_KEY)")

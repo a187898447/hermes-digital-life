@@ -122,6 +122,37 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class ReferenceTests(unittest.TestCase):
+    def test_a_local_photo_becomes_a_data_uri(self):
+        import tempfile
+        from pathlib import Path as P
+        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as handle:
+            handle.write(b"\xff\xd8fakejpg")
+            name = handle.name
+        try:
+            uri = hailuo._as_reference(name)
+            self.assertTrue(uri.startswith("data:image/jpeg;base64,"))
+        finally:
+            P(name).unlink()
+
+    def test_a_url_passes_through_and_a_missing_file_raises(self):
+        self.assertEqual(hailuo._as_reference("https://x/y.jpg"), "https://x/y.jpg")
+        with self.assertRaises(hailuo.MiniMaxError):
+            hailuo._as_reference("/nope/missing.jpg")
+
+    def test_the_first_frame_reaches_the_task(self):
+        seen = {}
+
+        def fake(path, *, key="", payload=None, timeout=60.0):
+            seen.update(payload or {})
+            return {"task_id": "t-1"}
+
+        with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", fake), \
+                patch.object(hailuo, "_as_reference", lambda value: "data:image/jpeg;base64,AAA"):
+            hailuo.create("她回头", first_frame="/tmp/x.jpg")
+        self.assertIn("first_frame_image", seen)
+
+
 class SpeechTests(unittest.TestCase):
     def _fake(self, statuses):
         calls = []

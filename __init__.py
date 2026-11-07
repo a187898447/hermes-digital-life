@@ -162,6 +162,18 @@ _WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "�
 _PHASE_WORDS = {"sleep": "夜里", "morning": "早上", "day": "白天", "evening": "傍晚", "late": "深夜"}
 
 
+def _character_image() -> str:
+    """The still that anchors generated pictures and clips of the character."""
+    from .digital_life import outbox as _outbox  # noqa: PLC0415
+
+    root = _outbox.root_dir().parent / "character"
+    for name in ("ref-5.jpg", "ref-1.jpg", "canon.jpg", "canon.png"):
+        path = root / name
+        if path.is_file():
+            return str(path)
+    return ""
+
+
 def _skill_craft(name: str, prompt: str) -> str:
     """Pad the prompt with a crude style while the hands are still new."""
     state = digital_life.storage.read_state(time.time() * 1000)
@@ -892,6 +904,8 @@ def _make_image(args, session_id="", **kwargs):
                           ensure_ascii=False)
     aspect = str(args.get("aspect_ratio") or "1:1")
     reference = str(args.get("reference") or "")
+    if args.get("character") and not reference:
+        reference = _character_image()
     caption = " ".join(str(args.get("caption") or "").split())
 
     skilled = _skill_craft("make_image", prompt)
@@ -1001,9 +1015,11 @@ def _make_video(args, session_id="", **kwargs):
                            "error": f"今天已经做过 {VIDEO_GEN_PER_DAY} 个视频了，明天再说。"},
                           ensure_ascii=False)
     skilled = _skill_craft("make_video", prompt)
+    first_frame = _character_image() if args.get("character") else ""
     try:
         task_id, key = _minimax.create(skilled, duration=duration,
-                                     resolution=str(args.get("resolution") or "768P"))
+                                     resolution=str(args.get("resolution") or "768P"),
+                                     first_frame=first_frame)
     except Exception as exc:  # noqa: BLE001
         _budget.refund(f"videogen:{chat_id}")
         _skill_grant("make_video", ok=False)
@@ -2422,7 +2438,9 @@ def register(ctx) -> None:
                     "aspect_ratio": {"type": "string", "enum": ["1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9"],
                                      "default": "1:1"},
                     "reference": {"type": "string", "maxLength": 2000,
-                                  "description": "Optional public image URL to keep the subject from."},
+                                  "description": "Optional image (URL or path under the character folder) to keep the subject from."},
+                    "character": {"type": "boolean", "default": False,
+                                  "description": "True when the picture is of you: uses your saved character still as the reference."},
                     "caption": {"type": "string", "maxLength": 120,
                                 "description": "Optional one line to send with it."},
                 }, "required": ["prompt"], "additionalProperties": False}},
@@ -2478,6 +2496,8 @@ def register(ctx) -> None:
                     "duration": {"type": "integer", "enum": [6, 10], "default": 6,
                                  "description": "Length in seconds."},
                     "resolution": {"type": "string", "enum": ["768P", "1080P"], "default": "768P"},
+                    "character": {"type": "boolean", "default": False,
+                                  "description": "True when the clip is of you: uses your saved character still as the first frame."},
                 }, "required": ["prompt"], "additionalProperties": False}},
         handler=_make_video,
         description="Generate a short video and send it to the chat.",
