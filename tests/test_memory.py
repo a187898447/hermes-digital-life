@@ -601,6 +601,29 @@ class HybridRecallTests(unittest.TestCase):
         self.assertEqual(len(first), 2)
 
 
+class DayBoundaryTests(unittest.TestCase):
+    def _stamp(self, day: str, hour: int) -> float:
+        from datetime import datetime
+        return datetime.fromisoformat(f"{day} {hour:02d}:00").timestamp() * 1000
+
+    def test_a_moment_after_midnight_belongs_to_the_previous_day(self):
+        day = memory.day_key(self._stamp("2026-11-07", 2))
+        self.assertEqual(day, "2026-11-06")
+
+    def test_five_in_the_morning_starts_a_new_day(self):
+        self.assertEqual(memory.day_key(self._stamp("2026-11-07", 5)), "2026-11-07")
+        self.assertEqual(memory.day_key(self._stamp("2026-11-07", 4)), "2026-11-06")
+
+    def test_capture_lands_in_the_day_it_belongs_to(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            store = memory.MemoryStore(Path(tmp))
+            store.capture("用户：凌晨两点 / 助手：嗯", now_ms=self._stamp("2026-11-07", 2))
+            files = sorted(str(p.relative_to(tmp)) for p in (Path(tmp) / "memory").rglob("*.jsonl"))
+            self.assertEqual(files, ["memory/2026/11/2026-11-06.jsonl"])
+
+
 class CompactTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

@@ -15,7 +15,7 @@ import struct
 import threading
 import time
 from contextlib import closing, contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +30,20 @@ DAY_MS = 86_400_000
 # long-running chat cannot grow the palace without bound.
 TURN_DAILY_CAP = 200
 ARCHIVE_DAYS = 30
+DAY_START_HOUR = 5
+
+
+def day_key(now_ms: float | None = None) -> str:
+    """The day a moment belongs to.
+
+    A day starts at 05:00, not midnight: a diary written at 01:00 is still
+    yesterday's day. Keeping one rule means capture, quotas and the diary all
+    agree about which day a turn belongs to.
+    """
+    stamp = (now_ms if now_ms is not None else time.time() * 1000) / 1000
+    return (datetime.fromtimestamp(stamp) - timedelta(hours=DAY_START_HOUR)).strftime("%Y-%m-%d")
+
+
 DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8, "turn": 0.4,
                    "journal": 2.5, "summary": 1.4, "learned": 0.9, "life": 0.7}
 _WRITE_LOCK = threading.RLock()
@@ -549,8 +563,8 @@ class MemoryStore:
             view = view[written:]
 
     def _append(self, events, now_ms):
-        date = datetime.fromtimestamp(now_ms / 1000)
-        path = self.directory / date.strftime("%Y/%m/%Y-%m-%d.jsonl")
+        day = day_key(now_ms)
+        path = self.directory / day[:4] / day[5:7] / f"{day}.jsonl"
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
             data = path.read_bytes()
@@ -625,7 +639,7 @@ class MemoryStore:
         if type(enabled) is not bool: raise ValueError("memory.writes_enabled must be boolean")
         if not enabled: raise ValueError("Memory writes are disabled")
         now_ms = _now(now_ms)
-        date = date_override or datetime.fromtimestamp(now_ms / 1000).strftime("%Y-%m-%d")
+        date = date_override or day_key(now_ms)
         session_id = session_id or "unknown"
         with self._locked():
             self._append([], now_ms)
@@ -639,7 +653,7 @@ class MemoryStore:
             traced_refs = self._known(refs, entries) if kind == "journal" else []
             if kind == "journal":
                 from datetime import datetime as _dt  # noqa: PLC0415
-                if date >= _dt.fromtimestamp(now_ms / 1000).strftime("%Y-%m-%d"):
+                if date >= day_key(now_ms):
                     raise ValueError("journal 只能补写已经结束的日子；当天的事等明天再写")
                 stamps = len(_JOURNAL_CLOCK.findall(text))
                 if stamps >= 3:
@@ -693,7 +707,7 @@ class MemoryStore:
         if not enabled:
             return {"ok": False, "error": "Memory writes are disabled"}
         now_ms = _now(now_ms)
-        date = datetime.fromtimestamp(now_ms / 1000).strftime("%Y-%m-%d")
+        date = day_key(now_ms)
         session_id = session_id or "unknown"
         with self._locked():
             self._append([], now_ms)

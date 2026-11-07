@@ -1397,9 +1397,9 @@ def register(ctx) -> None:
         """
         if platform != "qqbot":
             return None
-        from datetime import datetime  # noqa: PLC0415
+        from .digital_life.memory import day_key  # noqa: PLC0415
 
-        today = datetime.now().strftime("%Y-%m-%d")
+        today = day_key()
         entries = memory_store().read_entries()
         by_day: dict[str, list[dict]] = {}
         for entry in entries.values():

@@ -47,6 +47,20 @@ from digital_life.runtime import record_api_error, record_request, record_turn
 from digital_life import storage
 
 
+def _day_ago(days: int) -> str:
+    """A day label relative to the memory day boundary (05:00), not the calendar."""
+    from datetime import date
+
+    from digital_life import memory as memory_mod
+    return (date.fromisoformat(memory_mod.day_key()) - __import__("datetime").timedelta(days=days)).isoformat()
+
+
+def _day_ago_noon(days: int) -> float:
+    from datetime import datetime
+
+    return datetime.fromisoformat(_day_ago(days)).replace(hour=12).timestamp() * 1000
+
+
 class RecordingContext:
     def __init__(self):
         self.tools = []
@@ -587,8 +601,8 @@ class QqBubbleTransformTests(unittest.TestCase):
 
     def test_missing_yesterday_diary_is_requested_on_the_first_qq_message(self):
         from datetime import datetime, timedelta
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        anchor = (datetime.now() - timedelta(days=1)).replace(hour=12).timestamp() * 1000
+        yesterday = _day_ago(1)
+        anchor = _day_ago_noon(1)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ctx = RecordingContext()
@@ -617,8 +631,8 @@ class QqBubbleTransformTests(unittest.TestCase):
 
     def test_diary_covers_the_newest_recorded_day_after_a_gap(self):
         from datetime import datetime, timedelta
-        older = (datetime.now() - timedelta(days=4)).strftime("%Y-%m-%d")
-        older_anchor = (datetime.now() - timedelta(days=4)).replace(hour=12).timestamp() * 1000
+        older = _day_ago(4)
+        older_anchor = _day_ago_noon(4)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ctx = RecordingContext()
@@ -644,12 +658,12 @@ class QqBubbleTransformTests(unittest.TestCase):
             prompt = spawned.call_args.args[0]
             self.assertIn("日记", prompt)
             self.assertIn(older, prompt)
-            self.assertNotIn((datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d"), prompt)
+            self.assertNotIn(_day_ago(1), prompt)
 
     def test_missing_atomic_facts_are_requested_from_that_days_turns(self):
         from datetime import datetime, timedelta
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        anchor = (datetime.now() - timedelta(days=1)).replace(hour=12).timestamp() * 1000
+        yesterday = _day_ago(1)
+        anchor = _day_ago_noon(1)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ctx = RecordingContext()
@@ -681,8 +695,8 @@ class QqBubbleTransformTests(unittest.TestCase):
 
     def test_fact_entries_do_not_trigger_the_fact_prompt(self):
         from datetime import datetime, timedelta
-        yesterday = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
-        anchor = (datetime.now() - timedelta(days=1)).replace(hour=12).timestamp() * 1000
+        yesterday = _day_ago(1)
+        anchor = _day_ago_noon(1)
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             ctx = RecordingContext()
