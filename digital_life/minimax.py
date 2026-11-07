@@ -172,6 +172,8 @@ def download(file_id: str, *, key: str = "", name: str = "") -> Path:
 
 
 IMAGE_MODEL = os.environ.get("HERMES_LOVER_IMAGE_MODEL", "image-01")
+IMAGE_LIVE_MODEL = "image-01-live"
+IMAGE_STYLES = ("漫画", "元气", "水彩", "赛博朋克", "清新", "暗黑", "古风", "油画")
 IMAGE_RATIOS = ("1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9")
 IMAGE_MAX_BYTES = 20 * 1024 * 1024
 ASR_MODEL = os.environ.get("HERMES_LOVER_ASR_MODEL", "asr-1.0")
@@ -248,20 +250,24 @@ def _download_file(file_id: str, *, key: str = "") -> Path:
     return outbox.write_bytes(f"speech-{int(time.time())}-{file_id[-6:]}.mp3", body)
 
 
-def create_image(prompt: str, *, aspect_ratio: str = "1:1", reference: str = "") -> Path:
+def create_image(prompt: str, *, aspect_ratio: str = "1:1", reference: str = "",
+                 model: str = IMAGE_MODEL, style: str = "") -> Path:
     """Text-to-image (or image-to-image with one reference URL); returns the saved jpeg."""
     text = " ".join(str(prompt or "").split())
     if not text:
         raise MiniMaxError("the prompt is empty")
     if aspect_ratio not in IMAGE_RATIOS:
         aspect_ratio = "1:1"
+    model = IMAGE_LIVE_MODEL if model == IMAGE_LIVE_MODEL else IMAGE_MODEL
     payload: dict = {
-        "model": IMAGE_MODEL,
+        "model": model,
         "prompt": text[:1500],
         "aspect_ratio": aspect_ratio,
         "response_format": "base64",
         "n": 1,
     }
+    if model == IMAGE_LIVE_MODEL and style in IMAGE_STYLES:
+        payload["style"] = {"style_type": style, "style_weight": 1}
     face = _as_reference(reference)
     if face:
         payload["subject_reference"] = [{"type": "character", "image_file": face}]

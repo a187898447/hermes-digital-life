@@ -153,6 +153,34 @@ class ReferenceTests(unittest.TestCase):
         self.assertIn("first_frame_image", seen)
 
 
+class ModelChoiceTests(unittest.TestCase):
+    def test_the_live_model_carries_its_style(self):
+        seen = {}
+
+        def fake(path, *, key="", payload=None, timeout=60.0):
+            seen.update(payload or {})
+            return {"data": {"image_base64": ["aGk="]}}
+
+        with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", fake), \
+                patch.object(hailuo.outbox, "write_bytes", lambda name, raw: "out.jpeg"):
+            hailuo.create_image("一只鲸鱼", model=hailuo.IMAGE_LIVE_MODEL, style="漫画")
+        self.assertEqual(seen["model"], "image-01-live")
+        self.assertEqual(seen["style"]["style_type"], "漫画")
+
+    def test_the_detailed_model_ignores_an_unknown_style(self):
+        seen = {}
+
+        def fake(path, *, key="", payload=None, timeout=60.0):
+            seen.update(payload or {})
+            return {"data": {"image_base64": ["aGk="]}}
+
+        with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", fake), \
+                patch.object(hailuo.outbox, "write_bytes", lambda name, raw: "out.jpeg"):
+            hailuo.create_image("一只猫", model=hailuo.IMAGE_MODEL, style="漫画")
+        self.assertEqual(seen["model"], "image-01")
+        self.assertNotIn("style", seen)
+
+
 class SpeechTests(unittest.TestCase):
     def _fake(self, statuses):
         calls = []

@@ -916,11 +916,16 @@ def _make_image(args, session_id="", **kwargs):
     caption = " ".join(str(args.get("caption") or "").split())
 
     skilled = _skill_craft("make_image", prompt)
+    look = str(args.get("look") or "auto")
+    anime = look == "anime" or (look == "auto" and bool(args.get("character")))
+    media_model = _minimax.IMAGE_LIVE_MODEL if anime else _minimax.IMAGE_MODEL
+    media_style = "漫画" if anime else ""
 
     def work() -> None:
         from .digital_life import budget as budget_mod, minimax as media_mod  # noqa: PLC0415
         try:
-            path = media_mod.create_image(skilled, aspect_ratio=aspect, reference=reference)
+            path = media_mod.create_image(skilled, aspect_ratio=aspect, reference=reference,
+                                          model=media_model, style=media_style)
             _send_media_now(chat_id, path, caption)
             _skill_grant("make_image", ok=True)
         except Exception as exc:  # noqa: BLE001
@@ -2450,6 +2455,8 @@ def register(ctx) -> None:
                                   "description": "Optional image (URL or path under the character folder) to keep the subject from."},
                     "character": {"type": "boolean", "default": False,
                                   "description": "True when the picture is of you: uses your saved character still as the reference."},
+                    "look": {"type": "string", "enum": ["auto", "anime", "photo"], "default": "auto",
+                             "description": "auto: hand-drawn when it is you, detailed otherwise. anime: image-01-live cartoon. photo: image-01."},
                     "caption": {"type": "string", "maxLength": 120,
                                 "description": "Optional one line to send with it."},
                 }, "required": ["prompt"], "additionalProperties": False}},
