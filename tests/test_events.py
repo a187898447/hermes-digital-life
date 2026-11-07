@@ -1597,6 +1597,24 @@ class BridgeProcessTests(unittest.TestCase):
         self.assertIsNone(proc.poll())
 
 
+class MediaLineTests(unittest.TestCase):
+    def test_the_attachment_line_survives_splitting(self):
+        path = "/tmp/outbox/image-1794066757-8371.jpeg"
+        text = ("画好了，台灯下那张。夜里就该有个亮着的东西陪着，不然屋子太空。\n"
+                f"MEDIA:{path}")
+        out = plugin._transform_llm_output(response_text=text, platform="qqbot", session_id="s-1")
+        self.assertIn(f"MEDIA:{path}", out or "")
+        self.assertNotIn("MEDIA:/tmp/outbox/image-1794066757-8371.jpeg\nMEDIA:", out or "")
+
+    def test_a_long_reply_keeps_the_whole_path_on_one_line(self):
+        path = "/tmp/outbox/image-1794066757-8371.jpeg"
+        text = "嗯。" * 40 + f"\nMEDIA:{path}"
+        out = plugin._transform_llm_output(response_text=text, platform="qqbot", session_id="s-2")
+        for line in (out or "").split("\n"):
+            if "MEDIA:" in line:
+                self.assertEqual(line, f"MEDIA:{path}")
+
+
 class VoiceLlmTests(unittest.TestCase):
     def test_voice_pass_uses_the_host_llm_facade(self):
         class _Llm:

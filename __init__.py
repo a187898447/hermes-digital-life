@@ -1623,11 +1623,26 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
     return final
 
 
+_MEDIA_LINE = re.compile(r"^\s*MEDIA:\S+")
+
+
+def _split_media_lines(text: str) -> tuple[str, list[str]]:
+    """Take attachment lines out of the text so splitting and rewriting leave them whole."""
+    kept: list[str] = []
+    media: list[str] = []
+    for line in str(text or "").split("\n"):
+        if _MEDIA_LINE.match(line):
+            media.append(line.strip())
+        else:
+            kept.append(line)
+    return "\n".join(kept).strip("\n"), media
+
+
 def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs) -> Optional[str]:
     """Give QQ replies the short-burst shape the persona uses; other surfaces untouched."""
     if platform != "qqbot":
         return None
-    cleaned = _qq_strip_labels(response_text or "")
+    cleaned, media = _split_media_lines(_qq_strip_labels(response_text or ""))
     rewritten = _qq_bubble_rewrite(cleaned) or (cleaned if cleaned != response_text else None)
     if not rewritten:
         return None
@@ -1643,7 +1658,9 @@ def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs)
     repaired = [_speech.repair(line) for line in final]
     repaired = [line for line in repaired if line.strip()]
     _remember_bubbles(key, repaired)
-    return "\n".join(repaired) if repaired else "嗯"
+    tail = [line for line in media if line]
+    body = "\n".join(repaired) if repaired else ("嗯" if not tail else "")
+    return "\n".join(([body] if body else []) + tail)
 
 
 def _sync_persona_card(root: Path | None = None) -> None:
