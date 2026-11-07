@@ -454,7 +454,9 @@ def _distill_prompt(chat_id: str, fact_day: str, journal_day: str) -> str:
     from .digital_life import research as _research  # noqa: PLC0415
 
     lines = [_research.child_tag("journal", chat_id),
-             "你是记忆维护子会话，只做下面这件事，不要回复用户、不要发消息。"]
+             "你是记忆维护子会话，只做下面这件事，不要回复用户、不要发消息。",
+             "工具就在你手上：memory_recall 和 memory_write。直接调用它们，"
+             "不要用 tool_search / tool_describe 去找工具。"]
     if fact_day:
         lines.append(
             f"1) 先用 memory_recall(day=\"{fact_day}\", kind=\"turn\") 读出那天的 turn id，"
@@ -465,6 +467,9 @@ def _distill_prompt(chat_id: str, fact_day: str, journal_day: str) -> str:
             f"先 memory_recall(day=\"{journal_day}\", kind=\"life\", k=8) 看那天你自己做过什么"
             f"（读的哪几页、想了什么）。那些是你做过的事，不是对方说的话：写日记时要用上，"
             f"写事实时不要跟聊天内容混成一件。")
+        lines.append(
+            f"如果 memory_recall 没找到那天的内容，不要反复换关键词重试（整件事最多查 3 次）；"
+            f"有 note/fact/turn 就用它们写，都没有也要用你知道的那一天写一篇，写完就停。")
         lines.append(
             f"2) 用 memory_recall(day=\"{journal_day}\", kind=\"fact\") 取 fact id，"
             f"再 memory_write(kind=\"journal\", day=\"{journal_day}\", text=\"…\", refs=[\"hp-…\"]) "
@@ -617,6 +622,12 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
         return {"action": "block",
                 "message": "MiniMax 的图片/视频/语音工具只给 MiniMax 模型用；现在不是，先别调。"}
     if kind is not None:
+        counts = _TOOL_TURNS.setdefault(session_id, {"total": 0, "zone": 0, "recall": 0,
+                                                     "last_write": ""})
+        if counts["total"] >= CHILD_TOOL_CALL_LIMIT:
+            return {"action": "block",
+                    "message": "后台会话最多调用 10 次工具；停下来，用手上已有的信息写完。"}
+        counts["total"] += 1  # blocked attempts count too, or a discovery loop never ends
         allow = {"study": {"read_source", "memory_write"},
                  "task": {"web_search", "web_extract", "read_source", "memory_write"},
                  "search": {"web_search", "web_extract"},
@@ -625,12 +636,6 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
         if tool_name not in allow:
             return {"action": "block",
                     "message": f"background {kind} sessions can only use their own tools; finish with what you have."}
-        counts = _TOOL_TURNS.setdefault(session_id, {"total": 0, "zone": 0, "recall": 0,
-                                                     "last_write": ""})
-        if counts["total"] >= CHILD_TOOL_CALL_LIMIT:
-            return {"action": "block",
-                    "message": "后台会话最多调用 10 次工具；停下来，用手上已有的信息写完。"}
-        counts["total"] += 1
         return None
     meta = _TURN_META.get(session_id) or {}
     if (meta.get("platform") or _session_source(session_id) or "") != "qqbot":

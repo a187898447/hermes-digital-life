@@ -1379,6 +1379,17 @@ class ToolBudgetTests(unittest.TestCase):
         self.assertIn("10", blocked["message"])
         plugin._TOOL_TURNS.pop("s-child", None)
 
+    def test_blocked_child_attempts_still_count_towards_the_cap(self):
+        plugin = self.hl
+        plugin._TOOL_TURNS.pop("s-child", None)
+        with patch.object(plugin, "_child_kind", return_value="journal"):
+            first = plugin._gate_tool_call(tool_name="tool_search", session_id="s-child")
+            rest = [plugin._gate_tool_call(tool_name="tool_search", session_id="s-child")
+                    for _ in range(10)]
+        self.assertIn("own tools", first["message"])
+        self.assertIn("10", rest[-1]["message"])
+        plugin._TOOL_TURNS.pop("s-child", None)
+
     def test_runaway_tool_loop_is_blocked(self):
         hook = self.hl._gate_tool_call
         for _ in range(8):
