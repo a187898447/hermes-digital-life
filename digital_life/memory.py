@@ -1222,8 +1222,11 @@ class MemoryStore:
                 candidates = [(row, rel) for row, rel in candidates
                               if row.get("chat_id", "") in ("", chat_id)]
             if day:
-                # Day lookups open the journal first, then that day's raw entries.
-                candidates = [(row, rel) for row, rel in candidates if row.get("date") == day]
+                # A day starts at 05:00: entries written before that change keep their old
+                # calendar date, so accept either the stored day or the day their clock says.
+                candidates = [(row, rel) for row, rel in candidates
+                              if row.get("date") == day
+                              or day_key(row.get("created_at") or 0) == day]
             if kind:
                 candidates = [(row, rel) for row, rel in candidates if row.get("kind") == kind]
         fts_rows = [(row, rel, score(row, now_ms, rel, cortisol, not query, query))

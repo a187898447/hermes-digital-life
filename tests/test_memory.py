@@ -683,6 +683,20 @@ class DayBoundaryTests(unittest.TestCase):
             self.assertEqual(files, ["memory/2026/11/2026-11-06.jsonl"])
 
 
+    def test_a_turn_written_before_the_boundary_change_is_found_under_the_early_day(self):
+        import datetime as _dt
+        with tempfile.TemporaryDirectory() as tmp:
+            early = int(_dt.datetime(2026, 11, 7, 0, 40).timestamp() * 1000)
+            store = memory.MemoryStore(Path(tmp))
+            store.write("用户：还没睡\n助手：早点睡。", kind="turn", session_id="s1",
+                        now_ms=early, chat_id="chat-1")
+            # what the old code left on disk: calendar date 11-07 at 00:40
+            for path in Path(tmp).rglob("*.jsonl"):
+                path.write_text(path.read_text().replace('"date": "2026-11-06"', '"date": "2026-11-07"'))
+            fresh = memory.MemoryStore(Path(tmp))
+            got = fresh.recall("还没睡", k=5, chat_id="chat-1", day="2026-11-06")
+            self.assertGreaterEqual(got["matched"], 1)
+
 class CompactTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
