@@ -157,7 +157,7 @@ def wait(task_id: str, *, key: str = "", timeout: float | None = None,
     raise MiniMaxError(f"still {last or 'queued'} after {TIMEOUT_SECONDS}s")
 
 
-def download(file_id: str, *, key: str = "", name: str = "") -> Path:
+def download(file_id: str, *, key: str = "", name: str = "", chat_id: str = "") -> Path:
     data = _request(f"/v1/files/retrieve?file_id={urllib.request.quote(file_id)}", key=key)
     url = str(((data.get("file") or {}).get("download_url")) or "").strip()
     if not url:
@@ -168,7 +168,7 @@ def download(file_id: str, *, key: str = "", name: str = "") -> Path:
     if len(body) > MAX_DOWNLOAD_BYTES:
         raise MiniMaxError("the generated video is larger than 200 MB")
     filename = name or f"hailuo-{file_id[:12]}.mp4"
-    return outbox.write_bytes(filename, body)
+    return outbox.write_bytes(filename, body, chat_id=chat_id)
 
 
 IMAGE_MODEL = os.environ.get("HERMES_LOVER_IMAGE_MODEL", "image-01")
@@ -191,7 +191,7 @@ TTS_MAX_CHARS = 5000
 
 
 def create_speech(text: str, *, voice: str = "", speed: float = 1.0,
-                  timeout: float = TIMEOUT_SECONDS, sleep=time.sleep) -> Path:
+                  timeout: float = TIMEOUT_SECONDS, sleep=time.sleep, chat_id: str = "") -> Path:
     """Speak one piece of text into an mp3 in the outbox (async task + poll)."""
     body = " ".join(str(text or "").split())
     if not body:
@@ -247,11 +247,12 @@ def _download_file(file_id: str, *, key: str = "") -> Path:
         body = response.read(MAX_DOWNLOAD_BYTES + 1)
     if len(body) > MAX_DOWNLOAD_BYTES:
         raise MiniMaxError("the generated audio is larger than 200 MB")
-    return outbox.write_bytes(f"speech-{int(time.time())}-{file_id[-6:]}.mp3", body)
+    return outbox.write_bytes(f"speech-{int(time.time())}-{file_id[-6:]}.mp3", body, chat_id=chat_id)
 
 
 def create_image(prompt: str, *, aspect_ratio: str = "1:1", reference: str = "",
-                 model: str = IMAGE_MODEL, style: str = "", negative: str = "") -> Path:
+                 model: str = IMAGE_MODEL, style: str = "", negative: str = "",
+                 chat_id: str = "") -> Path:
     """Text-to-image (or image-to-image with one reference URL); returns the saved jpeg."""
     text = " ".join(str(prompt or "").split())
     if not text:
@@ -296,7 +297,8 @@ def create_image(prompt: str, *, aspect_ratio: str = "1:1", reference: str = "",
         if len(raw) > IMAGE_MAX_BYTES:
             last = MiniMaxError("the generated image is larger than 20 MB")
             continue
-        return outbox.write_bytes(f"image-{int(time.time())}-{abs(hash(text)) % 10000:04d}.jpeg", raw)
+        return outbox.write_bytes(f"image-{int(time.time())}-{abs(hash(text)) % 10000:04d}.jpeg",
+                                 raw, chat_id=chat_id)
     raise last or MiniMaxError("MiniMax returned no image")
 
 

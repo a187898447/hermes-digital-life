@@ -1160,6 +1160,18 @@ class ShareVideoTests(unittest.TestCase):
         self.assertIn("MEDIA:", self.sent[0]["message"])
         self.assertIn("新做的", self.sent[0]["message"])
 
+    def test_another_chats_media_is_not_sendable(self):
+        import importlib
+        hl = self.hl
+        outbox = importlib.import_module("hermes_plugins.digital_life.digital_life.outbox")
+        stolen = outbox.chat_dir("chat-2") / "private.mp4"
+        stolen.write_bytes(b"not yours")
+        with patch.object(self.budget, "spend", return_value=True) as spend:
+            out = json.loads(hl._share_video({"name": "private.mp4"}, session_id="s-video"))
+        self.assertFalse(out["ok"])
+        self.assertIn("no such file", out["error"])
+        spend.assert_not_called()
+
     def test_the_daily_cap_and_non_qq_platforms_are_enforced(self):
         hl = self.hl
         with patch.object(self.budget, "spend", return_value=False):
@@ -1699,6 +1711,7 @@ class MakeImageTests(unittest.TestCase):
         self.assertTrue(out["ok"])
         self.assertEqual(create.call_args.kwargs["reference"],
                          str((self.root / "character" / "ref-1.jpg").resolve()))
+        self.assertEqual(create.call_args.kwargs["chat_id"], "chat-1")
 
     def test_character_mode_falls_back_to_the_saved_still(self):
         hl = self.hl
@@ -1750,6 +1763,44 @@ class TranscribeTests(unittest.TestCase):
             out = json.loads(self.hl._transcribe_audio({"name": "a.mp3"}, session_id="s"))
         self.assertFalse(out["ok"])
         self.assertEqual(refunds, [("stt", "chat-1")])
+
+
+class AudioPathTests(unittest.TestCase):
+    def setUp(self):
+        import importlib
+        import tempfile
+        hl = sys.modules["hermes_plugins.digital_life"]
+        self.hl = hl
+        self.outbox = importlib.import_module("hermes_plugins.digital_life.digital_life.outbox")
+        self.library = importlib.import_module("hermes_plugins.digital_life.digital_life.library")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.inbox = self.root / "inbox"
+        self.inbox.mkdir()
+        self.patches = [
+            patch.object(self.outbox, "root_dir", return_value=self.root / "outbox"),
+            patch.object(self.library, "inbox_root", return_value=self.inbox),
+        ]
+        for item in self.patches:
+            item.start()
+            self.addCleanup(item.stop)
+
+    def test_own_audio_and_the_operator_inbox_are_readable(self):
+        own = self.outbox.chat_dir("chat-1") / "voice.mp3"
+        own.write_bytes(b"a")
+        self.assertEqual(self.hl._audio_path("voice.mp3", "chat-1"), own.resolve())
+        (self.inbox / "note.mp3").write_bytes(b"b")
+        self.assertEqual(self.hl._audio_path("note.mp3", "chat-1"), (self.inbox / "note.mp3").resolve())
+        self.assertEqual(self.hl._audio_path(str(own), "chat-1"), own.resolve())
+
+    def test_another_chat_and_the_shared_root_are_refused(self):
+        other = self.outbox.chat_dir("chat-2") / "voice.mp3"
+        other.write_bytes(b"b")
+        (self.root / "outbox" / "loose.mp3").write_bytes(b"c")
+        for name in ("voice.mp3", str(other), str(self.root / "outbox" / "loose.mp3")):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                self.hl._audio_path(name, "chat-1")
 
 
 class MediaOutsiderTests(unittest.TestCase):

@@ -851,7 +851,7 @@ def _share_video(args, session_id="", **kwargs):
         return json.dumps({"ok": False, "error": "videos only go to QQ chats"},
                           ensure_ascii=False)
     try:
-        path = _outbox.resolve(str(args.get("name") or ""))
+        path = _outbox.resolve(str(args.get("name") or ""), chat_id)
     except ValueError as exc:
         return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
     if not _budget.spend(f"video:{chat_id}", VIDEO_PER_DAY):
@@ -897,7 +897,7 @@ def _deliver_video(chat_id: str, task_id: str, prompt: str, key: str = "") -> No
     send = _host_send_message_tool()
     try:
         file_id = _minimax.wait(task_id, key=key)
-        path = _minimax.download(file_id, key=key)
+        path = _minimax.download(file_id, key=key, chat_id=chat_id)
     except Exception as exc:  # noqa: BLE001
         logger.warning("hermes-lover video task %s failed", task_id, exc_info=True)
         _skill_grant("make_video", ok=False)
@@ -958,7 +958,12 @@ def _media_quota_error(label: str, hit: str, chat_text: str) -> str:
     return chat_text
 
 
-def _audio_path(value: str):
+def _audio_path(value: str, chat_id: str):
+    """A local voice clip this chat may transcribe: its own media or the operator inbox.
+
+    The outbox root is shared by every chat, so it must not be readable here; the
+    inbox is the operator's deliberate hand-in.
+    """
     from .digital_life import library, outbox  # noqa: PLC0415
 
     raw = str(value or "").strip()
@@ -967,15 +972,15 @@ def _audio_path(value: str):
     if raw.startswith(("http://", "https://")):
         raise ValueError("only local audio files can be transcribed")
     path = Path(raw).expanduser()
+    roots = [outbox.chat_dir(chat_id), library.inbox_root()]
     if path.is_absolute():
         real = path.resolve()
-        roots = [outbox.root_dir().resolve(), library.inbox_root().resolve()]
-        if not any(real.is_relative_to(root) for root in roots):
-            raise ValueError("audio must live in the inbox or outbox folder")
+        if not any(real.is_relative_to(root.resolve()) for root in roots):
+            raise ValueError("audio must live in the inbox or your outbox folder")
         if not real.is_file():
             raise ValueError(f"no such audio file: {raw}")
         return real
-    for root in (library.inbox_root(), outbox.root_dir()):
+    for root in roots:
         candidate = (root / raw).resolve()
         if candidate.is_relative_to(root.resolve()) and candidate.is_file():
             return candidate
@@ -1112,6 +1117,7 @@ def _make_image(args, session_id="", **kwargs):
         try:
             path = media_mod.create_image(skilled, aspect_ratio=aspect, reference=reference,
                                           model=media_model, style=media_style,
+                                          chat_id=chat_id,
                                           negative=", ".join(x for x in (
                                               media_skills.negative_prompt(_skill_level("make_image")),
                                               CHARACTER_NEGATIVE if args.get("character") else "") if x))
@@ -1157,7 +1163,7 @@ def _make_speech(args, session_id="", **kwargs):
     def work() -> None:
         from .digital_life import minimax as media_mod  # noqa: PLC0415
         try:
-            path = media_mod.create_speech(text, voice=voice, speed=speed)
+            path = media_mod.create_speech(text, voice=voice, speed=speed, chat_id=chat_id)
             _send_media_now(chat_id, path, caption)
         except Exception as exc:  # noqa: BLE001
             _refund_media("speech", chat_id)
@@ -1182,7 +1188,7 @@ def _transcribe_audio(args, session_id="", **kwargs):
         return json.dumps({"ok": False, "error": "transcription is only available in QQ chats"},
                           ensure_ascii=False)
     try:
-        path = _audio_path(str(args.get("name") or args.get("path") or ""))
+        path = _audio_path(str(args.get("name") or args.get("path") or ""), chat_id)
     except ValueError as exc:
         return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
     hit = _charge_media("stt", chat_id, TRANSCRIBE_PER_DAY, TRANSCRIBE_PER_PROFILE)

@@ -53,6 +53,20 @@ class OutboxTests(unittest.TestCase):
                 outbox.resolve("big.mp4")
         self.assertIn("MB", str(caught.exception))
 
+    def test_a_chat_only_sees_its_own_media_and_the_shared_root(self):
+        mine = self.root / "shared.mp4"
+        mine.write_bytes(b"operator")
+        own = outbox.chat_dir("chat-a") / "voice.mp3"
+        own.write_bytes(b"a")
+        other = outbox.chat_dir("chat-b") / "voice.mp3"
+        other.write_bytes(b"b")
+        self.assertEqual(outbox.resolve("voice.mp3", "chat-a"), own.resolve())
+        self.assertEqual(outbox.resolve("shared.mp4", "chat-a"), mine.resolve())
+        self.assertNotEqual(outbox.resolve("voice.mp3", "chat-b"), own.resolve())
+        # A chat cannot name another chat's file by its hashed folder either.
+        with self.assertRaises(ValueError):
+            outbox.resolve(f"{other.parent.name}/voice.mp3", "chat-a")
+
     def test_write_bytes_stores_a_generated_clip(self):
         target = outbox.write_bytes("gen.mp4", b"bytes")
         self.assertEqual(target.read_bytes(), b"bytes")

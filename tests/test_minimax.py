@@ -97,17 +97,19 @@ class DownloadTests(unittest.TestCase):
 
         written = {}
 
-        def fake_write(name, data):
+        def fake_write(name, data, chat_id=""):
             written["name"] = name
             written["data"] = data
+            written["chat_id"] = chat_id
             return "path/" + name
 
         with patch.object(hailuo, "_request",
                           lambda p, **k: {"file": {"download_url": "https://x/v.mp4"}}), \
                 patch.object(hailuo.urllib.request, "urlopen", lambda req, timeout=180: Response(b"mp4")), \
                 patch.object(hailuo.outbox, "write_bytes", fake_write):
-            path = hailuo.download("file-9")
+            path = hailuo.download("file-9", chat_id="chat-1")
         self.assertEqual(written["data"], b"mp4")
+        self.assertEqual(written["chat_id"], "chat-1")
         self.assertTrue(written["name"].startswith("hailuo-file-9"))
         self.assertEqual(path, "path/" + written["name"])
 
@@ -162,7 +164,7 @@ class ModelChoiceTests(unittest.TestCase):
             return {"data": {"image_base64": ["aGk="]}}
 
         with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", fake), \
-                patch.object(hailuo.outbox, "write_bytes", lambda name, raw: "out.jpeg"):
+                patch.object(hailuo.outbox, "write_bytes", lambda name, raw, chat_id="": "out.jpeg"):
             hailuo.create_image("一只鲸鱼", model=hailuo.IMAGE_LIVE_MODEL, style="漫画")
         self.assertEqual(seen["model"], "image-01-live")
         self.assertEqual(seen["style"]["style_type"], "漫画")
@@ -175,7 +177,7 @@ class ModelChoiceTests(unittest.TestCase):
             return {"data": {"image_base64": ["aGk="]}}
 
         with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", fake), \
-                patch.object(hailuo.outbox, "write_bytes", lambda name, raw: "out.jpeg"):
+                patch.object(hailuo.outbox, "write_bytes", lambda name, raw, chat_id="": "out.jpeg"):
             hailuo.create_image("一只猫", model=hailuo.IMAGE_MODEL, style="漫画")
         self.assertEqual(seen["model"], "image-01")
         self.assertNotIn("style", seen)
