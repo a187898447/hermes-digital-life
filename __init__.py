@@ -1234,6 +1234,9 @@ def _make_image(args, session_id="", **kwargs):
     if hit:
         return json.dumps({"ok": False, "error": _media_quota_error(
             "图", hit, f"今天已经画过 {IMAGE_GEN_PER_DAY} 张了，明天再说。")}, ensure_ascii=False)
+    say = " ".join(str(args.get("say") or "").split())[:120]
+    if say:
+        _send_text_now(chat_id, say)
     if args.get("character"):
         prompt = f"{prompt}。{CHARACTER_BRIEF}"
         flavor = _mood_flavor()
@@ -1299,6 +1302,9 @@ def _make_speech(args, session_id="", **kwargs):
     if hit:
         return json.dumps({"ok": False, "error": _media_quota_error(
             "语音", hit, "今天已经说过 10 段了，明天再说。")}, ensure_ascii=False)
+    say = " ".join(str(args.get("say") or "").split())[:120]
+    if say:
+        _send_text_now(chat_id, say)
     caption = " ".join(str(args.get("caption") or "").split())
 
     from .digital_life import minimax as media_mod  # noqa: PLC0415
@@ -2860,8 +2866,8 @@ def register(ctx) -> None:
         schema={"name": "make_image",
                 "description": ("Draw one image from a text description with MiniMax image-01 "
                                 "and send it to this chat. Blocks for 20-40 seconds while it draws; "
-                                "the picture arrives right after your reply. If you want to say "
-                                "something before it lands, write that line before calling. At most "
+                                "the picture arrives right after your reply. Put your heads-up in "
+                                "`say`: it goes out before the drawing starts. At most "
                                 "six per chat per day. Only MiniMax models may call this."),
                 "parameters": {"type": "object", "properties": {
                     "prompt": {"type": "string", "maxLength": 1500,
@@ -2876,6 +2882,8 @@ def register(ctx) -> None:
                              "description": "auto: hand-drawn when it is you, detailed otherwise. anime: image-01-live cartoon. photo: image-01."},
                     "caption": {"type": "string", "maxLength": 120,
                                 "description": "Optional one line to send with it."},
+                    "say": {"type": "string", "maxLength": 120,
+                            "description": "One short heads-up in your own words to send immediately, before the 20-40 second drawing starts."},
                 }, "required": ["prompt"], "additionalProperties": False}},
         handler=_make_image,
         description="Generate an image and send it to the chat.",
@@ -2886,8 +2894,8 @@ def register(ctx) -> None:
         schema={"name": "make_speech",
                 "description": ("Speak a piece of text with MiniMax speech-2.8-hd and send the mp3 "
                                 "to this chat. Blocks for 10-20 seconds while it renders; the clip "
-                                "arrives right after your reply. If you want to say something before "
-                                "it lands, write that line before calling. At most 5000 characters "
+                                "arrives right after your reply. Put your heads-up in `say`: it goes "
+                                "out before the rendering starts. At most 5000 characters "
                                 "and ten clips per chat per day. Only MiniMax models may call this."),
                 "parameters": {"type": "object", "properties": {
                     "text": {"type": "string", "maxLength": 5000,
@@ -2897,6 +2905,8 @@ def register(ctx) -> None:
                     "speed": {"type": "number", "minimum": 0.5, "maximum": 2.0, "default": 1.0},
                     "caption": {"type": "string", "maxLength": 120,
                                 "description": "Optional one line to send with it."},
+                    "say": {"type": "string", "maxLength": 120,
+                            "description": "One short heads-up in your own words to send immediately, before the 10-20 second rendering starts."},
                 }, "required": ["text"], "additionalProperties": False}},
         handler=_make_speech,
         description="Speak text out loud and send the audio.",

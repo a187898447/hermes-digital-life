@@ -195,6 +195,26 @@ class HandlerTests(unittest.TestCase):
         self.assertEqual(len(drawn), 1)
         self.assertEqual(out["path"], "/tmp/x.jpeg")
 
+    def test_the_heads_up_line_goes_out_before_the_drawing(self):
+        from pathlib import Path as P
+        order = []
+
+        def fake_create(*args, **kwargs):
+            order.append("draw")
+            return P("/tmp/x.jpeg")
+
+        with mock.patch.object(self.minimax, "create_image", fake_create), \
+                mock.patch.object(self.hl, "_send_text_now",
+                                  lambda chat, text: order.append(("say", text, chat))), \
+                mock.patch.object(self.hl, "_charge_media", return_value=""), \
+                mock.patch.object(self.hl, "_run_media_later", lambda work: True):
+            out = json.loads(self.hl._make_image(
+                {"prompt": "一只乌龟", "say": "我画一只乌龟，等我一下"},
+                session_id="s-media"))
+        self.assertTrue(out["ok"])
+        self.assertEqual(order[0], ("say", "我画一只乌龟，等我一下", "chat-1"))
+        self.assertEqual(order[1], "draw")
+
     def test_a_picture_of_herself_carries_the_mood(self):
         from pathlib import Path as P
         seen = {}
