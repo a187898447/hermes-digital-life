@@ -45,12 +45,10 @@ class SpawnCommandTests(unittest.TestCase):
         with mock.patch.object(research.subprocess, "Popen", return_value=proc):
             self.assertEqual(research.run_task("x", kind="task"), "")
 
-    def test_marker_carries_a_nonce_the_plugin_can_verify(self):
-        marker = research.child_marker("study", "chat-1")
-        self.assertTrue(marker.startswith("[lover-child:study chat=chat-1 nonce="), marker)
-        token = marker[len("[lover-child:study chat=chat-1 nonce="):-1]
-        self.assertEqual(research.resolve_nonce(token), ("study", "chat-1"))
-        self.assertIsNone(research.resolve_nonce("not-a-nonce"))
+    def test_marker_is_a_plain_hint_the_host_row_backs_up(self):
+        self.assertEqual(research.child_marker("study", "chat-1"),
+                         "[lover-child:study chat=chat-1]")
+        self.assertEqual(research.child_marker("polish"), "[lover-child:polish]")
 
 
 class PolishTests(unittest.TestCase):

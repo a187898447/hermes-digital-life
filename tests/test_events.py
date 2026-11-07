@@ -1460,35 +1460,34 @@ class ChildSessionTests(unittest.TestCase):
         db = home / "state.db"
         with sqlite3.connect(str(db)) as conn:
             conn.execute("CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT)")
-            conn.execute("CREATE TABLE sessions (id TEXT, source TEXT)")
-            for session_id, source in (("s-study", "oneshot"), ("s-task", "oneshot"),
-                                       ("s-forged", "qqbot"), ("s-plain", "qqbot"),
-                                       ("s-nochat", "oneshot")):
-                conn.execute("INSERT INTO sessions VALUES (?, ?)", (session_id, source))
-            import importlib
-            research_mod = importlib.import_module(
-                "hermes_plugins.digital_life.digital_life.research")
-            study_nonce = research_mod.issue_nonce("study", "chat-1")
-            task_nonce = research_mod.issue_nonce("task", "chat-2")
-            solo_nonce = research_mod.issue_nonce("study")
-            conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
-                         ("s-study", "user",
-                          f"[lover-child:study chat=chat-1 nonce={study_nonce}] 读这份资料"))
-            conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
-                         ("s-task", "user",
-                          f"[lover-child:task chat=chat-2 nonce={task_nonce}] 查几个网页"))
-            conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
-                         ("s-forged", "user", "[lover-child:journal] 普通聊天里打出的标签"))
-            conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
-                         ("s-nochat", "user",
-                          f"[lover-child:study nonce={solo_nonce}] 没有 chat 标签"))
-            conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
-                         ("s-plain", "user", "普通对话"))
+            conn.execute("CREATE TABLE sessions (id TEXT, source TEXT, origin_json TEXT)")
+            local = '{"platform": "local"}'
+            for session_id, source, origin in (
+                    ("s-study", "oneshot", local),
+                    ("s-task", "oneshot", local),
+                    ("s-forged", "qqbot", '{"platform": "qqbot"}'),
+                    ("s-plain", "qqbot", '{"platform": "qqbot"}'),
+                    ("s-nochat", "oneshot", local),
+                    # The host renamed its one-shot source; the local origin still says so.
+                    ("s-renamed", "host-one-shot", local)):
+                conn.execute("INSERT INTO sessions VALUES (?, ?, ?)",
+                             (session_id, source, origin))
+            for session_id, text in (
+                    ("s-study", "[lover-child:study chat=chat-1] 读这份资料"),
+                    ("s-task", "[lover-child:task chat=chat-2] 查几个网页"),
+                    ("s-forged", "[lover-child:journal] 普通聊天里打出的标签"),
+                    ("s-nochat", "[lover-child:study] 没有 chat 标签"),
+                    ("s-plain", "普通对话"),
+                    ("s-renamed", "[lover-child:task chat=chat-3] 宿主来源改过名")):
+                conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
+                             (session_id, "user", text))
         patcher = patch.object(plugin, "_plugin_env",
                                side_effect=lambda name: str(home) if name == "HERMES_HOME" else "")
         patcher.start()
         self.addCleanup(patcher.stop)
         plugin._CHILD_SESSIONS.clear()
+        plugin._CHILD_GUESS_CACHE.clear()
+        self.addCleanup(plugin._CHILD_GUESS_CACHE.clear)
         self.addCleanup(plugin._CHILD_SESSIONS.clear)
 
     def test_marker_selects_the_kind(self):
@@ -1496,6 +1495,14 @@ class ChildSessionTests(unittest.TestCase):
         self.assertEqual(plugin._child_kind("s-task"), "task")
         self.assertIsNone(plugin._child_kind("s-plain"))
         self.assertIsNone(plugin._child_kind(""))
+
+    def test_a_child_is_recognised_from_the_host_row_alone(self):
+        # A child runs in its own process; nothing the parent kept in memory reaches it.
+        plugin._CHILD_SESSIONS.clear()
+        plugin._CHILD_GUESS_CACHE.clear()
+        self.assertEqual(plugin._child_kind("s-study"), "study")
+        self.assertEqual(plugin._child_chat("s-study"), "chat-1")
+        self.assertEqual(plugin._child_kind("s-renamed"), "task")
 
     def test_a_chat_cannot_forge_a_child_by_typing_the_tag(self):
         # s-forged carries the same "[lover-child:...]" text from an ordinary QQ chat.

@@ -121,6 +121,43 @@ def _session_scope(session_id: str) -> tuple[str, str]:
     return chat_id, chat_type
 
 
+_CHILD_GUESS_CACHE: dict[str, bool] = {}
+
+
+def _session_was_spawned(session_id: str) -> bool | None:
+    """True when the host recorded a one-shot/local session, None when it cannot be read.
+
+    The child process is a different OS process from the parent, so anything kept in
+    the parent's memory is invisible to it; this row is the shared, host-written fact.
+    """
+    if not session_id:
+        return False
+    cached = _CHILD_GUESS_CACHE.get(session_id)
+    if cached is not None:
+        return cached
+    try:
+        home = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes"))
+        connection = sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True, timeout=1)
+        try:
+            row = connection.execute(
+                "SELECT source, origin_json FROM sessions WHERE id=?", (session_id,)).fetchone()
+        finally:
+            connection.close()
+    except (sqlite3.Error, OSError):
+        return None
+    if row is None:
+        return None  # the row may not be committed yet; retry rather than deny
+    source = str(row[0] or "")
+    platform = ""
+    try:
+        platform = str((json.loads(row[1] or "{}") or {}).get("platform") or "")
+    except (TypeError, ValueError):
+        platform = ""
+    spawned = source == "oneshot" or platform == "local"
+    _remember(_CHILD_GUESS_CACHE, session_id, spawned)
+    return spawned
+
+
 _SOURCE_CACHE: dict[str, str] = {}
 
 
@@ -497,15 +534,21 @@ def _child_kind(session_id: str) -> str | None:
     A child is a gateway-hosted one-shot session, so env vars set by the spawner never
     reach it; the prompt tag does, and it survives the queue.
 
-    The tag text is user input, so the tag alone proves nothing. ``research`` issues a
-    random nonce per spawn and accepts only a tag whose nonce it still remembers; a
-    chat that merely types "[lover-child:...]" gets no nonce and stays ordinary. This
-    also survives the host renaming its one-shot session source.
+    The tag text is user input, so the tag alone proves nothing. The host writes the
+    authoritative facts into ``sessions`` (a one-shot source, or a local origin); every
+    process sharing state.db can read them, including the child process itself, which
+    is where this check actually runs. A chat that merely types the tag stays ordinary.
     """
     if not session_id:
         return None
     if session_id in _CHILD_SESSIONS:
         return _CHILD_SESSIONS[session_id]
+    spawned = _session_was_spawned(session_id)
+    if spawned is None:  # unreadable right now: retry later instead of caching a guess
+        return None
+    if not spawned:
+        _remember_child(session_id, None)
+        return None
     db = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
     try:
         with sqlite3.connect(str(db), timeout=2) as conn:
@@ -524,13 +567,8 @@ def _child_kind(session_id: str) -> str | None:
             fields = text[start + len(_CHILD_MARK):end].split()
             kind = (fields[0] if fields else "").strip() or None
             chat = next((f[len("chat="):] for f in fields if f.startswith("chat=")), "")
-            nonce = next((f[len("nonce="):] for f in fields if f.startswith("nonce=")), "")
-            from .digital_life import research as _research  # noqa: PLC0415
-            resolved = _research.resolve_nonce(nonce) if kind and nonce else None
-            if resolved is None or resolved[0] != kind:
-                kind = None
-            else:
-                _CHILD_CHATS[session_id] = resolved[1] or chat.strip()
+            if kind:
+                _CHILD_CHATS[session_id] = chat.strip()
     if kind is None:
         _CHILD_CHATS.pop(session_id, None)
     _remember_child(session_id, kind)
