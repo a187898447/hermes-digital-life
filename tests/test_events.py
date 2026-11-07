@@ -712,7 +712,8 @@ class QqBubbleTransformTests(unittest.TestCase):
             self.assertIn("原子事实", prompt)
             self.assertIn(yesterday, prompt)
             self.assertIn("sources", prompt)
-            self.assertIn("refs", prompt)
+            self.assertIn('kind="fact") 看看那天记下的事实', prompt)
+            self.assertNotIn("refs=", prompt)
 
     def test_fact_entries_do_not_trigger_the_fact_prompt(self):
         from datetime import datetime, timedelta

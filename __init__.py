@@ -472,11 +472,11 @@ def _distill_prompt(chat_id: str, fact_day: str, journal_day: str) -> str:
             f"如果 memory_recall 没找到那天的内容，不要反复换关键词重试（整件事最多查 3 次）；"
             f"有 note/fact/turn 就用它们写，都没有也要用你知道的那一天写一篇，写完就停。")
         lines.append(
-            f"2) 用 memory_recall(day=\"{journal_day}\", kind=\"fact\") 取 fact id，"
-            f"再 memory_write(kind=\"journal\", day=\"{journal_day}\", text=\"…\", refs=[\"hp-…\"]) "
-            f"（refs 必须是纯字符串的数组，不要包成对象；写完以工具返回 ok 为准，报参数错就去掉 refs 重写一次）"
+            f"2) 先用 memory_recall(day=\"{journal_day}\", kind=\"fact\") 看看那天记下的事实，"
+            f"再 memory_write(kind=\"journal\", day=\"{journal_day}\", text=\"…\") "
             f"写一篇 120–400 字第一人称日记：写你那天做了什么（包括自己读的、想的）、当时的心情，正常成段，"
-            f"不要按时间点罗列，不要流水账；日记写的是已经过完的那一天。")
+            f"不要按时间点罗列，不要流水账；日记写的是已经过完的那一天，不用写来源编号。"
+            f"写完以工具返回 ok 为准，报参数错就只保留 text 再写一次。")
     if fact_day and journal_day and fact_day != journal_day:
         lines.append(f"两个日期不同：{fact_day} 写事实，{journal_day} 写日记。")
     return "\n".join(lines)
