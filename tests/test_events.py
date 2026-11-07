@@ -1352,9 +1352,24 @@ class ToolBudgetTests(unittest.TestCase):
         # Handing the rest off is still allowed.
         self.assertIsNone(hook(tool_name="background_task", session_id="s-budget"))
 
+    def test_the_media_gate_follows_the_turn_model_not_the_last_one_seen(self):
+        hl = self.hl
+        hl._MODEL_SEEN["name"] = "MiniMax-M2"  # some earlier turn used it
+        hl._TURN_META["s-other"] = {"platform": "qqbot", "chat_id": "c1",
+                                    "model": "claude-sonnet-4"}
+        try:
+            blocked = hl._gate_tool_call(tool_name="make_image", session_id="s-other")
+            self.assertEqual(blocked["action"], "block")
+            self.assertIn("MiniMax", blocked["message"])
+            hl._TURN_META["s-other"]["model"] = "minimax-hailuo"
+            self.assertIsNone(hl._gate_tool_call(tool_name="make_image", session_id="s-other"))
+        finally:
+            hl._TURN_META.pop("s-other", None)
+            hl._MODEL_SEEN["name"] = ""
+
     def test_media_calls_count_toward_the_turn_budget(self):
         hook = self.hl._gate_tool_call
-        with patch.object(self.hl, "_is_minimax_model", lambda name="": True):
+        with patch.object(self.hl, "_is_minimax_model", lambda name="", session_id="": True):
             for _ in range(8):
                 self.assertIsNone(hook(tool_name="make_image", session_id="s-budget"))
             blocked = hook(tool_name="make_image", session_id="s-budget")
@@ -1826,7 +1841,7 @@ class MediaOutsiderTests(unittest.TestCase):
         self.assertIn("make_image", out["message"])
 
     def test_our_own_generators_pass_this_gate(self):
-        with patch.object(plugin, "_is_minimax_model", lambda name="": True):
+        with patch.object(plugin, "_is_minimax_model", lambda name="", session_id="": True):
             for name in ("make_image", "make_video", "make_speech"):
                 self.assertIsNone(plugin._gate_tool_call(name, session_id="s-quiet"))
 

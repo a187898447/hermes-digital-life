@@ -22,10 +22,10 @@ GAP_TENSION_BASE = 80.0
 GAP_TENSION_PER_HOUR = 5.0
 GAP_SIMILARITY = 0.6
 GAP_RESOLVED_TTL_DAYS = 30
-# An open loop that outlives a day without being closed by a tool result or an
-# epiphany has been carried long enough: asking about it again is nagging, so
-# the tick retires it instead of surfacing it forever.
-FADE_AFTER_HOURS = 12.0
+# An open loop that nobody closes is eventually nagging, but a chat going quiet
+# overnight is not abandonment: 12h retired loops before the other side woke up.
+# Three quiet days is the point where bringing it up again would be nagging.
+FADE_AFTER_HOURS = 72.0
 GAP_OPEN_WARN = 1000
 EPIPHANY_ECHO_MINUTES = 10.0
 SIBLING_WINDOW_MINUTES = 30.0

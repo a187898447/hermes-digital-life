@@ -28,12 +28,29 @@ def _storage():
 
 
 _LOCK = threading.Lock()
+_STEP_LOCK = threading.Lock()
 _THREAD: threading.Thread | None = None
 _STOP = threading.Event()
+_ENABLED: Any = None
+
+
+def set_enabled_probe(probe) -> None:
+    """Let the loop skip work when the host config turns the life layer off mid-run."""
+    global _ENABLED
+    _ENABLED = probe
 
 
 def once(now_ms: float | None = None, *, force: bool = False) -> dict[str, Any]:
     """One idempotent step: settle → life.step → pulses → mood."""
+    if not _STEP_LOCK.acquire(blocking=False):
+        return {"ran": False, "reason": "busy"}
+    try:
+        return _once(now_ms, force=force)
+    finally:
+        _STEP_LOCK.release()
+
+
+def _once(now_ms: float | None = None, *, force: bool = False) -> dict[str, Any]:
     now = float(now_ms if now_ms is not None else time.time() * 1000)
     from . import runtime
 
@@ -109,13 +126,24 @@ def running() -> bool:
         return _THREAD is not None and _THREAD.is_alive()
 
 
+def _enabled() -> bool:
+    probe = _ENABLED
+    try:
+        return True if probe is None else bool(probe())
+    except Exception:  # noqa: BLE001 - a broken probe must not stop the heartbeat
+        return True
+
+
 def _loop(interval: int) -> None:
     # Step once right away so a fresh plugin does not wait a whole interval.
-    try:
-        once()
-    except Exception:  # noqa: BLE001 - the heartbeat must never kill the gateway
-        LOG.exception("hermes-lover tick failed")
+    if _enabled():
+        try:
+            once()
+        except Exception:  # noqa: BLE001 - the heartbeat must never kill the gateway
+            LOG.exception("hermes-lover tick failed")
     while not _STOP.wait(interval):
+        if not _enabled():
+            continue
         try:
             once()
         except Exception:  # noqa: BLE001

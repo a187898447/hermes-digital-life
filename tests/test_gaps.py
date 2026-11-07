@@ -328,11 +328,17 @@ class FadeStaleTests(unittest.TestCase):
 
     def test_an_old_open_loop_is_retired(self):
         now = 10_000_000_000.0
-        state = self._state_with(now - 13 * 3_600_000)
+        state = self._state_with(now - 73 * 3_600_000)
         closed = gaps.fade_stale(state, now)
         self.assertEqual(closed, ["gap-old"])
         self.assertEqual(state["gaps"][0]["status"], "resolved")
         self.assertEqual(state["gaps"][0]["closed_by"], "faded")
+
+    def test_an_overnight_loop_is_not_stale(self):
+        now = 10_000_000_000.0
+        state = self._state_with(now - 13 * 3_600_000)
+        self.assertEqual(gaps.fade_stale(state, now), [])
+        self.assertEqual(state["gaps"][0]["status"], "open")
 
     def test_a_young_loop_is_kept(self):
         now = 10_000_000_000.0

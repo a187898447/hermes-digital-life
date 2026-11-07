@@ -187,6 +187,19 @@ def _github_listing(owner: str, repo: str, path: str, fetcher) -> str:
     return "\n".join(lines)
 
 
+def _write_json_atomic(path: Path, payload: dict) -> None:
+    """Readers (the tick thread, read_source) must never see half a JSON file."""
+    temp = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        temp.write_text(json.dumps(payload, ensure_ascii=False), "utf-8")
+        os.replace(temp, path)
+    finally:
+        try:
+            temp.unlink()
+        except OSError:
+            pass
+
+
 def ingest(source: str, *, fetcher=None) -> dict:
     """Copy a text file or URL into the library; returns its metadata.
 
@@ -231,7 +244,7 @@ def ingest(source: str, *, fetcher=None) -> dict:
         meta = {}
     meta.update({"title": title, "source": source, "file": book.name, "chars": len(text),
                  "pages": pages, "offset": int(meta.get("offset") or 0), "digest": digest})
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False), "utf-8")
+    _write_json_atomic(meta_path, meta)
     return meta
 
 
@@ -318,8 +331,7 @@ def read(meta: dict, part: int | None = None, max_chars: int = MAX_CHARS) -> dic
     merged["offset"] = max(int(stored.get("offset") or 0), end)
     merged.pop("position", None)
     try:
-        (root() / (Path(meta["file"]).stem + ".json")).write_text(
-            json.dumps(merged, ensure_ascii=False), "utf-8")
+        _write_json_atomic(root() / (Path(meta["file"]).stem + ".json"), merged)
         meta.clear()
         meta.update(merged)
     except OSError:

@@ -544,7 +544,7 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     if tool_name not in MEDIA_GENERATORS and tool_name.strip().lower() in MEDIA_OUTSIDERS:
         return {"action": "block",
                 "message": "画图、视频、配音只走 make_image / make_video / make_speech，别用别的生成工具。"}
-    if tool_name in MINIMAX_TOOLS and not _is_minimax_model():
+    if tool_name in MINIMAX_TOOLS and not _is_minimax_model(session_id=session_id):
         return {"action": "block",
                 "message": "MiniMax 的图片/视频/语音工具只给 MiniMax 模型用；现在不是，先别调。"}
     if kind is not None:
@@ -1449,9 +1449,16 @@ def _asks_time(request: dict) -> bool:
     return False
 
 
-def _is_minimax_model(name: str = "") -> bool:
-    """Whether the model answering right now is one of MiniMax's own."""
-    model = " ".join(str(name or _MODEL_SEEN.get("name") or "").split()).lower()
+def _is_minimax_model(name: str = "", session_id: str = "") -> bool:
+    """Whether the model answering *this turn* is one of MiniMax's own.
+
+    A process-wide "last model seen" leaked the permission across chats: one
+    MiniMax turn unlocked the media tools for every later session. The turn
+    record is the trustworthy source; the global is only a fallback for hosts
+    that call the gate without a request in between.
+    """
+    turn_model = str((_TURN_META.get(session_id) or {}).get("model") or "") if session_id else ""
+    model = " ".join(str(name or turn_model or _MODEL_SEEN.get("name") or "").split()).lower()
     return model.startswith("minimax")
 
 
@@ -1459,7 +1466,13 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     now_ms = time.time() * 1000
     model = request.get("model")
     if isinstance(model, str) and model.strip():
-        _MODEL_SEEN["name"] = model.strip()
+        seen = model.strip()
+        _MODEL_SEEN["name"] = seen
+        session = str(kwargs.get("session_id") or "")
+        if session:
+            meta = dict(_TURN_META.get(session) or {})
+            meta["model"] = seen
+            _remember(_TURN_META, session, meta)
     record_request(now_ms)
     scope, _chat_type = _session_scope(str(kwargs.get("session_id") or ""))
     state = digital_life.runtime.status_snapshot(now_ms, scope=scope or None)
@@ -1743,9 +1756,6 @@ def _mark_phrase_use(picked: list[tuple[str, str]], text: str) -> None:
         logger.debug("hermes-lover: phrase use not counted", exc_info=True)
 
 
-_VOICE_LLM_ERRORS: list[str] = []
-
-
 def _polish_lines(lines: list[str], recent: list[str] | None = None,
                   last_user: str = "", chat_id: str = "") -> Optional[list[str]]:
     """Run the tic-and-tone pass over the bubbles of one chat reply.
@@ -1760,7 +1770,7 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
     # "always" runs the tone pass on every chat reply; "auto" only when lint fires.
     if os.environ.get("HERMES_LOVER_POLISH_CHILD") == "1":
         return None
-    mode = os.environ.get("HERMES_LOVER_POLISH", "always").strip().lower()
+    mode = os.environ.get("HERMES_LOVER_POLISH", "auto").strip().lower()
     if mode == "0":
         return None
     recent = list(recent or [])
@@ -1783,7 +1793,6 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
                                 temperature=0.3, purpose="hermes-lover.voice")
             out = str(getattr(done, "text", "") or "").strip()
         except Exception as exc:  # noqa: BLE001 - any facade failure falls back to a child
-            _VOICE_LLM_ERRORS.append(str(exc)[:200])
             logger.warning("hermes-lover: in-process voice pass failed: %s", str(exc)[:200])
             out = ""
     if not out:  # older hosts without ctx.llm: fall back to a throwaway child
@@ -1928,9 +1937,13 @@ def register(ctx) -> None:
                              chat_type="")
 
     _life.set_writer(life_writer)
-    if _life_enabled(ctx) and os.environ.get("HERMES_LOVER_TICK", "1") != "0":
+    if os.environ.get("HERMES_LOVER_TICK", "1") != "0":
         minutes = int(ctx.get_config("life.tick_minutes", _tick.TICK_SECONDS // 60) or 5)
-        if _tick.start(max(1, minutes) * 60) and hasattr(ctx, "on_unload"):
+        minutes = max(1, min(60, minutes))  # the docs promise 1–60; a hot edit can't starve or flood the tick
+        # The loop stays up so turning life.enabled off and on again works without a reload;
+        # the probe makes it a no-op while the layer is off.
+        _tick.set_enabled_probe(lambda: _life_enabled(ctx))
+        if _tick.start(minutes * 60) and hasattr(ctx, "on_unload"):
             ctx.on_unload(_tick.stop)
 
     def journal_check(platform: str, chat_id: str = "") -> None:
