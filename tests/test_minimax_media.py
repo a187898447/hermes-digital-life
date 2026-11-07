@@ -133,6 +133,21 @@ class ModelGateTests(unittest.TestCase):
             self.assertEqual(plugin._MODEL_SEEN["name"], "MiniMax-M3.1-Flash")
 
 
+class QuietTurnTests(unittest.TestCase):
+    def test_a_finished_picture_waits_for_the_turn_to_end(self):
+        wake = importlib.import_module("hermes_plugins.digital_life.digital_life.wake")
+        calls = []
+
+        def busy():
+            calls.append("check")
+            return len(calls) < 3
+
+        with mock.patch.object(wake, "agent_running", busy), \
+                mock.patch.object(plugin.time, "sleep", lambda seconds: None):
+            plugin._wait_for_quiet_turn(grace=0)
+        self.assertGreaterEqual(len(calls), 3)
+
+
 class HandlerTests(unittest.TestCase):
     def setUp(self):
         import importlib

@@ -181,7 +181,10 @@ def _character_image() -> str:
 
 def _skill_craft(name: str, prompt: str) -> str:
     """Bound what the request may contain while the hands are still new."""
-    state = digital_life.storage.read_state(time.time() * 1000)
+    try:
+        state = digital_life.storage.read_state(time.time() * 1000)
+    except Exception:  # noqa: BLE001 - no host storage: draw with a steady hand
+        return prompt
     return digital_life.skills.craft(name, digital_life.skills.level(state, name), prompt)
 
 
@@ -880,7 +883,29 @@ def _run_media_later(work) -> bool:
     return True
 
 
+def _wait_for_quiet_turn(*, timeout: float = 120.0, grace: float = 1.5) -> None:
+    """Hold a finished picture until the reply of this turn has gone out.
+
+    The host delivers the model's text after the turn ends, while a media worker
+    sends as soon as the file exists; without this wait the picture can arrive
+    before the sentence that introduces it.
+    """
+    from .digital_life import wake as _wake  # noqa: PLC0415
+
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            busy = _wake.agent_running()
+        except Exception:  # noqa: BLE001 - never block delivery on a state read
+            break
+        if not busy:
+            break
+        time.sleep(0.5)
+    time.sleep(grace)
+
+
 def _send_media_now(chat_id: str, path, caption: str = "") -> None:
+    _wait_for_quiet_turn()
     sender = _host_send_message_tool()
     message = f"{caption}\nMEDIA:{path}" if caption else f"MEDIA:{path}"
     sender({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
