@@ -91,8 +91,9 @@ def _remember(cache: dict[str, object], key: str, value: object) -> None:
 _CAPTURE = None
 _JOURNAL_CHECK = None
 _CTX = None
-_JOURNAL_PROMPTED: set[tuple[str, str]] = set()
-_FACT_PROMPTED: set[tuple[str, str]] = set()
+_JOURNAL_PROMPTED: dict[tuple[str, str], float] = {}
+_FACT_PROMPTED: dict[tuple[str, str], float] = {}
+JOURNAL_RETRY_SECONDS = 1800.0  # a run that wrote nothing is retried after this
 _MEMORY_STORE: dict[str, object] = {}
 # Recall results are summaries for the model, not a dump of the palace.
 RECALL_SNIPPET_CHARS = 220
@@ -473,6 +474,7 @@ def _distill_prompt(chat_id: str, fact_day: str, journal_day: str) -> str:
         lines.append(
             f"2) 用 memory_recall(day=\"{journal_day}\", kind=\"fact\") 取 fact id，"
             f"再 memory_write(kind=\"journal\", day=\"{journal_day}\", text=\"…\", refs=[\"hp-…\"]) "
+            f"（refs 必须是纯字符串的数组，不要包成对象；写完以工具返回 ok 为准，报参数错就去掉 refs 重写一次）"
             f"写一篇 120–400 字第一人称日记：写你那天做了什么（包括自己读的、想的）、当时的心情，正常成段，"
             f"不要按时间点罗列，不要流水账；日记写的是已经过完的那一天。")
     if fact_day and journal_day and fact_day != journal_day:
@@ -2156,8 +2158,14 @@ def register(ctx) -> None:
                        if rows and not any(row.get("kind") == "journal" for row in rows)),
                       reverse=True)
         gate = chat_id or "-"
-        fact_day = owed_facts[0] if owed_facts and (owed_facts[0], gate) not in _FACT_PROMPTED else ""
-        journal_day = owed[0] if owed and (owed[0], gate) not in _JOURNAL_PROMPTED else ""
+        now = time.time()
+
+        def _recent(prompted: dict[tuple[str, str], float], day: str) -> bool:
+            stamped = prompted.get((day, gate))
+            return stamped is not None and now - stamped < JOURNAL_RETRY_SECONDS
+
+        fact_day = owed_facts[0] if owed_facts and not _recent(_FACT_PROMPTED, owed_facts[0]) else ""
+        journal_day = owed[0] if owed and not _recent(_JOURNAL_PROMPTED, owed[0]) else ""
         if not fact_day and not journal_day:
             return None
         from .digital_life import research as _research  # noqa: PLC0415
@@ -2166,9 +2174,9 @@ def register(ctx) -> None:
                                        kind="journal")
         if started:
             if fact_day:
-                _FACT_PROMPTED.add((fact_day, gate))
+                _FACT_PROMPTED[(fact_day, gate)] = now
             if journal_day:
-                _JOURNAL_PROMPTED.add((journal_day, gate))
+                _JOURNAL_PROMPTED[(journal_day, gate)] = now
         return None
     _JOURNAL_CHECK = journal_check
 

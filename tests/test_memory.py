@@ -169,6 +169,30 @@ class MemoryTests(unittest.TestCase):
         entry = next(iter(e for e in self.store.read_entries().values() if e["text"] == "无归属的一条"))
         self.assertEqual(entry.get("speaker"), "")
 
+    def test_a_journal_that_wrote_nothing_is_retried_after_the_cooldown(self):
+        from test_events import plugin, RecordingContext
+        import importlib
+        host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        research_mod = importlib.import_module("hermes_plugins.digital_life.digital_life.research")
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default: True
+        plugin.register(ctx)
+        plugin._JOURNAL_PROMPTED.clear()
+        plugin._FACT_PROMPTED.clear()
+        self.store.write("那天聊过一件旧事", kind="turn", day="2026-11-01")
+        with (
+            patch.object(host_storage, "data_root", return_value=self.root),
+            patch.object(host_storage, "plugin_db",
+                         side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+            patch.object(research_mod, "spawn_task", return_value=True) as spawned,
+            patch.object(memory, "day_key", return_value="2026-11-07"),
+        ):
+            plugin._JOURNAL_CHECK("qqbot", "chat-a")
+            self.assertEqual(spawned.call_count, 1)
+            plugin._JOURNAL_PROMPTED[("2026-11-01", "chat-a")] = time.time() - plugin.JOURNAL_RETRY_SECONDS - 1
+            plugin._JOURNAL_CHECK("qqbot", "chat-a")
+        self.assertEqual(spawned.call_count, 2)
+
     def test_journal_owed_days_are_per_chat_and_caches_are_bounded(self):
         from test_events import plugin, RecordingContext
         import importlib
