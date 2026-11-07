@@ -934,8 +934,21 @@ def _wait_for_quiet_turn(*, timeout: float = 120.0, grace: float = 1.5) -> None:
     time.sleep(grace)
 
 
+def _caption_to_repeat(caption: str, recent: list[str]) -> str:
+    """Only the part of a caption the chat has not already been told."""
+    said = {re.sub(r"\s+", "", line) for line in recent if line.strip()}
+    kept = []
+    for line in caption.splitlines():
+        bare = re.sub(r"\s+", "", line)
+        if not bare or bare in said:
+            continue
+        kept.append(line.strip())
+    return "\n".join(kept)
+
+
 def _send_media_now(chat_id: str, path, caption: str = "") -> None:
     _wait_for_quiet_turn()
+    caption = _caption_to_repeat(caption, _RECENT_BUBBLES.get(chat_id, []))
     sender = _host_send_message_tool()
     message = f"{caption}\nMEDIA:{path}" if caption else f"MEDIA:{path}"
     sender({"action": "send", "target": f"qqbot:{chat_id}", "message": message})

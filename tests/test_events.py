@@ -1729,3 +1729,15 @@ class TaskReceiptTests(unittest.TestCase):
                 handlers["background_task"]({"task": "查一下", "loop_id": "gap-9"}, session_id="s1")
                 spawned.call_args.kwargs["on_done"](False, "")
             closed.assert_not_called()
+
+
+class CaptionRepeatTests(unittest.TestCase):
+    def test_a_caption_already_said_is_dropped(self):
+        import hermes_plugins.digital_life as hl  # noqa: PLC0415
+        caption = "喙挺蓝，话不多。\n图给你。"
+        kept = hl._caption_to_repeat(caption, ["喙挺蓝，话不多。"])
+        self.assertEqual(kept, "图给你。")
+
+    def test_a_fresh_caption_is_kept(self):
+        import hermes_plugins.digital_life as hl  # noqa: PLC0415
+        self.assertEqual(hl._caption_to_repeat("刚画好的。", []), "刚画好的。")
