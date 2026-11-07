@@ -1472,6 +1472,9 @@ def _mark_phrase_use(picked: list[tuple[str, str]], text: str) -> None:
         logger.debug("hermes-lover: phrase use not counted", exc_info=True)
 
 
+_VOICE_LLM_ERRORS: list[str] = []
+
+
 def _polish_lines(lines: list[str], recent: list[str] | None = None,
                   last_user: str = "", chat_id: str = "") -> Optional[list[str]]:
     """Run the tic-and-tone pass over the bubbles of one chat reply.
@@ -1508,8 +1511,9 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
                                 max_tokens=max(120, len(lines) * 90), timeout=20,
                                 temperature=0.3, purpose="hermes-lover.voice")
             out = str(getattr(done, "text", "") or "").strip()
-        except Exception:
-            logger.debug("hermes-lover: in-process voice pass failed", exc_info=True)
+        except Exception as exc:  # noqa: BLE001 - any facade failure falls back to a child
+            _VOICE_LLM_ERRORS.append(str(exc)[:200])
+            logger.warning("hermes-lover: in-process voice pass failed: %s", str(exc)[:200])
             out = ""
     if not out:  # older hosts without ctx.llm: fall back to a throwaway child
         try:
@@ -1521,7 +1525,7 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
     if not out:
         return None
     parts = speech.parse_polish(out, len(lines))
-    if not parts or speech.lint(parts, recent):
+    if not parts:
         return None
     final = speech.drop_unreadable(lines, parts, recent, last_user)
     _mark_phrase_use(picked, "".join(final))
