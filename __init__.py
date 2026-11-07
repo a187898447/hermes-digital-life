@@ -855,14 +855,30 @@ def _on_user_message(
         # Deterministic fallback for the prompt rule: a loop the assistant raised is
         # answered by the next message in that chat, whether or not the model remembers
         # to call close_gap.
+        closed: list[str] = []
+
         def _retire_answered(state: dict[str, Any], scope: str = chat_scope) -> dict[str, Any]:
-            _gaps.close_answered(state, time.time() * 1000, chat=scope)
+            ids = _gaps.close_answered(state, time.time() * 1000, chat=scope)
+            for gap in state.get("gaps") or []:
+                if gap.get("id") in set(ids):
+                    closed.append(str(gap.get("summary") or "").strip())
             return state
 
         try:
             digital_life.storage.update_state(time.time() * 1000, _retire_answered)
         except Exception:
             logger.warning("hermes-lover could not retire answered loops", exc_info=True)
+        # Leave a durable trace that the question was answered: raw turns of the bot's
+        # own words otherwise look like unfinished business the next time they surface.
+        factory = _MEMORY_STORE.get("factory")
+        for summary in closed[:3] if factory is not None else []:
+            topic = summary[:40] or "刚才那件事"
+            try:
+                factory().write(f"「{topic}」已经问过、对方答过了，到此为止，别再提。",
+                                kind="note", session_id=f"loop:{chat_scope}",
+                                chat_id=chat_scope, chat_type="")
+            except Exception:
+                logger.warning("could not record an answered loop", exc_info=True)
     # Only a direct chat joins the proactive rotation on its own: a group opts in by
     # asking for it, so one member cannot sign everyone else up for bot messages.
     if ((meta["platform"] or "") == "qqbot" and meta["chat_id"]

@@ -929,6 +929,20 @@ class WakeHookTests(unittest.TestCase):
         self.assertEqual(gap["status"], "resolved")
         self.assertEqual(gap["closed_by"], "answered")
 
+    def test_an_answered_loop_leaves_a_memory_note_saying_it_is_settled(self):
+        self.state["gaps"].append({"id": "gap-2", "summary": "价签到底是长期还是手滑", "status": "open",
+                                   "tension": 100.0, "relief": 0.0, "chat": "group-1",
+                                   "created_at": self.now - 600_000,
+                                   "source": "assistant_unknown_claim"})
+        store = types.SimpleNamespace(writes=[], write=lambda text, **kw: store.writes.append((text, kw)))
+        plugin._MEMORY_STORE["factory"] = lambda: store
+        self.addCleanup(plugin._MEMORY_STORE.pop, "factory", None)
+        plugin._on_user_message(user_message="嗯，换牌子了", session_id="s1")
+        self.assertEqual(len(store.writes), 1)
+        text, kwargs = store.writes[0]
+        self.assertIn("已经问过", text)
+        self.assertEqual(kwargs["chat_id"], "group-1")
+
     def test_disabled_by_default_has_zero_side_effects(self):
         plugin._post_llm_call(assistant_response="好的", session_id="s1")
         self.assertFalse(getattr(self.ctx, "injected", []))
