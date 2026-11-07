@@ -95,6 +95,7 @@ _JOURNAL_PROMPTED: dict[tuple[str, str], dict[str, float]] = {}
 _FACT_PROMPTED: dict[tuple[str, str], dict[str, float]] = {}
 JOURNAL_RETRY_SECONDS = 1800.0  # a run that wrote nothing is retried after this
 JOURNAL_MAX_ATTEMPTS = 3  # then stop: a day stuck owed must not spawn a child forever
+_GAVE_UP_JOURNAL: set[tuple[str, str]] = set()  # (day, gate) already reported as abandoned
 _MEMORY_STORE: dict[str, object] = {}
 # Recall results are summaries for the model, not a dump of the palace.
 RECALL_SNIPPET_CHARS = 220
@@ -558,6 +559,30 @@ def _remember_child(session_id: str, kind: str | None) -> None:
         _CHILD_CHATS.pop(oldest, None)
 
 
+def _child_tag(session_id: str) -> tuple[str, str]:
+    """The (kind, chat) from the host spawn tag, or ("", "") when there is none."""
+    db = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
+    try:
+        with sqlite3.connect(str(db), timeout=2) as conn:
+            row = conn.execute(
+                "SELECT content FROM messages WHERE session_id=? AND role='user' "
+                "AND content LIKE '%[lover-child:%' LIMIT 1",
+                (session_id,)).fetchone()
+    except sqlite3.Error:
+        return "", ""
+    text = str(row[0] or "") if row else ""
+    start = text.find(_CHILD_MARK)
+    if start < 0:
+        return "", ""
+    end = text.find("]", start)
+    if end <= start:
+        return "", ""
+    fields = text[start + len(_CHILD_MARK):end].split()
+    kind = (fields[0] if fields else "").strip()
+    chat = next((f[len("chat="):] for f in fields if f.startswith("chat=")), "")
+    return kind, chat.strip()
+
+
 def _child_kind(session_id: str) -> str | None:
     """Which background child this session is ("study"/"task"/"journal"...), else None.
 
@@ -568,39 +593,34 @@ def _child_kind(session_id: str) -> str | None:
     authoritative facts into ``sessions`` (a one-shot source, or a local origin); every
     process sharing state.db can read them, including the child process itself, which
     is where this check actually runs. A chat that merely types the tag stays ordinary.
+
+    When the host row cannot be read but the prompt is child-shaped, the session is
+    treated as the narrowest child (journal) and gets no chat scope: a forged tag then
+    buys nothing, and a real child loses a retry instead of gaining every tool. A child
+    whose tag was lost is also held to the journal allowlist rather than the full set.
     """
     if not session_id:
         return None
     if session_id in _CHILD_SESSIONS:
         return _CHILD_SESSIONS[session_id]
     spawned = _session_was_spawned(session_id)
-    if spawned is None:  # unreadable right now: retry later instead of caching a guess
-        return None
-    if not spawned:
+    tag_kind, tag_chat = _child_tag(session_id)
+    if spawned is False:
         _remember_child(session_id, None)
         return None
-    db = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
-    try:
-        with sqlite3.connect(str(db), timeout=2) as conn:
-            row = conn.execute(
-                "SELECT content FROM messages WHERE session_id=? AND role='user' "
-                "AND content LIKE '%[lover-child:%' LIMIT 1",
-                (session_id,)).fetchone()
-    except sqlite3.Error:
-        return None
-    kind = None
-    text = str(row[0] or "") if row else ""
-    start = text.find(_CHILD_MARK)
-    if start >= 0:
-        end = text.find("]", start)
-        if end > start:
-            fields = text[start + len(_CHILD_MARK):end].split()
-            kind = (fields[0] if fields else "").strip() or None
-            chat = next((f[len("chat="):] for f in fields if f.startswith("chat=")), "")
-            if kind:
-                _CHILD_CHATS[session_id] = chat.strip()
-    if kind is None:
+    if spawned is None:
+        if not tag_kind:
+            return None  # ordinary session we cannot classify yet; do not cache a guess
+        logger.warning("session %s is child-shaped but its host row is unreadable; "
+                       "confining it to the journal allowlist", session_id)
         _CHILD_CHATS.pop(session_id, None)
+        _remember_child(session_id, "journal")
+        return "journal"
+    kind = tag_kind or "journal"
+    if not tag_kind:
+        logger.warning("background child %s has no usable prompt tag; "
+                       "confining it to the journal allowlist", session_id)
+    _CHILD_CHATS[session_id] = tag_chat
     _remember_child(session_id, kind)
     return kind
 
@@ -2182,9 +2202,34 @@ def register(ctx) -> None:
 
         # A day that stopped being owed (written, or revoked days later) starts over;
         # otherwise one permanently failing day would be retried until the process ends.
-        for prompted, days in ((_FACT_PROMPTED, set(owed_facts)), (_JOURNAL_PROMPTED, set(owed))):
+        owed_set = set(owed)
+        for prompted, days in ((_FACT_PROMPTED, set(owed_facts)), (_JOURNAL_PROMPTED, owed_set)):
             for key in [item for item in prompted if item[1] == gate and item[0] not in days]:
                 prompted.pop(key, None)
+        for key in [item for item in _GAVE_UP_JOURNAL if item[1] == gate and item[0] not in owed_set]:
+            _GAVE_UP_JOURNAL.discard(key)
+
+        def _exhausted(prompted: dict[tuple[str, str], dict[str, float]], day: str) -> bool:
+            state = prompted.get((day, gate)) or {}
+            return int(state.get("attempts") or 0) >= JOURNAL_MAX_ATTEMPTS
+
+        def _record_gave_up(day_: str) -> None:
+            key = (day_, gate)
+            if key in _GAVE_UP_JOURNAL:
+                return
+            _GAVE_UP_JOURNAL.add(key)
+            logger.warning("journal for %s (%s) gave up after %s attempts",
+                           day_, gate, JOURNAL_MAX_ATTEMPTS)
+            try:
+                memory_store().write(
+                    f"{day_} 的日记连续 {JOURNAL_MAX_ATTEMPTS} 次没写出来，先放弃了；那天的内容还留在记忆里。",
+                    kind="note", session_id="journal-check", chat_id=chat_id,
+                    chat_type="system", day=day_)
+            except Exception:  # noqa: BLE001
+                logger.debug("could not record the abandoned journal for %s", day_, exc_info=True)
+
+        if owed and _exhausted(_JOURNAL_PROMPTED, owed[0]):
+            _record_gave_up(owed[0])
 
         fact_day = owed_facts[0] if owed_facts and not _blocked(_FACT_PROMPTED, owed_facts[0]) else ""
         journal_day = owed[0] if owed and not _blocked(_JOURNAL_PROMPTED, owed[0]) else ""

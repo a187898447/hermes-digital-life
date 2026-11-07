@@ -1497,6 +1497,7 @@ class ChildSessionTests(unittest.TestCase):
                     ("s-forged", "qqbot", "qqbot", '{"platform": "qqbot"}'),
                     ("s-plain", "qqbot", "qqbot", '{"platform": "qqbot"}'),
                     ("s-nochat", "oneshot", "oneshot", local),
+                    ("s-notag", "oneshot", "oneshot", local),
                     # Cron also reports a local origin; it must not look like a child.
                     ("s-cron", "cron", "cron", local),
                     # The host renamed the source; created_source still records the spawn.
@@ -1513,7 +1514,9 @@ class ChildSessionTests(unittest.TestCase):
                     ("s-plain", "普通对话"),
                     ("s-cron", "[lover-child:journal chat=chat-9] cron 里的标记"),
                     ("s-renamed", "[lover-child:task chat=chat-3] 宿主来源改过名"),
-                    ("s-renamed-2", "[lover-child:study chat=chat-4] 两边都改过名")):
+                    ("s-renamed-2", "[lover-child:study chat=chat-4] 两边都改过名"),
+                    ("s-notag", "普通指令，没有标签"),
+                    ("s-ghost", "[lover-child:study chat=chat-8] 宿主行还没写进来")):
                 conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
                              (session_id, "user", text))
         patcher = patch.object(plugin, "_plugin_env",
@@ -1542,6 +1545,19 @@ class ChildSessionTests(unittest.TestCase):
     def test_a_cron_session_does_not_get_a_tagged_child_scope(self):
         self.assertIsNone(plugin._child_kind("s-cron"))
         self.assertEqual(plugin._child_chat("s-cron"), "")
+
+    def test_a_child_shaped_session_without_a_host_row_is_confined(self):
+        # The row may not be readable yet: take the tag's shape, but grant no chat scope
+        # and only the narrowest toolset, so a forged tag buys nothing.
+        self.assertEqual(plugin._child_kind("s-ghost"), "journal")
+        self.assertEqual(plugin._child_chat("s-ghost"), "")
+        decision = plugin._gate_tool_call(tool_name="web_search", session_id="s-ghost")
+        self.assertEqual(decision["action"], "block")
+        self.assertIsNone(plugin._gate_tool_call(tool_name="memory_recall", session_id="s-ghost"))
+
+    def test_a_spawned_child_without_a_tag_is_confined(self):
+        self.assertEqual(plugin._child_kind("s-notag"), "journal")
+        self.assertEqual(plugin._child_chat("s-notag"), "")
 
     def test_a_chat_cannot_forge_a_child_by_typing_the_tag(self):
         # s-forged carries the same "[lover-child:...]" text from an ordinary QQ chat.

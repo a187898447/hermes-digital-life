@@ -173,3 +173,15 @@
 - profile 总额取单 chat 的 2 倍左右（6/12/20/40）；如果实际用户只有一两个 chat，这个上限基本不会触发，真正起作用的是单 chat 上限。
 - P2-7 的 polish 默认值已改 `auto`：线上如果确实依赖每条都润色，需要在 profile `.env` 显式设 `HERMES_LOVER_POLISH=always`。
 - P2-9 的 `FADE_AFTER_HOURS` 取 72h（三天没再被提起才退休 loop）；如果实际节奏更慢，可再调，但不要再回到 12h。
+
+---
+
+## 6. 复核后的收尾（`463f8f1` 与之后）
+
+- **日记重试有上限**：`JOURNAL_MAX_ATTEMPTS = 3`，`(day, gate)` 记 `{at, attempts}`；连续失败三次就放弃，
+  当天不再是 owed（写成功或还没到）时计数自动清掉。放弃时写一条 `note`（`kind="note"`，落在该 chat 名下）
+  并 `logger.warning` 一次，operator 能在记忆里看到“哪天为什么没写”。
+- **生成结果只回文件名**：`make_image` / `make_speech` 返回 `{"ok": true, "file": "image-….jpeg"}`，
+  绝对路径留在插件内部（`deliver()` 闭包自己持有），不再进模型上下文。
+- **子会话识别失败按最严处理**：宿主行读不到但提示词呈子会话形状时，按 `journal` 白名单放行且**不给 chat 作用域**
+  （伪造标签拿不到任何东西）；宿主确认为子会话但标签缺失时，同样收窄到 `journal`，而不是回退到全套工具。

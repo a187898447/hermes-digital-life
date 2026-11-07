@@ -219,6 +219,39 @@ class MemoryTests(unittest.TestCase):
                     state["at"] = 0.0  # pretend the cooldown always elapsed
         self.assertEqual(spawned.call_count, plugin.JOURNAL_MAX_ATTEMPTS)
 
+    def test_an_abandoned_journal_leaves_a_note_and_one_warning(self):
+        from test_events import plugin, RecordingContext
+        import importlib
+        host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        research_mod = importlib.import_module("hermes_plugins.digital_life.digital_life.research")
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default: True
+        plugin.register(ctx)
+        plugin._JOURNAL_PROMPTED.clear()
+        plugin._FACT_PROMPTED.clear()
+        plugin._GAVE_UP_JOURNAL.clear()
+        self.store.write("一直写不成日记的那天", kind="turn", day="2026-11-01")
+        self.store.write("那天的经过已经提成事实", kind="fact", day="2026-11-01")
+        plugin._JOURNAL_PROMPTED[("2026-11-01", "chat-a")] = {
+            "at": 0.0, "attempts": float(plugin.JOURNAL_MAX_ATTEMPTS)}
+        with (
+            patch.object(host_storage, "data_root", return_value=self.root),
+            patch.object(host_storage, "plugin_db",
+                         side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+            patch.object(research_mod, "spawn_task", return_value=True) as spawned,
+            patch.object(memory, "day_key", return_value="2026-11-07"),
+            patch.object(plugin.logger, "warning") as warned,
+        ):
+            plugin._JOURNAL_CHECK("qqbot", "chat-a")
+            plugin._JOURNAL_CHECK("qqbot", "chat-a")
+        self.assertEqual(spawned.call_count, 0)
+        notes = [e for e in self.store.read_entries().values()
+                 if e.get("kind") == "note" and "放弃" in str(e.get("text"))]
+        self.assertEqual(len(notes), 1)
+        self.assertEqual(notes[0]["date"], "2026-11-01")
+        self.assertEqual(notes[0]["chat_id"], "chat-a")
+        self.assertEqual(sum(1 for c in warned.call_args_list if "gave up" in str(c.args)), 1)
+
     def test_journal_owed_days_are_per_chat_and_caches_are_bounded(self):
         from test_events import plugin, RecordingContext
         import importlib
