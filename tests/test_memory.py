@@ -1173,3 +1173,30 @@ class StudyLearnedTests(unittest.TestCase):
         self.assertEqual("疯四", m.trigger_group("周四在群里刷疯四 → 发一条"))
         self.assertEqual("疯四", m.trigger_group("疯狂星期四 → 写文案"))
         self.assertNotEqual("疯四", m.trigger_group("周一早上 → 喊困"))
+
+
+class PhraseForgettingTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = memory.MemoryStore(Path(self.tmp.name), embedder=False)
+
+    def test_a_phrase_fades_with_time_and_repeats_keep_it_longer(self):
+        import math
+        fresh = self.store.write("被问住了就先说不知道", kind="phrase", day="2026-11-01",
+                                 now_ms=NOW)["id"]
+        repeated = self.store.write("先把话认下来，再往上抬一句", kind="phrase", day="2026-11-01",
+                                    now_ms=NOW)["id"]
+        for index in range(4):
+            self.store.write("先把话认下来，再往上抬一句", kind="phrase",
+                             day="2026-11-01", now_ms=NOW + index * 1000)
+        rows = {row["id"]: row for row in self.store.read_entries().values()}
+        self.assertAlmostEqual(rows[fresh]["weight"], 0.6)
+        self.assertGreater(rows[repeated]["weight"], rows[fresh]["weight"])
+        self.assertAlmostEqual(rows[repeated]["weight"], 1.8)
+        week = NOW + 7 * DAY
+        self.assertAlmostEqual(memory.decay(rows[fresh]["weight"], NOW, week), 0.3, places=3)
+        self.assertAlmostEqual(memory.decay(rows[repeated]["weight"], NOW, week), 0.9, places=3)
+        self.assertLess(memory.decay(rows[fresh]["weight"], NOW, NOW + 14 * DAY),
+                        memory.decay(rows[fresh]["weight"], NOW, week))
+        self.assertTrue(math.isclose(memory.decay(1.0, NOW, NOW), 1.0))

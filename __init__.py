@@ -1236,6 +1236,9 @@ def _phrase_hints(*contexts: str, chat_id: str = "", limit: int = 2) -> list[tup
         rows = factory().peek("phrase", 20, chat_id=chat_id, include_global=True)
     except Exception:
         return []
+    # A phrase nobody has touched for long enough is forgotten: the same 7-day
+    # half-life that ranks memory also decides when it is no longer offered.
+    rows = [row for row in rows if row.get("effective_weight", 0) >= 0.2]
     context = "".join(contexts)
 
     def score(text: str) -> int:
