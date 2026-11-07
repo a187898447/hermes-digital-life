@@ -1921,8 +1921,11 @@ def register(ctx) -> None:
     from .digital_life import life as _life
     from .digital_life import tick as _tick
 
-    def life_writer(text: str) -> None:
-        memory_store().write(text, kind="life", session_id="life", chat_id="", chat_type="dm")
+    def life_writer(text: str, chat_id: str = "") -> None:
+        # A trace about one chat's loose thread stays in that chat; a global trace
+        # (reading, practising) is still visible everywhere.
+        memory_store().write(text, kind="life", session_id="life", chat_id=chat_id,
+                             chat_type="")
 
     _life.set_writer(life_writer)
     if _life_enabled(ctx) and os.environ.get("HERMES_LOVER_TICK", "1") != "0":
@@ -2131,8 +2134,10 @@ def register(ctx) -> None:
             from .digital_life import storage as _storage  # noqa: PLC0415
 
             fresh = _storage.read_state(now_ms)
+            # Only traces with no chat of their own may be shown to every target;
+            # a chat-scoped trace would leak one conversation's thread to another.
             traces = [trace for trace in (fresh.get("life") or {}).get("traces", [])
-                      if trace.get("share")][-3:]
+                      if trace.get("share") and not str(trace.get("chat") or "")][-3:]
         except Exception:
             logger.debug("hermes-lover could not read shareable traces", exc_info=True)
             traces = []

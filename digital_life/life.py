@@ -32,10 +32,11 @@ PULSES = {
     "dropped": {"cortisol": 3.0},
 }
 
-_WRITER: Callable[[str], Any] | None = None
+_WRITER: Callable[..., Any] | None = None
 
 
-def set_writer(writer: Callable[[str], Any] | None) -> None:
+def set_writer(writer: Callable[..., Any] | None) -> None:
+    """Install the memory sink; it receives (text, chat_id) so a trace stays scoped."""
     """Install the memory writer used for traces (the plugin owns the store)."""
     global _WRITER
     _WRITER = writer
@@ -99,6 +100,9 @@ def agenda_size(mood_label: str) -> int:
     return AGENDA_SIZE.get(str(mood_label or ""), AGENDA_SIZE["平常"])
 
 
+_THINK_TITLE = "想想没说完的事"
+
+
 def build_agenda(now_ms: float, *, mood_label: str = "平常", books: Iterable[dict] | None = None,
                  gaps: Iterable[dict] | None = None,
                  skills_state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
@@ -111,8 +115,9 @@ def build_agenda(now_ms: float, *, mood_label: str = "平常", books: Iterable[d
     if book is not None:
         plan.append(("read", f"读《{str(book.get('title') or '那本书')[:20]}》", book))
     if open_gaps:
-        gap = open_gaps[0]
-        plan.append(("think", f"想想「{str(gap.get('summary') or '')[:18]}」", gap))
+        # The life is one stream for every chat, so the title must not replay what
+        # another conversation said; the gap itself stays the private source.
+        plan.append(("think", _THINK_TITLE, open_gaps[0]))
     plan.append(("note", "记一笔", None))
     practice = _practice_target(skills_state)
     if practice is not None:
@@ -176,6 +181,9 @@ def current(state: dict[str, Any]) -> dict[str, Any] | None:
 def step(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
     """Advance one agenda item. Mutates ``state["life"]``; returns what happened."""
     life = state.setdefault("life", new_life_state())
+    for item in life.get("agenda") or []:  # old state may carry a summary in a think title
+        if isinstance(item, dict) and item.get("kind") == "think":
+            item["title"] = _THINK_TITLE
     today = local_day(now_ms)
     started: list[dict[str, Any]] = []
     finished: list[dict[str, Any]] = []
@@ -282,12 +290,12 @@ def _finish_think(state: dict[str, Any], item: dict[str, Any], source: dict[str,
     gap = next((g for g in state.get("gaps") or [] if g.get("id") == gap_id), None)
     if gap is None:
         return None
-    summary = str(gap.get("summary") or "").strip()
-    if not summary:
+    if not str(gap.get("summary") or "").strip():
         return None
     return {"at": now_ms, "kind": "think", "title": item["title"],
-            "text": f"又琢磨了一下「{summary[:60]}」。", "source": {"type": "gap", "id": gap_id},
-            "share": False}
+            "text": "又琢磨了一会儿之前没说完的事。",
+            "source": {"type": "gap", "id": gap_id},
+            "chat": str(gap.get("chat") or ""), "share": False}
 
 
 def _finish_practice(item: dict[str, Any], source: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
@@ -365,7 +373,7 @@ def remember(trace: dict[str, Any]) -> None:
     if not text:
         return
     try:
-        _WRITER(text)
+        _WRITER(text, str(trace.get("chat") or ""))
     except Exception:  # noqa: BLE001 - a trace must never break the tick
         import logging
         logging.getLogger(__name__).debug("life trace was not written to memory", exc_info=True)

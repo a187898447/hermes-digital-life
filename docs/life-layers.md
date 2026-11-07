@@ -53,7 +53,8 @@ settle（化学衰减/休息恢复）
 
 规则：
 
-- **日程只装真实材料**：`read` 来自 `library.books()`，`think` 来自当前 chat 的 open gap，
+- **日程只装真实材料**：`read` 来自 `library.books()`，`think` 来自 open gap 但只写泛化标题
+  （日程是所有会话共用的一条，不回放某个会话的具体内容；痕迹按 gap 所属 chat 归属），
   `note` 折叠最近两条痕迹，`rest` 不产出。拿不到材料就 drop，并给 cortisol +3（"想做事没做成"），
   不编造地点、差事、见闻。
 - 日程规模由 mood 定（疲惫/低落/烦躁 2 项、平常 4 项、来劲 5 项），上限 8 项；夜里（0–6 点）不排 `rest`，

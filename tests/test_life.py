@@ -57,6 +57,7 @@ class AgendaTests(unittest.TestCase):
         self.assertEqual(agenda[0]["source"]["file"], "a.md")
         self.assertEqual(agenda[1]["kind"], "think")
         self.assertEqual(agenda[1]["source"]["id"], "gap-1")
+        self.assertNotIn("要不要换个写法", agenda[1]["title"])  # one stream: no other chat's text
         self.assertGreaterEqual(len(agenda), 3)
 
     def test_no_material_means_no_read_or_think(self):
@@ -135,6 +136,24 @@ class StepTests(unittest.TestCase):
         self.assertEqual(resting["status"], "done")
         self.assertLess(out["pulses"].get("cortisol", 0), 0)  # rest lowers it
 
+    def test_a_think_trace_is_generic_and_keeps_its_chat(self):
+        state = self._state()
+        secret = "她说想换个工作"
+        state["gaps"] = [{"id": "gap-1", "status": "open", "summary": secret, "chat": "chat-9"}]
+        state["life"].update({
+            "day": life.local_day(NOW),
+            "agenda": [{"id": "act-1", "kind": "think", "title": f"想想「{secret[:6]}」",
+                        "minutes": 10, "status": "running", "started_at": NOW, "done_at": 0.0,
+                        "source": {"type": "gap", "id": "gap-1"}}],
+            "current": "act-1"})
+        out = life.step(state, NOW + 16 * 60_000)
+        trace = out["traces"][0]
+        self.assertEqual(trace["kind"], "think")
+        self.assertEqual(trace["chat"], "chat-9")
+        self.assertNotIn(secret, trace["text"])
+        self.assertNotIn(secret, state["life"]["agenda"][0]["title"])  # legacy title scrubbed
+        self.assertEqual(state["life"]["agenda"][0]["title"], life._THINK_TITLE)
+
     def test_a_read_without_a_library_entry_is_dropped(self):
         state = self._state()
         item = {"id": "act-1", "kind": "read", "title": "读《没这本书》", "minutes": 25,
@@ -183,21 +202,25 @@ class PulseTests(unittest.TestCase):
 class RememberTests(unittest.TestCase):
     def setUp(self):
         self.written = []
-        life.set_writer(self.written.append)
+        life.set_writer(lambda text, chat_id="": self.written.append((text, chat_id)))
 
     def tearDown(self):
         life.set_writer(None)
 
     def test_a_trace_goes_to_the_installed_writer(self):
         life.remember({"text": "读了十页"})
-        self.assertEqual(self.written, ["读了十页"])
+        self.assertEqual(self.written, [("读了十页", "")])
+
+    def test_a_chat_scoped_trace_keeps_its_chat(self):
+        life.remember({"text": "又琢磨了一会儿", "chat": "chat-1"})
+        self.assertEqual(self.written, [("又琢磨了一会儿", "chat-1")])
 
     def test_blank_traces_stay_out_of_memory(self):
         life.remember({"text": "   "})
         self.assertEqual(self.written, [])
 
     def test_a_failing_writer_never_breaks_the_tick(self):
-        life.set_writer(lambda _text: (_ for _ in ()).throw(RuntimeError("disk full")))
+        life.set_writer(lambda _text, _chat="": (_ for _ in ()).throw(RuntimeError("disk full")))
         life.remember({"text": "还是写了"})  # must not raise
 
 

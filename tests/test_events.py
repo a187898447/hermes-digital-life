@@ -392,6 +392,22 @@ class RegistrationTests(unittest.TestCase):
         self.assertNotIn("last_turns", target)
         self.assertEqual([turn["text"] for turn in target["last_user_turns"]], ["今天好累"])
 
+    def test_beat_targets_does_not_hand_one_chats_trace_to_everyone(self):
+        import tempfile
+
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        plugin.register(ctx)
+        handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["beat_targets"]
+        state = {"life": {"traces": [
+            {"text": "读完了《夜航西飞》", "share": True},
+            {"text": "又琢磨了一会儿她说的事", "chat": "c1", "share": True},
+            {"text": "练了画笔", "share": False},
+        ]}}
+        with tempfile.TemporaryDirectory() as tmp,                 patch.dict(os.environ, {"HERMES_HOME": tmp}),                 patch.object(plugin, "_session_source", return_value="cron"),                 patch.object(plugin.digital_life.proactive, "subscribed_chats", return_value=set()),                 patch.object(plugin.digital_life.storage, "read_state", return_value=state):
+            result = json.loads(handler({}, session_id="s-cron"))
+        self.assertEqual([trace["text"] for trace in result["traces"]], ["读完了《夜航西飞》"])
+
     def test_recall_caps_k_and_truncates_long_entries(self):
         ctx = RecordingContext()
         ctx.get_config = lambda key, default=None: default
