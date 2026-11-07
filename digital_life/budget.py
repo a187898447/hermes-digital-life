@@ -27,8 +27,9 @@ def state_path() -> Path | None:
 
 
 def _today(now_ms: float | None = None) -> str:
-    stamp = (now_ms if now_ms is not None else time.time() * 1000) / 1000
-    return time.strftime("%Y-%m-%d", time.localtime(stamp))
+    from .clock import day_key  # noqa: PLC0415
+
+    return day_key(now_ms)
 
 
 def _read(path: Path, day: str) -> dict:

@@ -30,18 +30,12 @@ DAY_MS = 86_400_000
 # long-running chat cannot grow the palace without bound.
 TURN_DAILY_CAP = 200
 ARCHIVE_DAYS = 30
-DAY_START_HOUR = 5
+from .clock import DAY_START_HOUR, day_key as _day_key
 
 
 def day_key(now_ms: float | None = None) -> str:
-    """The day a moment belongs to.
-
-    A day starts at 05:00, not midnight: a diary written at 01:00 is still
-    yesterday's day. Keeping one rule means capture, quotas and the diary all
-    agree about which day a turn belongs to.
-    """
-    stamp = (now_ms if now_ms is not None else time.time() * 1000) / 1000
-    return (datetime.fromtimestamp(stamp) - timedelta(hours=DAY_START_HOUR)).strftime("%Y-%m-%d")
+    """The day a moment belongs to (one 05:00 rule, shared with the quotas)."""
+    return _day_key(now_ms)
 
 
 DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8, "turn": 0.4,

@@ -35,6 +35,16 @@ class BudgetTests(unittest.TestCase):
         self.assertTrue(budget.spend("read", 1, now_ms=NOW + DAY))
         self.assertEqual(budget.used("read", now_ms=NOW + DAY), 1)
 
+    def test_the_day_rolls_over_at_five_not_midnight(self):
+        from datetime import datetime
+
+        late = datetime(2026, 11, 7, 3, 0).timestamp() * 1000
+        self.assertTrue(budget.spend("read", 1, now_ms=late))
+        # 04:00 is the same evening: still capped.
+        self.assertFalse(budget.spend("read", 1, now_ms=late + 3_600_000))
+        # 06:00 belongs to the next day: a fresh count.
+        self.assertTrue(budget.spend("read", 1, now_ms=late + 3 * 3_600_000))
+
     def test_missing_or_broken_file_counts_as_zero(self):
         self.assertEqual(budget.used("read", now_ms=NOW), 0)
         self.path.write_text("{not json", "utf-8")
