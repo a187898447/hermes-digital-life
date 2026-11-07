@@ -1367,6 +1367,18 @@ class ToolBudgetTests(unittest.TestCase):
         self.assertEqual(blocked["action"], "block")
         self.assertIn("2 页", blocked["message"])
 
+    def test_a_background_child_gets_a_tool_call_cap(self):
+        plugin = self.hl
+        plugin._TOOL_TURNS.pop("s-child", None)
+        with patch.object(plugin, "_child_kind", return_value="journal"):
+            allowed = [plugin._gate_tool_call(tool_name="memory_recall", session_id="s-child")
+                       for _ in range(10)]
+            blocked = plugin._gate_tool_call(tool_name="memory_recall", session_id="s-child")
+        self.assertTrue(all(result is None for result in allowed))
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("10", blocked["message"])
+        plugin._TOOL_TURNS.pop("s-child", None)
+
     def test_runaway_tool_loop_is_blocked(self):
         hook = self.hl._gate_tool_call
         for _ in range(8):

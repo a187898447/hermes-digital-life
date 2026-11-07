@@ -46,6 +46,7 @@ def _budget_stopped(session_id: str) -> bool:
     return any(count >= 2 and (session_id.endswith(key) or key.endswith(session_id))
                for key, count in _BUDGET_STOPS.items())
 TOOL_CALL_LIMIT = 8
+CHILD_TOOL_CALL_LIMIT = 10
 ZONE_PAGE_LIMIT = 2
 READ_SOURCE_TURN_LIMIT = 3
 READ_SOURCE_DAILY_INGESTS = 40
@@ -624,6 +625,13 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
         if tool_name not in allow:
             return {"action": "block",
                     "message": f"background {kind} sessions can only use their own tools; finish with what you have."}
+        counts = _TOOL_TURNS.setdefault(session_id, {"total": 0, "zone": 0, "recall": 0,
+                                                     "last_write": ""})
+        if counts["total"] >= CHILD_TOOL_CALL_LIMIT:
+            return {"action": "block",
+                    "message": "后台会话最多调用 10 次工具；停下来，用手上已有的信息写完。"}
+        counts["total"] += 1
+        return None
     meta = _TURN_META.get(session_id) or {}
     if (meta.get("platform") or _session_source(session_id) or "") != "qqbot":
         return None
