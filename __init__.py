@@ -54,6 +54,13 @@ VIDEO_GEN_PER_DAY = 3
 IMAGE_GEN_PER_DAY = 6
 SPEECH_PER_DAY = 10
 TRANSCRIBE_PER_DAY = 20
+# A per-chat cap alone is not a cost bound: N chats multiply into N times the spend.
+# These are the profile-wide ceilings for the metered calls.
+VIDEO_GEN_PER_PROFILE = 6
+IMAGE_GEN_PER_PROFILE = 12
+SPEECH_PER_PROFILE = 20
+TRANSCRIBE_PER_PROFILE = 40
+_PROFILE_COUNTER = "__profile__"
 MINIMAX_TOOLS = ("make_video", "make_image", "make_speech", "transcribe_audio")
 # Media generation belongs to this plugin: one path means one skill ladder, one character file.
 MEDIA_GENERATORS = ("make_image", "make_video", "make_speech")
@@ -572,11 +579,10 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
                     "message": "这条你刚记过，别重复写。接着回话。"}
         counts["last_write"] = text
     # Reading and remembering are not loop risks: pages, the daily quota and the
-    # duplicate guard already bound them. The budget is for tools that hit the
-    # outside world (search, zone, terminal, background jobs).
+    # duplicate guard already bound them. Paid media calls and sends do hit the
+    # outside world, so they count toward the turn budget like search does.
     if tool_name in ("read_source", "library_list", "memory_write", "memory_recall",
-                     "memory_revoke", "digital_life_status", "close_gap", "share_video",
-                     "make_video", "make_image", "make_speech", "transcribe_audio",
+                     "memory_revoke", "digital_life_status", "close_gap",
                      "study_source", "background_task", "search_later"):
         return None
     if tool_name == "skill_manage":
@@ -879,8 +885,9 @@ def _share_video(args, session_id="", **kwargs):
                       ensure_ascii=False)
 
 
-_VIDEO_JOBS: "set[object]" = set()
-_VIDEO_JOBS_LOCK = threading.Lock()
+# Two Hailuo tasks at a time; the slot is taken before the paid call, so a full queue
+# refuses the request instead of charging for a task that will be thrown away.
+_VIDEO_SLOTS = threading.BoundedSemaphore(2)
 
 
 def _deliver_video(chat_id: str, task_id: str, prompt: str, key: str = "") -> None:
@@ -916,6 +923,39 @@ def _media_chat(session_id: str) -> tuple[str, str]:
     chat_id, _chat_type = _session_scope(session_id) or ("", "")
     platform = (_TURN_META.get(session_id) or {}).get("platform") or _session_source(session_id)
     return chat_id, platform or ""
+
+
+def _charge_media(kind: str, chat_id: str, per_chat: int, per_profile: int) -> str:
+    """Charge one metered call to both the chat and the profile.
+
+    Returns "" on success, else "chat" / "profile" for the exhausted ceiling or
+    "storage" when the count cannot be recorded at all. A metered call must not run
+    unmetered just because the host has no storage.
+    """
+    from .digital_life import budget as _budget  # noqa: PLC0415
+
+    hit = _budget.spend_all({f"{kind}:{chat_id}": per_chat,
+                             f"{kind}:{_PROFILE_COUNTER}": per_profile})
+    if hit is None:
+        return ""
+    if hit == "storage":
+        return "storage"
+    return "profile" if hit.endswith(":" + _PROFILE_COUNTER) else "chat"
+
+
+def _refund_media(kind: str, chat_id: str) -> None:
+    from .digital_life import budget as _budget  # noqa: PLC0415
+
+    _budget.refund(f"{kind}:{chat_id}")
+    _budget.refund(f"{kind}:{_PROFILE_COUNTER}")
+
+
+def _media_quota_error(label: str, hit: str, chat_text: str) -> str:
+    if hit == "storage":
+        return "现在记不了额度，先不动手；等宿主存储恢复再说。"
+    if hit == "profile":
+        return f"今天总共能用的{label}已经用完了，明天再说。"
+    return chat_text
 
 
 def _audio_path(value: str):
@@ -1031,7 +1071,7 @@ def _mood_flavor() -> str:
 
 
 def _make_image(args, session_id="", **kwargs):
-    from .digital_life import budget as _budget, minimax as _minimax  # noqa: PLC0415
+    from .digital_life import minimax as _minimax  # noqa: PLC0415
 
     chat_id, platform = _media_chat(session_id)
     if not chat_id:
@@ -1049,9 +1089,10 @@ def _make_image(args, session_id="", **kwargs):
         reference = _reference_image(reference)  # validate before spending the quota
     except (OSError, ValueError) as exc:
         return json.dumps({"ok": False, "error": str(exc)[:200]}, ensure_ascii=False)
-    if not _budget.spend(f"imagegen:{chat_id}", IMAGE_GEN_PER_DAY):
-        return json.dumps({"ok": False, "error": f"今天已经画过 {IMAGE_GEN_PER_DAY} 张了，明天再说。"},
-                          ensure_ascii=False)
+    hit = _charge_media("imagegen", chat_id, IMAGE_GEN_PER_DAY, IMAGE_GEN_PER_PROFILE)
+    if hit:
+        return json.dumps({"ok": False, "error": _media_quota_error(
+            "图", hit, f"今天已经画过 {IMAGE_GEN_PER_DAY} 张了，明天再说。")}, ensure_ascii=False)
     if args.get("character"):
         prompt = f"{prompt}。{CHARACTER_BRIEF}"
         flavor = _mood_flavor()
@@ -1066,22 +1107,23 @@ def _make_image(args, session_id="", **kwargs):
     media_style = "漫画" if anime else ""
 
     def work() -> None:
-        from .digital_life import budget as budget_mod, minimax as media_mod  # noqa: PLC0415
+        from .digital_life import minimax as media_mod  # noqa: PLC0415
+        from .digital_life import skills as media_skills  # noqa: PLC0415
         try:
             path = media_mod.create_image(skilled, aspect_ratio=aspect, reference=reference,
                                           model=media_model, style=media_style,
                                           negative=", ".join(x for x in (
-                                              digital_life.skills.negative_prompt(_skill_level("make_image")),
+                                              media_skills.negative_prompt(_skill_level("make_image")),
                                               CHARACTER_NEGATIVE if args.get("character") else "") if x))
             _send_media_now(chat_id, path, caption)
             _skill_grant("make_image", ok=True)
         except Exception as exc:  # noqa: BLE001
-            budget_mod.refund(f"imagegen:{chat_id}")
+            _refund_media("imagegen", chat_id)
             _skill_grant("make_image", ok=False)
             _send_text_now(chat_id, f"图没画出来：{str(exc)[:120]}")
 
     if not _run_media_later(work):
-        _budget.refund(f"imagegen:{chat_id}")
+        _refund_media("imagegen", chat_id)
         return json.dumps({"ok": False, "error": "同时在做的媒体太多了，等一下再试。"},
                           ensure_ascii=False)
     return json.dumps({"ok": True, "queued": True,
@@ -1099,7 +1141,6 @@ def _make_speech(args, session_id="", **kwargs):
     text = str(args.get("text") or "").strip()
     if not text:
         return json.dumps({"ok": False, "error": "nothing to say"}, ensure_ascii=False)
-    from .digital_life import budget as _budget  # noqa: PLC0415
 
     voice = str(args.get("voice") or "").strip()  # empty means the module default
     try:
@@ -1107,21 +1148,23 @@ def _make_speech(args, session_id="", **kwargs):
     except (TypeError, ValueError):
         speed = 1.0
 
-    if not _budget.spend(f"speech:{chat_id}", SPEECH_PER_DAY):
-        return json.dumps({"ok": False, "error": "今天已经说过 10 段了，明天再说。"}, ensure_ascii=False)
+    hit = _charge_media("speech", chat_id, SPEECH_PER_DAY, SPEECH_PER_PROFILE)
+    if hit:
+        return json.dumps({"ok": False, "error": _media_quota_error(
+            "语音", hit, "今天已经说过 10 段了，明天再说。")}, ensure_ascii=False)
     caption = " ".join(str(args.get("caption") or "").split())
 
     def work() -> None:
-        from .digital_life import budget as budget_mod, minimax as media_mod  # noqa: PLC0415
+        from .digital_life import minimax as media_mod  # noqa: PLC0415
         try:
             path = media_mod.create_speech(text, voice=voice, speed=speed)
             _send_media_now(chat_id, path, caption)
         except Exception as exc:  # noqa: BLE001
-            budget_mod.refund(f"speech:{chat_id}")
+            _refund_media("speech", chat_id)
             _send_text_now(chat_id, f"语音没做出来：{str(exc)[:120]}")
 
     if not _run_media_later(work):
-        _budget.refund(f"speech:{chat_id}")
+        _refund_media("speech", chat_id)
         return json.dumps({"ok": False, "error": "同时在做的媒体太多了，等一下再试。"},
                           ensure_ascii=False)
     return json.dumps({"ok": True, "queued": True,
@@ -1130,21 +1173,26 @@ def _make_speech(args, session_id="", **kwargs):
 
 
 def _transcribe_audio(args, session_id="", **kwargs):
-    from .digital_life import budget as _budget, minimax as _minimax  # noqa: PLC0415
+    from .digital_life import minimax as _minimax  # noqa: PLC0415
 
-    chat_id, _platform = _media_chat(session_id)
+    chat_id, platform = _media_chat(session_id)
+    if not chat_id:
+        return json.dumps({"ok": False, "error": "no chat to transcribe for"}, ensure_ascii=False)
+    if platform != "qqbot":
+        return json.dumps({"ok": False, "error": "transcription is only available in QQ chats"},
+                          ensure_ascii=False)
     try:
         path = _audio_path(str(args.get("name") or args.get("path") or ""))
     except ValueError as exc:
         return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
-    if chat_id and not _budget.spend(f"stt:{chat_id}", TRANSCRIBE_PER_DAY):
-        return json.dumps({"ok": False, "error": "今天已经转过 20 段语音了，明天再说。"},
-                          ensure_ascii=False)
+    hit = _charge_media("stt", chat_id, TRANSCRIBE_PER_DAY, TRANSCRIBE_PER_PROFILE)
+    if hit:
+        return json.dumps({"ok": False, "error": _media_quota_error(
+            "语音转写", hit, "今天已经转过 20 段语音了，明天再说。")}, ensure_ascii=False)
     try:
         result = _minimax.transcribe(path, language=str(args.get("language") or ""))
     except Exception as exc:  # noqa: BLE001
-        if chat_id:
-            _budget.refund(f"stt:{chat_id}")
+        _refund_media("stt", chat_id)
         return json.dumps({"ok": False, "error": str(exc)[:200]}, ensure_ascii=False)
     text = str(result.get("text") or "")[:4000]
     return json.dumps({"ok": True, "text": text, "duration": result.get("duration") or 0},
@@ -1152,7 +1200,7 @@ def _transcribe_audio(args, session_id="", **kwargs):
 
 
 def _make_video(args, session_id="", **kwargs):
-    from .digital_life import budget as _budget, minimax as _minimax  # noqa: PLC0415
+    from .digital_life import minimax as _minimax  # noqa: PLC0415
 
     chat_id, _chat_type = _session_scope(session_id) or ("", "")
     if not chat_id:
@@ -1169,41 +1217,45 @@ def _make_video(args, session_id="", **kwargs):
         duration = int(args.get("duration") or 6)
     except (TypeError, ValueError):
         duration = 6
-    if not _budget.spend(f"videogen:{chat_id}", VIDEO_GEN_PER_DAY):
+    if not _VIDEO_SLOTS.acquire(blocking=False):
         return json.dumps({"ok": False,
-                           "error": f"今天已经做过 {VIDEO_GEN_PER_DAY} 个视频了，明天再说。"},
+                           "error": "已经有两个视频在做了，等它们发完再说。"},
                           ensure_ascii=False)
-    if args.get("character"):
-        prompt = f"{prompt}。{CHARACTER_BRIEF}"
-    skilled = _skill_craft("make_video", prompt)
-    first_frame = _character_image() if args.get("character") else ""
+    hit = _charge_media("videogen", chat_id, VIDEO_GEN_PER_DAY, VIDEO_GEN_PER_PROFILE)
+    if hit:
+        _VIDEO_SLOTS.release()
+        return json.dumps({"ok": False, "error": _media_quota_error(
+            "视频", hit, f"今天已经做过 {VIDEO_GEN_PER_DAY} 个视频了，明天再说。")},
+                          ensure_ascii=False)
     try:
+        if args.get("character"):
+            prompt = f"{prompt}。{CHARACTER_BRIEF}"
+        skilled = _skill_craft("make_video", prompt)
+        first_frame = _character_image() if args.get("character") else ""
         task_id, key = _minimax.create(skilled, duration=duration,
-                                     resolution=str(args.get("resolution") or "768P"),
-                                     first_frame=first_frame)
+                                       resolution=str(args.get("resolution") or "768P"),
+                                       first_frame=first_frame)
     except Exception as exc:  # noqa: BLE001
-        _budget.refund(f"videogen:{chat_id}")
+        _refund_media("videogen", chat_id)
+        _VIDEO_SLOTS.release()
         _skill_grant("make_video", ok=False)
         return json.dumps({"ok": False, "error": str(exc)[:200]}, ensure_ascii=False)
+
     def _run() -> None:
         try:
             _deliver_video(chat_id, task_id, prompt, key)
             _skill_grant("make_video", ok=True)
         finally:
-            with _VIDEO_JOBS_LOCK:
-                _VIDEO_JOBS.discard(worker)
+            _VIDEO_SLOTS.release()
 
-    with _VIDEO_JOBS_LOCK:
-        busy = len(_VIDEO_JOBS) >= 2
-        if not busy:
-            worker = threading.Thread(target=_run, name="hermes-lover-video", daemon=True)
-            _VIDEO_JOBS.add(worker)
-    if busy:
-        _budget.refund(f"videogen:{chat_id}")
-        return json.dumps({"ok": False,
-                           "error": "已经有两个视频在做了，等它们发完再说。"},
+    worker = threading.Thread(target=_run, name="hermes-lover-video", daemon=True)
+    try:
+        worker.start()
+    except Exception as exc:  # noqa: BLE001 - no thread: the task was never delivered
+        _refund_media("videogen", chat_id)
+        _VIDEO_SLOTS.release()
+        return json.dumps({"ok": False, "error": f"没法启动生成任务：{str(exc)[:120]}"},
                           ensure_ascii=False)
-    worker.start()
     return json.dumps({"ok": True, "task_id": task_id,
                        "note": "生成要几分钟，做好了我直接发到聊天里。"},
                       ensure_ascii=False)

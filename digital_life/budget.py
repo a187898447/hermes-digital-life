@@ -77,7 +77,12 @@ def used(name: str, *, now_ms: float | None = None) -> int:
 
 
 def spend(name: str, cap: int, *, now_ms: float | None = None) -> bool:
-    """Count one use of ``name`` today; False when ``cap`` is already reached."""
+    """Count one use of ``name`` today; False when ``cap`` is already reached.
+
+    Fails open when there is no storage: this guards soft quotas (ingesting sources),
+    where losing the count only re-permits a harmless action. Metered external calls
+    must use :func:`spend_all`, which fails closed.
+    """
     path = state_path()
     if path is None:
         return True
@@ -99,3 +104,40 @@ def spend(name: str, cap: int, *, now_ms: float | None = None) -> bool:
         except OSError:
             return True
         return True
+
+
+def spend_all(limits: dict[str, int], *, now_ms: float | None = None) -> str | None:
+    """Count one use of every counter at once; return the name of the first at its cap.
+
+    All-or-nothing so a profile ceiling and a per-chat ceiling advance together.
+    Fails closed: when the counters cannot be read or written, return "storage"
+    instead of letting a paid call through unmetered.
+    """
+    path = state_path()
+    if path is None:
+        return "storage"
+    day = _today(now_ms)
+    with _LOCK:
+        data = _read(path, day)
+        counts = data["counts"]
+        for name, cap in limits.items():
+            try:
+                count = int(counts.get(name, 0))
+            except (TypeError, ValueError):
+                count = 0
+            if count >= cap:
+                return name
+        for name in limits:
+            try:
+                count = int(counts.get(name, 0))
+            except (TypeError, ValueError):
+                count = 0
+            counts[name] = count + 1
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_name(path.name + ".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False), "utf-8")
+            os.replace(tmp, path)
+        except OSError:
+            return "storage"
+    return None

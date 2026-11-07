@@ -46,6 +46,28 @@ class BudgetTests(unittest.TestCase):
             for _ in range(5):
                 self.assertTrue(budget.spend("read", 1, now_ms=NOW))
 
+    def test_spend_all_advances_every_counter_together(self):
+        self.assertIsNone(budget.spend_all({"image:chat": 2, "image:__profile__": 3},
+                                           now_ms=NOW))
+        self.assertEqual(budget.used("image:chat", now_ms=NOW), 1)
+        self.assertEqual(budget.used("image:__profile__", now_ms=NOW), 1)
+
+    def test_spend_all_stops_at_the_first_capped_bucket_without_charging_any(self):
+        budget.spend("image:__profile__", 1, now_ms=NOW)
+        hit = budget.spend_all({"image:chat": 5, "image:__profile__": 1}, now_ms=NOW)
+        self.assertEqual(hit, "image:__profile__")
+        # Neither counter moved: a refused call must not eat the chat's quota.
+        self.assertEqual(budget.used("image:chat", now_ms=NOW), 0)
+        self.assertEqual(budget.used("image:__profile__", now_ms=NOW), 1)
+
+    def test_spend_all_fails_closed_without_storage(self):
+        with mock.patch.object(budget, "state_path", return_value=None):
+            self.assertEqual(budget.spend_all({"image:chat": 1}, now_ms=NOW), "storage")
+
+    def test_spend_all_fails_closed_when_the_count_cannot_be_saved(self):
+        with mock.patch.object(Path, "write_text", side_effect=OSError("disk full")):
+            self.assertEqual(budget.spend_all({"image:chat": 1}, now_ms=NOW), "storage")
+
 
 if __name__ == "__main__":
     unittest.main()

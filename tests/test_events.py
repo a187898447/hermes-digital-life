@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import importlib.util
 import json
 import os
@@ -1206,7 +1207,7 @@ class MakeVideoTests(unittest.TestCase):
         hl = self.hl
         with patch.object(self.hailuo, "create", return_value=("task-7", "k1")), \
                 patch.object(hl, "_deliver_video") as deliver, \
-                patch.object(self.budget, "spend", return_value=True):
+                patch.object(hl, "_charge_media", return_value=""):
             out = json.loads(hl._make_video({"prompt": "海边的鲸鱼"}, session_id="s-make"))
         self.assertTrue(out["ok"])
         self.assertEqual(out["task_id"], "task-7")
@@ -1215,26 +1216,42 @@ class MakeVideoTests(unittest.TestCase):
     def test_a_refused_quota_or_platform_never_calls_the_api(self):
         hl = self.hl
         with patch.object(self.hailuo, "create") as create, \
-                patch.object(self.budget, "spend", return_value=False):
+                patch.object(hl, "_charge_media", return_value="chat"):
             out = json.loads(hl._make_video({"prompt": "x"}, session_id="s-make"))
         self.assertFalse(out["ok"])
         create.assert_not_called()
         hl._TURN_META["s-make"] = {"platform": "cli"}
         with patch.object(self.hailuo, "create") as create, \
-                patch.object(self.budget, "spend", return_value=True):
+                patch.object(hl, "_charge_media", return_value=""):
             out = json.loads(hl._make_video({"prompt": "x"}, session_id="s-make"))
         self.assertFalse(out["ok"])
+        create.assert_not_called()
+
+    def test_a_full_queue_refuses_before_charging(self):
+        hl = self.hl
+        self.assertTrue(hl._VIDEO_SLOTS.acquire(blocking=False))
+        self.assertTrue(hl._VIDEO_SLOTS.acquire(blocking=False))
+        self.addCleanup(lambda: [hl._VIDEO_SLOTS.release() for _ in range(2)])
+        with patch.object(hl, "_charge_media") as charge, \
+                patch.object(self.hailuo, "create") as create:
+            out = json.loads(hl._make_video({"prompt": "x"}, session_id="s-make"))
+        self.assertFalse(out["ok"])
+        self.assertIn("两个", out["error"])
+        charge.assert_not_called()
         create.assert_not_called()
 
     def test_a_failed_submit_returns_the_quota(self):
         hl = self.hl
         refunds = []
         with patch.object(self.hailuo, "create", side_effect=self.hailuo.HailuoError("no key")), \
-                patch.object(self.budget, "spend", return_value=True), \
-                patch.object(self.budget, "refund", lambda name: refunds.append(name)):
+                patch.object(hl, "_charge_media", return_value=""), \
+                patch.object(hl, "_refund_media", lambda kind, chat: refunds.append((kind, chat))):
             out = json.loads(hl._make_video({"prompt": "x"}, session_id="s-make"))
         self.assertFalse(out["ok"])
-        self.assertEqual(refunds, ["videogen:chat-1"])
+        self.assertEqual(refunds, [("videogen", "chat-1")])
+        # The slot taken before the paid call is returned on failure too.
+        self.assertTrue(hl._VIDEO_SLOTS.acquire(blocking=False))
+        hl._VIDEO_SLOTS.release()
 
     def test_the_worker_delivers_the_finished_clip(self):
         hl = self.hl
@@ -1306,6 +1323,15 @@ class ToolBudgetTests(unittest.TestCase):
         self.assertIn("回话", third["message"])
         # Handing the rest off is still allowed.
         self.assertIsNone(hook(tool_name="background_task", session_id="s-budget"))
+
+    def test_media_calls_count_toward_the_turn_budget(self):
+        hook = self.hl._gate_tool_call
+        with patch.object(self.hl, "_is_minimax_model", lambda name="": True):
+            for _ in range(8):
+                self.assertIsNone(hook(tool_name="make_image", session_id="s-budget"))
+            blocked = hook(tool_name="make_image", session_id="s-budget")
+        self.assertEqual(blocked["action"], "block")
+        self.assertIn("8 次", blocked["message"])
 
     def test_the_request_carries_the_stop_order(self):
         self.hl._BUDGET_STOPS["s-budget"] = 2
@@ -1651,7 +1677,7 @@ class MakeImageTests(unittest.TestCase):
 
     def test_a_reference_outside_the_character_folder_is_refused(self):
         hl = self.hl
-        with patch.object(self.budget, "spend") as spend, \
+        with patch.object(hl, "_charge_media") as charge, \
                 patch.object(self.minimax, "create_image") as create:
             for ref in (str(self.root / "secret.txt"), "../../secret.txt",
                         "https://example.com/a.jpg", "file:///etc/passwd"):
@@ -1661,11 +1687,11 @@ class MakeImageTests(unittest.TestCase):
                     self.assertFalse(out["ok"])
                     self.assertIn("character", out["error"])
         create.assert_not_called()
-        spend.assert_not_called()
+        charge.assert_not_called()
 
     def test_a_saved_character_still_is_used(self):
         hl = self.hl
-        with patch.object(self.budget, "spend", return_value=True), \
+        with patch.object(hl, "_charge_media", return_value=""), \
                 patch.object(self.minimax, "create_image",
                              return_value="/tmp/pic.jpeg") as create:
             out = json.loads(hl._make_image({"prompt": "海", "reference": "ref-1.jpg"},
@@ -1676,7 +1702,7 @@ class MakeImageTests(unittest.TestCase):
 
     def test_character_mode_falls_back_to_the_saved_still(self):
         hl = self.hl
-        with patch.object(self.budget, "spend", return_value=True), \
+        with patch.object(hl, "_charge_media", return_value=""), \
                 patch.object(self.minimax, "create_image",
                              return_value="/tmp/pic.jpeg") as create:
             out = json.loads(hl._make_image({"prompt": "海", "character": True},
@@ -1684,6 +1710,46 @@ class MakeImageTests(unittest.TestCase):
         self.assertTrue(out["ok"])
         self.assertEqual(create.call_args.kwargs["reference"],
                          str((self.root / "character" / "ref-1.jpg").resolve()))
+
+
+    def test_the_profile_ceiling_is_reported_as_such(self):
+        hl = self.hl
+        with patch.object(hl, "_charge_media", return_value="profile"), \
+                patch.object(self.minimax, "create_image") as create:
+            out = json.loads(hl._make_image({"prompt": "海"}, session_id="s-img"))
+        self.assertFalse(out["ok"])
+        self.assertIn("总共", out["error"])
+        create.assert_not_called()
+
+
+class TranscribeTests(unittest.TestCase):
+    def setUp(self):
+        self.hl = plugin
+        self.minimax = importlib.import_module("hermes_plugins.digital_life.digital_life.minimax")
+
+    def test_a_chat_that_is_not_qq_is_refused(self):
+        with patch.object(self.hl, "_media_chat", lambda session_id: ("chat-1", "cli")):
+            out = json.loads(self.hl._transcribe_audio({"name": "a.mp3"}, session_id="s"))
+        self.assertFalse(out["ok"])
+        self.assertIn("QQ", out["error"])
+
+    def test_a_call_without_a_chat_is_refused(self):
+        with patch.object(self.hl, "_media_chat", lambda session_id: ("", "")):
+            out = json.loads(self.hl._transcribe_audio({"name": "a.mp3"}, session_id="s"))
+        self.assertFalse(out["ok"])
+        self.assertIn("no chat", out["error"])
+
+    def test_a_failed_transcribe_returns_both_counters(self):
+        refunds = []
+        with patch.object(self.hl, "_media_chat", lambda session_id: ("chat-1", "qqbot")), \
+                patch.object(self.hl, "_audio_path", return_value=Path("/tmp/a.mp3")), \
+                patch.object(self.hl, "_charge_media", return_value=""), \
+                patch.object(self.hl, "_refund_media",
+                             lambda kind, chat: refunds.append((kind, chat))), \
+                patch.object(self.minimax, "transcribe", side_effect=RuntimeError("asr down")):
+            out = json.loads(self.hl._transcribe_audio({"name": "a.mp3"}, session_id="s"))
+        self.assertFalse(out["ok"])
+        self.assertEqual(refunds, [("stt", "chat-1")])
 
 
 class MediaOutsiderTests(unittest.TestCase):

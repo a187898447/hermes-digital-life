@@ -169,7 +169,7 @@ class HandlerTests(unittest.TestCase):
     def test_image_is_drawn_and_sent_with_a_media_line(self):
         from pathlib import Path as P
         with mock.patch.object(self.minimax, "create_image", return_value=P("/tmp/x.jpeg")), \
-                mock.patch.object(self.budget, "spend", return_value=True), \
+                mock.patch.object(self.hl, "_charge_media", return_value=""), \
                 mock.patch.object(self.hl, "_run_media_later", self._inline):
             out = json.loads(self.hl._make_image({"prompt": "一只橘猫", "caption": "画好了"},
                                                  session_id="s-media"))
@@ -182,7 +182,7 @@ class HandlerTests(unittest.TestCase):
     def test_the_image_call_answers_before_the_work_runs(self):
         started = []
         with mock.patch.object(self.hl, "_run_media_later", lambda work: started.append(work) or True), \
-                mock.patch.object(self.budget, "spend", return_value=True):
+                mock.patch.object(self.hl, "_charge_media", return_value=""):
             out = json.loads(self.hl._make_image({"prompt": "一只橘猫"}, session_id="s-media"))
         self.assertTrue(out["queued"])
         self.assertEqual(len(started), 1)
@@ -199,14 +199,14 @@ class HandlerTests(unittest.TestCase):
                 mock.patch.object(self.hl, "_mood_flavor", lambda: "情绪底色是来劲，体力72"), \
                 mock.patch.object(self.hl, "_character_image", lambda: "/tmp/ref.jpg"), \
                 mock.patch.object(self.hl, "_reference_image", lambda value: value), \
-                mock.patch.object(self.budget, "spend", return_value=True), \
+                mock.patch.object(self.hl, "_charge_media", return_value=""), \
                 mock.patch.object(self.hl, "_run_media_later", self._inline):
             self.hl._make_image({"prompt": "坐在窗台上", "character": True}, session_id="s-media")
         self.assertIn("情绪底色是来劲", seen["prompt"])
         self.assertIn("坐在窗台上", seen["prompt"])
 
     def test_a_refused_image_quota_is_reported(self):
-        with mock.patch.object(self.budget, "spend", return_value=False), \
+        with mock.patch.object(self.hl, "_charge_media", return_value="chat"), \
                 mock.patch.object(self.minimax, "create_image") as create:
             out = json.loads(self.hl._make_image({"prompt": "x"}, session_id="s-media"))
         self.assertFalse(out["ok"])
@@ -221,7 +221,7 @@ class HandlerTests(unittest.TestCase):
             with mock.patch.object(lib, "inbox_root", lambda: inbox), \
                     mock.patch.object(self.minimax, "transcribe",
                                       return_value={"text": "你好", "duration": 3}), \
-                    mock.patch.object(self.budget, "spend", return_value=True):
+                    mock.patch.object(self.hl, "_charge_media", return_value=""):
                 out = json.loads(self.hl._transcribe_audio({"name": "voice.mp3"}, session_id="s-media"))
         self.assertTrue(out["ok"])
         self.assertEqual(out["text"], "你好")
@@ -229,7 +229,7 @@ class HandlerTests(unittest.TestCase):
     def test_speech_is_made_and_sent_with_a_media_line(self):
         from pathlib import Path as P
         with mock.patch.object(self.minimax, "create_speech", return_value=P("/tmp/v.mp3")), \
-                mock.patch.object(self.budget, "spend", return_value=True), \
+                mock.patch.object(self.hl, "_charge_media", return_value=""), \
                 mock.patch.object(self.hl, "_run_media_later", self._inline):
             out = json.loads(self.hl._make_speech({"text": "晚安", "caption": "听一下"},
                                                   session_id="s-media"))
@@ -238,16 +238,18 @@ class HandlerTests(unittest.TestCase):
         self.assertIn("听一下", self.sent[0]["message"])
 
     def test_speech_quota_and_failures_refund(self):
-        with mock.patch.object(self.budget, "spend", return_value=False):
+        with mock.patch.object(self.hl, "_charge_media", return_value="chat"):
             out = json.loads(self.hl._make_speech({"text": "x"}, session_id="s-media"))
         self.assertFalse(out["ok"])
+        refunds = []
         with mock.patch.object(self.minimax, "create_speech", side_effect=RuntimeError("boom")), \
-                mock.patch.object(self.budget, "spend", return_value=True), \
-                mock.patch.object(self.budget, "refund") as refund, \
+                mock.patch.object(self.hl, "_charge_media", return_value=""), \
+                mock.patch.object(self.hl, "_refund_media",
+                                  lambda kind, chat: refunds.append((kind, chat))), \
                 mock.patch.object(self.hl, "_run_media_later", self._inline):
             out = json.loads(self.hl._make_speech({"text": "x"}, session_id="s-media"))
         self.assertTrue(out["queued"])
-        refund.assert_called_once()
+        self.assertEqual(refunds, [("speech", "chat-1")])
         self.assertTrue(any("没做出来" in item["message"] for item in self.sent))
 
     def test_audio_outside_the_folders_is_refused(self):
