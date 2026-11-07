@@ -192,6 +192,43 @@ def _character_image() -> str:
     return ""
 
 
+_REFERENCE_SUFFIXES = {".jpg", ".jpeg", ".png", ".webp"}
+_REFERENCE_MAX_BYTES = 10 * 1024 * 1024
+
+
+def _character_root():
+    from .digital_life import outbox as _outbox  # noqa: PLC0415
+
+    return (_outbox.root_dir().parent / "character").resolve()
+
+
+def _reference_image(value: str) -> str:
+    """A still the image API may read: a saved character picture and nothing else.
+
+    The model can put any string in the ``reference`` argument, and MiniMax will
+    happily base64 whatever file it names. Treating that as a trusted path let a QQ
+    chat pull any file into an outbound request, so resolve it here: only regular
+    images under the operator's character folder, never a URL or a data URI.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    if raw.startswith(("http://", "https://", "data:")):
+        raise ValueError("reference must be one of the saved character pictures")
+    root = _character_root()
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = root / path
+    real = path.resolve()
+    if not real.is_relative_to(root):
+        raise ValueError("reference must be one of the saved character pictures")
+    if real.suffix.lower() not in _REFERENCE_SUFFIXES or not real.is_file():
+        raise ValueError("reference must be one of the saved character pictures")
+    if real.stat().st_size > _REFERENCE_MAX_BYTES:
+        raise ValueError("reference picture is too large")
+    return str(real)
+
+
 def _skill_craft(name: str, prompt: str) -> str:
     """Bound what the request may contain while the hands are still new."""
     try:
@@ -1004,14 +1041,18 @@ def _make_image(args, session_id="", **kwargs):
     prompt = " ".join(str(args.get("prompt") or "").split())
     if not prompt:
         return json.dumps({"ok": False, "error": "describe the image first"}, ensure_ascii=False)
+    aspect = str(args.get("aspect_ratio") or "1:1")
+    reference = str(args.get("reference") or "").strip()
+    if args.get("character") and not reference:
+        reference = _character_image()
+    try:
+        reference = _reference_image(reference)  # validate before spending the quota
+    except (OSError, ValueError) as exc:
+        return json.dumps({"ok": False, "error": str(exc)[:200]}, ensure_ascii=False)
     if not _budget.spend(f"imagegen:{chat_id}", IMAGE_GEN_PER_DAY):
         return json.dumps({"ok": False, "error": f"今天已经画过 {IMAGE_GEN_PER_DAY} 张了，明天再说。"},
                           ensure_ascii=False)
-    aspect = str(args.get("aspect_ratio") or "1:1")
-    reference = str(args.get("reference") or "")
     if args.get("character"):
-        if not reference:
-            reference = _character_image()
         prompt = f"{prompt}。{CHARACTER_BRIEF}"
         flavor = _mood_flavor()
         if flavor:
@@ -2581,7 +2622,7 @@ def register(ctx) -> None:
                     "aspect_ratio": {"type": "string", "enum": ["1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9"],
                                      "default": "1:1"},
                     "reference": {"type": "string", "maxLength": 2000,
-                                  "description": "Optional image (URL or path under the character folder) to keep the subject from."},
+                                  "description": "Optional saved character still (file name in the character folder) to keep the subject from."},
                     "character": {"type": "boolean", "default": False,
                                   "description": "True when the picture is of you: uses your saved character still as the reference."},
                     "look": {"type": "string", "enum": ["auto", "anime", "photo"], "default": "auto",

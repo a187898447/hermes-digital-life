@@ -198,6 +198,7 @@ class HandlerTests(unittest.TestCase):
         with mock.patch.object(self.minimax, "create_image", fake_create), \
                 mock.patch.object(self.hl, "_mood_flavor", lambda: "情绪底色是来劲，体力72"), \
                 mock.patch.object(self.hl, "_character_image", lambda: "/tmp/ref.jpg"), \
+                mock.patch.object(self.hl, "_reference_image", lambda value: value), \
                 mock.patch.object(self.budget, "spend", return_value=True), \
                 mock.patch.object(self.hl, "_run_media_later", self._inline):
             self.hl._make_image({"prompt": "坐在窗台上", "character": True}, session_id="s-media")

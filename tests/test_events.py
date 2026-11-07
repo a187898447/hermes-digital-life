@@ -1618,6 +1618,74 @@ class BridgeProcessTests(unittest.TestCase):
         self.assertIsNone(proc.poll())
 
 
+class MakeImageTests(unittest.TestCase):
+    def setUp(self):
+        import importlib
+        import tempfile
+        hl = sys.modules["hermes_plugins.digital_life"]
+        self.hl = hl
+        self.budget = importlib.import_module("hermes_plugins.digital_life.digital_life.budget")
+        self.minimax = importlib.import_module("hermes_plugins.digital_life.digital_life.minimax")
+        self.outbox = importlib.import_module("hermes_plugins.digital_life.digital_life.outbox")
+        importlib.import_module("hermes_plugins.digital_life.digital_life.skills")
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        (self.root / "outbox").mkdir()
+        (self.root / "character").mkdir()
+        (self.root / "character" / "ref-1.jpg").write_bytes(b"jpeg")
+        (self.root / "secret.txt").write_bytes(b"secret")
+        self.created = []
+        hl._TURN_META["s-img"] = {"platform": "qqbot"}
+        self.addCleanup(hl._TURN_META.pop, "s-img", None)
+        self.patches = [
+            patch.object(self.outbox, "root_dir", return_value=self.root / "outbox"),
+            patch.object(hl, "_session_scope", lambda session_id: ("chat-1", "dm")),
+            patch.object(hl, "_send_media_now", lambda *args: None),
+            patch.object(hl, "_skill_grant", lambda *args, **kwargs: None),
+            patch.object(hl, "_run_media_later", lambda work: (work(), True)[1]),
+        ]
+        for item in self.patches:
+            item.start()
+            self.addCleanup(item.stop)
+
+    def test_a_reference_outside_the_character_folder_is_refused(self):
+        hl = self.hl
+        with patch.object(self.budget, "spend") as spend, \
+                patch.object(self.minimax, "create_image") as create:
+            for ref in (str(self.root / "secret.txt"), "../../secret.txt",
+                        "https://example.com/a.jpg", "file:///etc/passwd"):
+                with self.subTest(reference=ref):
+                    out = json.loads(hl._make_image({"prompt": "海", "reference": ref},
+                                                    session_id="s-img"))
+                    self.assertFalse(out["ok"])
+                    self.assertIn("character", out["error"])
+        create.assert_not_called()
+        spend.assert_not_called()
+
+    def test_a_saved_character_still_is_used(self):
+        hl = self.hl
+        with patch.object(self.budget, "spend", return_value=True), \
+                patch.object(self.minimax, "create_image",
+                             return_value="/tmp/pic.jpeg") as create:
+            out = json.loads(hl._make_image({"prompt": "海", "reference": "ref-1.jpg"},
+                                            session_id="s-img"))
+        self.assertTrue(out["ok"])
+        self.assertEqual(create.call_args.kwargs["reference"],
+                         str((self.root / "character" / "ref-1.jpg").resolve()))
+
+    def test_character_mode_falls_back_to_the_saved_still(self):
+        hl = self.hl
+        with patch.object(self.budget, "spend", return_value=True), \
+                patch.object(self.minimax, "create_image",
+                             return_value="/tmp/pic.jpeg") as create:
+            out = json.loads(hl._make_image({"prompt": "海", "character": True},
+                                            session_id="s-img"))
+        self.assertTrue(out["ok"])
+        self.assertEqual(create.call_args.kwargs["reference"],
+                         str((self.root / "character" / "ref-1.jpg").resolve()))
+
+
 class MediaOutsiderTests(unittest.TestCase):
     def test_a_foreign_image_tool_is_turned_away(self):
         out = plugin._gate_tool_call("apikey-image-gen", session_id="s-media")
