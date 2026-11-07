@@ -1948,6 +1948,36 @@ class AudioPathTests(unittest.TestCase):
                 self.hl._audio_path(name, "chat-1")
 
 
+class MediaDeliveryTests(unittest.TestCase):
+    def setUp(self):
+        from test_events import plugin
+        self.hl = plugin
+
+    def tearDown(self):
+        self.hl._DELIVERED.pop("chat-1", None)
+
+    def test_a_sent_picture_is_not_still_pending_in_the_next_prompt(self):
+        self.hl._note_delivery("chat-1", "/tmp/outbox/chat/image-1-42.jpg", now_ms=1_000_000)
+        line = self.hl._delivered_line("chat-1", now_ms=1_030_000)
+        self.assertIn("图片", line)
+        self.assertIn("已经发出去", line)
+
+    def test_sending_media_records_it_for_this_chat_only(self):
+        sent = []
+        with (
+            patch.object(self.hl, "_wait_for_quiet_turn"),
+            patch.object(self.hl, "_host_send_message_tool", return_value=lambda payload: sent.append(payload)),
+        ):
+            self.hl._send_media_now("chat-1", "/tmp/outbox/x/speech-2.mp3")
+        self.assertEqual(len(sent), 1)
+        self.assertIn("语音", self.hl._delivered_line("chat-1"))
+        self.assertEqual(self.hl._delivered_line("chat-2"), "")
+
+    def test_the_delivery_note_expires(self):
+        self.hl._note_delivery("chat-1", "/tmp/outbox/x/image-1.jpg", now_ms=1_000_000)
+        self.assertEqual(self.hl._delivered_line("chat-1", now_ms=1_000_000 + 13 * 3600 * 1000), "")
+
+
 class MediaOutsiderTests(unittest.TestCase):
     def test_a_foreign_image_tool_is_turned_away(self):
         out = plugin._gate_tool_call("apikey-image-gen", session_id="s-media")

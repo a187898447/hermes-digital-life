@@ -1127,12 +1127,63 @@ def _caption_to_repeat(caption: str, recent: list[str]) -> str:
     return "\n".join(kept)
 
 
+_DELIVERED: dict[str, list[dict[str, Any]]] = {}
+_DELIVERED_LOCK = threading.Lock()
+_DELIVERED_TTL_MS = 12 * 3600 * 1000
+_DELIVERED_MAX = 5
+
+
+def _media_label(path) -> str:
+    name = Path(str(path)).name
+    if name.startswith("image-"):
+        return "图片"
+    if name.startswith("speech-"):
+        return "语音"
+    if name.startswith("video-"):
+        return "视频"
+    return "媒体"
+
+
+def _note_delivery(chat_id: str, path, now_ms: float | None = None) -> None:
+    """Remember what this chat already received.
+
+    Media is generated off the turn and sent by a worker afterwards, so the model
+    never sees a delivery result. Without this ledger the next reply still talks as
+    if the picture were "on its way" or "for tomorrow" after the other side got it.
+    """
+    if not chat_id:
+        return
+    stamp = float(now_ms if now_ms is not None else time.time() * 1000)
+    with _DELIVERED_LOCK:
+        items = [item for item in _DELIVERED.get(chat_id, [])
+                 if stamp - item["at"] < _DELIVERED_TTL_MS]
+        items.append({"at": stamp, "label": _media_label(path)})
+        _DELIVERED[chat_id] = items[-_DELIVERED_MAX:]
+
+
+def _delivered_line(chat_id: str, now_ms: float | None = None) -> str:
+    if not chat_id:
+        return ""
+    stamp = float(now_ms if now_ms is not None else time.time() * 1000)
+    with _DELIVERED_LOCK:
+        items = [item for item in _DELIVERED.get(chat_id, [])
+                 if stamp - item["at"] < _DELIVERED_TTL_MS]
+        _DELIVERED[chat_id] = items
+    if not items:
+        return ""
+    parts = [f"{time.strftime('%H:%M', time.localtime(item['at'] / 1000))}{item['label']}"
+             for item in items]
+    return (f"这个会话已经发出去的：[{'、'.join(parts)}]。它们已经在对方手机里了，"
+            f"不要再说「等会儿到」「明天你就看见了」。")
+
+
 def _send_media_now(chat_id: str, path, caption: str = "") -> None:
     _wait_for_quiet_turn()
     caption = _caption_to_repeat(caption, _RECENT_BUBBLES.get(chat_id, []))
     sender = _host_send_message_tool()
     message = f"{caption}\nMEDIA:{path}" if caption else f"MEDIA:{path}"
     sender({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
+    _note_delivery(chat_id, path)
 
 
 def _send_text_now(chat_id: str, text: str) -> None:
@@ -1567,8 +1618,10 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     )
     note = digital_life.runtime.affect_note(now_ms, include_time=_asks_time(request))
     now_line = _now_line(state, now_ms) if _life_enabled() else ""
-    if now_line:
-        note = f"{now_line}\n{note}" if note else now_line
+    delivered = _delivered_line(scope or "", now_ms)
+    prefix = "\n".join(part for part in (now_line, delivered) if part)
+    if prefix:
+        note = f"{prefix}\n{note}" if note else prefix
     # PRD M7.2 order: stress directive, then affect snapshot, then reordered memory.
     directive = digital_life.domain.stress_directive(state["chemistry"]["cortisol"])
     wake_text = digital_life.runtime.wake_section(state, now_ms, chat_id=scope or "")
