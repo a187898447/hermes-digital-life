@@ -162,12 +162,17 @@ _WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "�
 _PHASE_WORDS = {"sleep": "夜里", "morning": "早上", "day": "白天", "evening": "傍晚", "late": "深夜"}
 
 
+CHARACTER_BRIEF = ("深蓝渐变长发、耳部位置是蓝色鲸鳍耳而不是人类耳朵、宝石蓝眼睛、"
+                   "白蕾丝发带配蓝蝴蝶结、身后蓝色鲸尾、深蓝女仆裙配白围裙和蓝宝石胸针，"
+                   "2D 动漫插画，平涂赛璐璐上色")
+
+
 def _character_image() -> str:
     """The still that anchors generated pictures and clips of the character."""
     from .digital_life import outbox as _outbox  # noqa: PLC0415
 
     root = _outbox.root_dir().parent / "character"
-    for name in ("ref-5.jpg", "ref-1.jpg", "canon.jpg", "canon.png"):
+    for name in ("ref-1.jpg", "ref-5.jpg", "canon.jpg", "canon.png"):
         path = root / name
         if path.is_file():
             return str(path)
@@ -904,8 +909,10 @@ def _make_image(args, session_id="", **kwargs):
                           ensure_ascii=False)
     aspect = str(args.get("aspect_ratio") or "1:1")
     reference = str(args.get("reference") or "")
-    if args.get("character") and not reference:
-        reference = _character_image()
+    if args.get("character"):
+        if not reference:
+            reference = _character_image()
+        prompt = f"{prompt}。{CHARACTER_BRIEF}"
     caption = " ".join(str(args.get("caption") or "").split())
 
     skilled = _skill_craft("make_image", prompt)
@@ -1014,6 +1021,8 @@ def _make_video(args, session_id="", **kwargs):
         return json.dumps({"ok": False,
                            "error": f"今天已经做过 {VIDEO_GEN_PER_DAY} 个视频了，明天再说。"},
                           ensure_ascii=False)
+    if args.get("character"):
+        prompt = f"{prompt}。{CHARACTER_BRIEF}"
     skilled = _skill_craft("make_video", prompt)
     first_frame = _character_image() if args.get("character") else ""
     try:
