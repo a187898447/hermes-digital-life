@@ -52,6 +52,17 @@ def once(now_ms: float | None = None, *, force: bool = False) -> dict[str, Any]:
         from . import affect
 
         affect.refresh(current, now)
+        from . import skills
+
+        trained = []
+        for item in stepped["finished"]:
+            if item.get("kind") != "practice":
+                continue
+            name = str((item.get("source") or {}).get("name") or "")
+            if name:
+                gained = skills.gain(current, name, amount=skills.GAIN_PRACTICE)
+                trained.append({**gained, "label": skills.NAMES.get(name, name)})
+        done["trained"] = trained
         from . import gaps
 
         done["faded"] = gaps.fade_stale(current, now)

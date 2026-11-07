@@ -130,6 +130,7 @@ def default_state(now_ms: float) -> dict[str, Any]:
     temperament = dict(_CONFIG_TEMPERAMENT or DEFAULT_TEMPERAMENT)
     chemistry = ChemicalPool().initial_chemistry(temperament)
     from . import life as life_module  # noqa: PLC0415 - life imports library, keep state creation light
+    from . import skills as skills_module  # noqa: PLC0415
 
     return {"schema_version": 1, "chemistry": chemistry, "energy": 100.0, "temperament": temperament,
             "last_interaction_at": now_ms, "last_settled_at": now_ms, "gaps": [],
@@ -137,6 +138,7 @@ def default_state(now_ms: float) -> dict[str, Any]:
             "wake": wake_default(),
             "life": life_module.new_life_state(now_ms),
             "mood": {"label": "平常", "since": now_ms, "valence": 0.0, "arousal": 0.0},
+            "skills": skills_module.new_skills(),
             "affect_history": [],
             "affect_events": {"day": "", "total": 0.0, "cooldowns": {}}}
 
@@ -185,6 +187,8 @@ def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
 
     state["wake"] = wake_module.normalize_wake(raw.get("wake"))
     state["life"] = life_module.normalize_life(raw.get("life"))
+    from . import skills as skills_module  # noqa: PLC0415
+    state["skills"] = skills_module.normalize_skills(raw.get("skills"))
     mood = raw.get("mood")
     if isinstance(mood, dict):
         state["mood"] = {

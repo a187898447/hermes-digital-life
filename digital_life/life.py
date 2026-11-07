@@ -20,13 +20,14 @@ MAX_AGENDA = 8
 MAX_TRACES = 20
 LIFE_PULSE_CAP = 20.0
 QUIET_HOURS = (0, 6)
-KINDS = ("read", "think", "note", "rest")
+KINDS = ("read", "think", "note", "practice", "rest")
 AGENDA_SIZE = {"疲惫": 2, "低落": 2, "烦躁": 2, "来劲": 5, "平常": 4}
-MINUTES = {"read": 25, "think": 15, "note": 10, "rest": 20}
+MINUTES = {"read": 25, "think": 15, "note": 10, "practice": 15, "rest": 20}
 PULSES = {
     "read": {"dopamine": 4.0, "serotonin": 1.0},
     "think": {"dopamine": 2.0},
     "note": {"dopamine": 3.0},
+    "practice": {"dopamine": 3.0, "serotonin": 1.0},
     "rest": {"cortisol": -4.0, "serotonin": 2.0},
     "dropped": {"cortisol": 3.0},
 }
@@ -99,7 +100,8 @@ def agenda_size(mood_label: str) -> int:
 
 
 def build_agenda(now_ms: float, *, mood_label: str = "平常", books: Iterable[dict] | None = None,
-                 gaps: Iterable[dict] | None = None) -> list[dict[str, Any]]:
+                 gaps: Iterable[dict] | None = None,
+                 skills_state: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     """Deterministic agenda for one local day: no model call, same input same plan."""
     size = max(1, min(MAX_AGENDA, agenda_size(mood_label)))
     book = _next_book(books)
@@ -112,6 +114,9 @@ def build_agenda(now_ms: float, *, mood_label: str = "平常", books: Iterable[d
         gap = open_gaps[0]
         plan.append(("think", f"想想「{str(gap.get('summary') or '')[:18]}」", gap))
     plan.append(("note", "记一笔", None))
+    practice = _practice_target(skills_state)
+    if practice is not None:
+        plan.append(("practice", f"练一练{practice['label']}", practice))
     if rest:
         plan.append(("rest", "歇一会儿", None))
     while len(plan) < size:
@@ -138,7 +143,25 @@ def _source(kind: str, extra: Any) -> dict[str, Any]:
         return {"type": "library", "file": str(extra.get("file") or "")}
     if kind == "think" and isinstance(extra, dict):
         return {"type": "gap", "id": str(extra.get("id") or "")}
+    if kind == "practice" and isinstance(extra, dict):
+        return {"type": "skill", "name": str(extra.get("name") or "")}
     return {}
+
+
+def _practice_target(skills_state: dict[str, Any] | None) -> dict[str, str] | None:
+    """The weakest media skill still short of 熟练, if any is left to train."""
+    from . import skills as skills_module  # noqa: PLC0415 - only needed when planning
+
+    state = skills_state if isinstance(skills_state, dict) else None
+    if state is None:
+        return None
+    try:
+        name = skills_module.weakest(state, ["make_image", "make_video", "make_speech"])
+    except ValueError:
+        return None
+    if skills_module.level(state, name) >= 3:
+        return None
+    return {"name": name, "label": skills_module.NAMES.get(name, name)}
 
 
 def current(state: dict[str, Any]) -> dict[str, Any] | None:
@@ -163,7 +186,8 @@ def step(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
     if life.get("day") != today:
         life["day"] = today
         life["agenda"] = build_agenda(now_ms, mood_label=_mood_label(state),
-                                      books=_books(), gaps=state.get("gaps"))
+                                      books=_books(), gaps=state.get("gaps"),
+                                      skills_state=state.get("skills"))
         life["current"] = None
 
     running = current(state)
@@ -223,6 +247,8 @@ def _finish(state: dict[str, Any], item: dict[str, Any], now_ms: float) -> dict[
         trace = _finish_think(state, item, source, now_ms)
     elif kind == "note":
         trace = _finish_note(state, now_ms)
+    elif kind == "practice":
+        trace = _finish_practice(item, source, now_ms)
     else:
         trace = None  # rest leaves no trace
     item["status"] = "done" if (trace is not None or kind == "rest") else "dropped"
@@ -261,6 +287,18 @@ def _finish_think(state: dict[str, Any], item: dict[str, Any], source: dict[str,
         return None
     return {"at": now_ms, "kind": "think", "title": item["title"],
             "text": f"又琢磨了一下「{summary[:60]}」。", "source": {"type": "gap", "id": gap_id},
+            "share": False}
+
+
+def _finish_practice(item: dict[str, Any], source: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
+    from . import skills as skills_module  # noqa: PLC0415
+
+    name = str(source.get("name") or "")
+    if name not in skills_module.NAMES:
+        return None
+    label = skills_module.NAMES[name]
+    return {"at": now_ms, "kind": "practice", "title": item["title"],
+            "text": f"练了一会儿{label}，手比上一次稳一点。", "source": {"type": "skill", "name": name},
             "share": False}
 
 
