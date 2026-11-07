@@ -190,9 +190,34 @@ class MemoryTests(unittest.TestCase):
         ):
             plugin._JOURNAL_CHECK("qqbot", "chat-a")
             self.assertEqual(spawned.call_count, 1)
-            plugin._JOURNAL_PROMPTED[("2026-11-01", "chat-a")] = time.time() - plugin.JOURNAL_RETRY_SECONDS - 1
+            plugin._JOURNAL_PROMPTED[("2026-11-01", "chat-a")] = {
+                "at": time.time() - plugin.JOURNAL_RETRY_SECONDS - 1, "attempts": 1.0}
             plugin._JOURNAL_CHECK("qqbot", "chat-a")
         self.assertEqual(spawned.call_count, 2)
+
+    def test_a_journal_that_keeps_failing_stops_after_a_few_attempts(self):
+        from test_events import plugin, RecordingContext
+        import importlib
+        host_storage = importlib.import_module("hermes_plugins.digital_life.digital_life.storage")
+        research_mod = importlib.import_module("hermes_plugins.digital_life.digital_life.research")
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default: True
+        plugin.register(ctx)
+        plugin._JOURNAL_PROMPTED.clear()
+        plugin._FACT_PROMPTED.clear()
+        self.store.write("一直写不成日记的那天", kind="turn", day="2026-11-01")
+        with (
+            patch.object(host_storage, "data_root", return_value=self.root),
+            patch.object(host_storage, "plugin_db",
+                         side_effect=lambda name, filename: sqlite3.connect(self.root / filename)),
+            patch.object(research_mod, "spawn_task", return_value=True) as spawned,
+            patch.object(memory, "day_key", return_value="2026-11-07"),
+        ):
+            for _ in range(5):
+                plugin._JOURNAL_CHECK("qqbot", "chat-a")
+                for state in list(plugin._JOURNAL_PROMPTED.values()) + list(plugin._FACT_PROMPTED.values()):
+                    state["at"] = 0.0  # pretend the cooldown always elapsed
+        self.assertEqual(spawned.call_count, plugin.JOURNAL_MAX_ATTEMPTS)
 
     def test_journal_owed_days_are_per_chat_and_caches_are_bounded(self):
         from test_events import plugin, RecordingContext

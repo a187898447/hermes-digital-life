@@ -193,7 +193,7 @@ class HandlerTests(unittest.TestCase):
             out = json.loads(self.hl._make_image({"prompt": "一只橘猫"}, session_id="s-media"))
         self.assertTrue(out["ok"])
         self.assertEqual(len(drawn), 1)
-        self.assertEqual(out["path"], "/tmp/x.jpeg")
+        self.assertEqual(out["file"], "x.jpeg")
 
     def test_the_heads_up_line_goes_out_before_the_drawing(self):
         from pathlib import Path as P

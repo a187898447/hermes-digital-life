@@ -91,9 +91,10 @@ def _remember(cache: dict[str, object], key: str, value: object) -> None:
 _CAPTURE = None
 _JOURNAL_CHECK = None
 _CTX = None
-_JOURNAL_PROMPTED: dict[tuple[str, str], float] = {}
-_FACT_PROMPTED: dict[tuple[str, str], float] = {}
+_JOURNAL_PROMPTED: dict[tuple[str, str], dict[str, float]] = {}
+_FACT_PROMPTED: dict[tuple[str, str], dict[str, float]] = {}
 JOURNAL_RETRY_SECONDS = 1800.0  # a run that wrote nothing is retried after this
+JOURNAL_MAX_ATTEMPTS = 3  # then stop: a day stuck owed must not spawn a child forever
 _MEMORY_STORE: dict[str, object] = {}
 # Recall results are summaries for the model, not a dump of the palace.
 RECALL_SNIPPET_CHARS = 220
@@ -1277,7 +1278,7 @@ def _make_image(args, session_id="", **kwargs):
         _refund_media("imagegen", chat_id)
         return json.dumps({"ok": False, "error": "发送队列满了，这张先不发了，等一下再试。"},
                           ensure_ascii=False)
-    return json.dumps({"ok": True, "path": str(path),
+    return json.dumps({"ok": True, "file": os.path.basename(str(path)),
                        "message": "画好了；你这条回复发出去之后，图就跟到。"},
                       ensure_ascii=False)
 
@@ -1326,7 +1327,7 @@ def _make_speech(args, session_id="", **kwargs):
         _refund_media("speech", chat_id)
         return json.dumps({"ok": False, "error": "发送队列满了，这段先不发了，等一下再试。"},
                           ensure_ascii=False)
-    return json.dumps({"ok": True, "path": str(path),
+    return json.dumps({"ok": True, "file": os.path.basename(str(path)),
                        "message": "录好了；你这条回复发出去之后，语音就跟到。"},
                       ensure_ascii=False)
 
@@ -2171,12 +2172,22 @@ def register(ctx) -> None:
         gate = chat_id or "-"
         now = time.time()
 
-        def _recent(prompted: dict[tuple[str, str], float], day: str) -> bool:
-            stamped = prompted.get((day, gate))
-            return stamped is not None and now - stamped < JOURNAL_RETRY_SECONDS
+        def _blocked(prompted: dict[tuple[str, str], dict[str, float]], day: str) -> bool:
+            state = prompted.get((day, gate))
+            if not isinstance(state, dict):
+                return False
+            if state.get("attempts", 0) >= JOURNAL_MAX_ATTEMPTS:
+                return True
+            return now - float(state.get("at") or 0.0) < JOURNAL_RETRY_SECONDS
 
-        fact_day = owed_facts[0] if owed_facts and not _recent(_FACT_PROMPTED, owed_facts[0]) else ""
-        journal_day = owed[0] if owed and not _recent(_JOURNAL_PROMPTED, owed[0]) else ""
+        # A day that stopped being owed (written, or revoked days later) starts over;
+        # otherwise one permanently failing day would be retried until the process ends.
+        for prompted, days in ((_FACT_PROMPTED, set(owed_facts)), (_JOURNAL_PROMPTED, set(owed))):
+            for key in [item for item in prompted if item[1] == gate and item[0] not in days]:
+                prompted.pop(key, None)
+
+        fact_day = owed_facts[0] if owed_facts and not _blocked(_FACT_PROMPTED, owed_facts[0]) else ""
+        journal_day = owed[0] if owed and not _blocked(_JOURNAL_PROMPTED, owed[0]) else ""
         if not fact_day and not journal_day:
             return None
         from .digital_life import research as _research  # noqa: PLC0415
@@ -2184,10 +2195,13 @@ def register(ctx) -> None:
         started = _research.spawn_task(prompt, chat_id, send=lambda *_args: None,
                                        kind="journal")
         if started:
-            if fact_day:
-                _FACT_PROMPTED[(fact_day, gate)] = now
-            if journal_day:
-                _JOURNAL_PROMPTED[(journal_day, gate)] = now
+            for prompted, day in ((_FACT_PROMPTED, fact_day), (_JOURNAL_PROMPTED, journal_day)):
+                if not day:
+                    continue
+                state = prompted.get((day, gate)) or {"at": 0.0, "attempts": 0.0}
+                state["at"] = now
+                state["attempts"] = float(state.get("attempts") or 0.0) + 1.0
+                prompted[(day, gate)] = state
         return None
     _JOURNAL_CHECK = journal_check
 
