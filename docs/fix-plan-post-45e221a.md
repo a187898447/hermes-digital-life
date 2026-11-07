@@ -14,12 +14,12 @@
    - P0-2：`reference` 是模型能填的任意字符串，却被当作可信文件路径。
    - P0-3：计费与执行顺序、以及「记不了账就放行」的 fail-open，让配额从约束变成装饰。
 2. 修法都落在**代码边界**：身份看 `state.db.sessions.source`（宿主写入），路径先 `resolve` 再 `is_relative_to`，计费先判上限再原子落盘。没有在提示词或输出上做过滤。
-3. 当前状态：P0 已改完，`572 tests OK`（原 557，新增 15 条回归）。P1/P2 未动。
+3. 当前状态：P0、P1-4、P1-5 已改完，`579 tests OK`（原 557，新增 22 条回归）。P2 未动。
 4. P1-4/P1-5 的本质是**生活层和媒体目录默认全局**；修法是让「没有 chat 的产物」显式标注，而不是默认共享。
 
 ---
 
-## 1. 已实施（P0，工作树未提交）
+## 1. 已实施（P0）
 
 ### P0-1 子会话标签可伪造
 
@@ -78,12 +78,25 @@
 
 ---
 
-## 2. 待做
+## 2. 已实施（P1-4 / P1-5）
+
+- P1-4：`build_agenda` 的 think 项只写泛化标题 `_THINK_TITLE`（`step` 顺带擦掉旧 state 里带 summary 的标题）；
+  `_finish_think` 的 trace 文本不再回放 summary，并把 `gap.chat` 记到 trace 上；
+  `life.remember` 把 `chat` 传给 writer，`life_writer` 按该 chat 写入 `kind="life"`（无 chat 的读/练痕迹仍是全局）；
+  `beat_targets` 只交出 `share` 且没有 chat 归属的 trace，chat 内的 share trace 不再广播给所有订阅私聊。
+- 偏差：没有改 `library.ingest` 记来源 chat。书是 operator 共享的资料，read trace 不含任何会话的文本，
+  因此按全局处理；如果以后书单来自某个会话，再补来源归属。
+- P1-5：`outbox.chat_dir(chat_id)` 用 `sha1(chat_id)[:16]` 分子目录；`write_bytes`/`minimax.create_image`/
+  `create_speech`/`download` 都带 `chat_id` 写入该目录；`resolve(name, chat_id)` 只查调用方目录 + 根目录（operator 投放），
+  且只接受不含子目录的平铺文件名，另一个 chat 的目录名也走不进去；`_audio_path(value, chat_id)` 只接受调用方目录 + inbox。
+- 回归：`tests/test_outbox.py`（chat 隔离/根目录共享/子目录名拒绝）、`tests/test_minimax.py`（download 传 chat_id）、
+  `tests/test_events.py`（另一个 chat 的媒体不能 share、`_audio_path` 拒绝共享根目录与他人目录）、
+  `tests/test_life.py`（think 标题/trace 泛化且带 chat、旧标题擦除、writer 收 chat）。
+
+## 3. 待做（P2）
 
 | # | 问题 | 修法（最小改动） | 估时 |
 |---|---|---|---|
-| P1-4 | 生活层全局：日程 `想想「summary[:18]」`、`_finish_think` 写全文、`life_writer` 以空 chat 写全局、beat 把 share trace 发给所有订阅私聊 | agenda 的 think 标题不含 summary；trace 写 gap 所属 chat；`beat_targets` 只发 `chat==""` 或目标 chat 的订阅者；`library.ingest` 记来源 chat，read trace 按来源归属 | 4h |
-| P1-5 | 媒体全局可见：outbox 单目录、文件名不含 chat、`share_video` 可发任意 outbox 文件、`_audio_path` 可转写别人语音 | outbox 按 `sha1(chat_id)[:16]` 分子目录；minimax 三个生成器与 download 带 chat_id 写入；`resolve`/`_audio_path` 只允许调用方目录 + 根目录（operator 投放）+ inbox | 4h |
 | P2-1 | `download_url` 不走 netguard、重定向带 Authorization | 复用 `netguard` 的公网校验，禁重定向或剥离敏感头 | 1h |
 | P2-2 | `response.read()` 无上限、`ASR_MAX_SECONDS` 死代码 | 读上限 + 真正使用时长校验 | 0.5h |
 | P2-3 | 远端错误体 300 字回 QQ | 只回状态码 + 本地文案，错误体进日志 | 0.5h |
@@ -101,7 +114,7 @@ P1-4 / P1-5 建议一起做：两者都是「产物默认全局」，共用「ch
 
 ---
 
-## 3. 发布
+## 4. 发布
 
 1. 按三项拆三个 commit：`fix(subchild): trust the host session source, not the prompt tag`、`fix(image): only accept saved character stills as reference`、`fix(quota): charge before spending, fail closed, cap per profile`。每项测试独立可跑。
 2. profile 的插件是软链，改动即线上代码；`/restart`（或 `hermes gateway restart`）后才加载。
@@ -112,7 +125,7 @@ P1-4 / P1-5 建议一起做：两者都是「产物默认全局」，共用「ch
 
 ---
 
-## 4. 遗留决策
+## 5. 遗留决策
 
 - profile 总额取单 chat 的 2 倍左右（6/12/20/40）；如果实际用户只有一两个 chat，这个上限基本不会触发，真正起作用的是单 chat 上限。
 - P2-7 的 polish 默认值涉及人设体验，改动前需要确认线上是否依赖 `always`。
