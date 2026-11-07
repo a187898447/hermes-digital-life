@@ -156,7 +156,7 @@ def _practice_target(skills_state: dict[str, Any] | None) -> dict[str, str] | No
     if state is None:
         return None
     try:
-        name = skills_module.weakest(state, ["make_image", "make_video", "make_speech"])
+        name = skills_module.weakest(state, ["make_image", "make_video"])
     except ValueError:
         return None
     if skills_module.level(state, name) >= 3:

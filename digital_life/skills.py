@@ -14,8 +14,6 @@ SCHEMA = 1
 NAMES = {
     "make_image": "画图",
     "make_video": "拍视频",
-    "make_speech": "说话",
-    "transcribe_audio": "听写",
 }
 THRESHOLDS = (0, 30, 90, 200)
 LABELS = ("手生", "能看", "像样", "熟练")

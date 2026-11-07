@@ -21,9 +21,9 @@ class SkillLevelTests(unittest.TestCase):
 
     def test_a_failure_counts_less_than_a_success(self):
         state = {"skills": skills.new_skills()}
-        skills.gain(state, "make_speech", ok=False)
-        self.assertEqual(skills.entry(state, "make_speech")["xp"], skills.GAIN_FAIL)
-        self.assertEqual(skills.entry(state, "make_speech")["uses"], 0)
+        skills.gain(state, "make_image", ok=False)
+        self.assertEqual(skills.entry(state, "make_image")["xp"], skills.GAIN_FAIL)
+        self.assertEqual(skills.entry(state, "make_image")["uses"], 0)
 
 
 class CraftTests(unittest.TestCase):
@@ -66,7 +66,7 @@ class PracticeTests(unittest.TestCase):
 
     def test_no_practice_once_every_hand_is_skilled(self):
         state = {"skills": skills.new_skills()}
-        for name in ("make_image", "make_video", "make_speech"):
+        for name in ("make_image", "make_video"):
             state["skills"]["levels"][name] = {"xp": 400, "uses": 40, "level": 3}
         agenda = life.build_agenda(1_760_000_000_000, mood_label="平常", skills_state=state)
         self.assertNotIn("practice", [item["kind"] for item in agenda])
