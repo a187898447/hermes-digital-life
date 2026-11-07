@@ -40,6 +40,10 @@ READ_SOURCE_TURN_LIMIT = 3
 READ_SOURCE_DAILY_INGESTS = 40
 VIDEO_PER_DAY = 2
 VIDEO_GEN_PER_DAY = 3
+IMAGE_GEN_PER_DAY = 6
+TRANSCRIBE_PER_DAY = 20
+MINIMAX_TOOLS = ("make_video", "make_image", "transcribe_audio")
+_MODEL_SEEN = {"name": ""}
 OPEN_LOOP_SHOWN = 3
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
 _CACHE_LIMIT = 512
@@ -392,6 +396,9 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     if not tool_name or not session_id:
         return None
     kind = _child_kind(session_id)
+    if tool_name in MINIMAX_TOOLS and not _is_minimax_model():
+        return {"action": "block",
+                "message": "MiniMax 的图片/视频/语音工具只给 MiniMax 模型用；现在不是，先别调。"}
     if kind is not None:
         allow = {"study": {"read_source", "memory_write"},
                  "task": {"web_search", "web_extract", "read_source", "memory_write"},
@@ -425,7 +432,7 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     # outside world (search, zone, terminal, background jobs).
     if tool_name in ("read_source", "library_list", "memory_write", "memory_recall",
                      "memory_revoke", "digital_life_status", "close_gap", "share_video",
-                     "make_video",
+                     "make_video", "make_image", "transcribe_audio",
                      "study_source", "background_task", "search_later"):
         return None
     if tool_name == "skill_manage":
@@ -729,12 +736,12 @@ _VIDEO_JOBS_LOCK = threading.Lock()
 
 def _deliver_video(chat_id: str, task_id: str, prompt: str, key: str = "") -> None:
     """Wait for one Hailuo task, save it, and send it to the chat that asked."""
-    from .digital_life import budget as _budget, hailuo  # noqa: PLC0415
+    from .digital_life import budget as _budget, minimax as _minimax  # noqa: PLC0415
 
     send = _host_send_message_tool()
     try:
-        file_id = hailuo.wait(task_id, key=key)
-        path = hailuo.download(file_id, key=key)
+        file_id = _minimax.wait(task_id, key=key)
+        path = _minimax.download(file_id, key=key)
     except Exception as exc:  # noqa: BLE001
         logger.warning("hermes-lover video task %s failed", task_id, exc_info=True)
         if send is not None:
@@ -754,8 +761,93 @@ def _deliver_video(chat_id: str, task_id: str, prompt: str, key: str = "") -> No
         logger.warning("hermes-lover could not send a generated video", exc_info=True)
 
 
+def _media_chat(session_id: str) -> tuple[str, str]:
+    """The chat and platform a media call belongs to, or ("", "") when it is unusable."""
+    chat_id, _chat_type = _session_scope(session_id) or ("", "")
+    platform = (_TURN_META.get(session_id) or {}).get("platform") or _session_source(session_id)
+    return chat_id, platform or ""
+
+
+def _audio_path(value: str):
+    from .digital_life import library, outbox  # noqa: PLC0415
+
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("name an audio file first (in the inbox or outbox folder)")
+    if raw.startswith(("http://", "https://")):
+        raise ValueError("only local audio files can be transcribed")
+    path = Path(raw).expanduser()
+    if path.is_absolute():
+        real = path.resolve()
+        roots = [outbox.root_dir().resolve(), library.inbox_root().resolve()]
+        if not any(real.is_relative_to(root) for root in roots):
+            raise ValueError("audio must live in the inbox or outbox folder")
+        if not real.is_file():
+            raise ValueError(f"no such audio file: {raw}")
+        return real
+    for root in (library.inbox_root(), outbox.root_dir()):
+        candidate = (root / raw).resolve()
+        if candidate.is_relative_to(root.resolve()) and candidate.is_file():
+            return candidate
+    raise ValueError(f"no such audio file: {raw}")
+
+
+def _make_image(args, session_id="", **kwargs):
+    from .digital_life import budget as _budget, minimax as _minimax  # noqa: PLC0415
+
+    chat_id, platform = _media_chat(session_id)
+    if not chat_id:
+        return json.dumps({"ok": False, "error": "no chat to send to"}, ensure_ascii=False)
+    if platform != "qqbot":
+        return json.dumps({"ok": False, "error": "images only go to QQ chats"}, ensure_ascii=False)
+    prompt = " ".join(str(args.get("prompt") or "").split())
+    if not prompt:
+        return json.dumps({"ok": False, "error": "describe the image first"}, ensure_ascii=False)
+    if not _budget.spend(f"imagegen:{chat_id}", IMAGE_GEN_PER_DAY):
+        return json.dumps({"ok": False, "error": f"今天已经画过 {IMAGE_GEN_PER_DAY} 张了，明天再说。"},
+                          ensure_ascii=False)
+    try:
+        path = _minimax.create_image(prompt, aspect_ratio=str(args.get("aspect_ratio") or "1:1"),
+                                     reference=str(args.get("reference") or ""))
+    except Exception as exc:  # noqa: BLE001
+        _budget.refund(f"imagegen:{chat_id}")
+        return json.dumps({"ok": False, "error": str(exc)[:200]}, ensure_ascii=False)
+    caption = " ".join(str(args.get("caption") or "").split())
+    message = f"{caption}\nMEDIA:{path}" if caption else f"MEDIA:{path}"
+    try:
+        _host_send_message_tool()({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("hermes-lover could not send a generated image", exc_info=True)
+        _budget.refund(f"imagegen:{chat_id}")
+        return json.dumps({"ok": False, "error": f"画好了但没发出去：{str(exc)[:120]}"},
+                          ensure_ascii=False)
+    return json.dumps({"ok": True, "sent": str(path), "caption": caption}, ensure_ascii=False)
+
+
+def _transcribe_audio(args, session_id="", **kwargs):
+    from .digital_life import budget as _budget, minimax as _minimax  # noqa: PLC0415
+
+    chat_id, _platform = _media_chat(session_id)
+    try:
+        path = _audio_path(str(args.get("name") or args.get("path") or ""))
+    except ValueError as exc:
+        return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+    if chat_id and not _budget.spend(f"stt:{chat_id}", TRANSCRIBE_PER_DAY):
+        return json.dumps({"ok": False, "error": "今天已经转过 20 段语音了，明天再说。"},
+                          ensure_ascii=False)
+    try:
+        result = _minimax.transcribe(path, language=str(args.get("language") or ""))
+    except Exception as exc:  # noqa: BLE001
+        if chat_id:
+            _budget.refund(f"stt:{chat_id}")
+        return json.dumps({"ok": False, "error": str(exc)[:200]}, ensure_ascii=False)
+    text = str(result.get("text") or "")[:4000]
+    return json.dumps({"ok": True, "text": text, "duration": result.get("duration") or 0},
+                      ensure_ascii=False)
+
+
 def _make_video(args, session_id="", **kwargs):
-    from .digital_life import budget as _budget, hailuo  # noqa: PLC0415
+    from .digital_life import budget as _budget, minimax as _minimax  # noqa: PLC0415
 
     chat_id, _chat_type = _session_scope(session_id) or ("", "")
     if not chat_id:
@@ -777,7 +869,7 @@ def _make_video(args, session_id="", **kwargs):
                            "error": f"今天已经做过 {VIDEO_GEN_PER_DAY} 个视频了，明天再说。"},
                           ensure_ascii=False)
     try:
-        task_id, key = hailuo.create(prompt, duration=duration,
+        task_id, key = _minimax.create(prompt, duration=duration,
                                      resolution=str(args.get("resolution") or "768P"))
     except Exception as exc:  # noqa: BLE001
         _budget.refund(f"videogen:{chat_id}")
@@ -986,8 +1078,17 @@ def _asks_time(request: dict) -> bool:
     return False
 
 
+def _is_minimax_model(name: str = "") -> bool:
+    """Whether the model answering right now is one of MiniMax's own."""
+    model = " ".join(str(name or _MODEL_SEEN.get("name") or "").split()).lower()
+    return model.startswith("minimax")
+
+
 def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     now_ms = time.time() * 1000
+    model = request.get("model")
+    if isinstance(model, str) and model.strip():
+        _MODEL_SEEN["name"] = model.strip()
     record_request(now_ms)
     scope, _chat_type = _session_scope(str(kwargs.get("session_id") or ""))
     state = digital_life.runtime.status_snapshot(now_ms, scope=scope or None)
@@ -2166,8 +2267,44 @@ def register(ctx) -> None:
         description="Send one finished video from the outbox folder.",
     )
     ctx.register_tool(
+        name="make_image",
+        toolset="minimax_media",
+        schema={"name": "make_image",
+                "description": ("Draw one image from a text description with MiniMax image-01 "
+                                "and send it to this chat. Takes seconds. At most six per chat "
+                                "per day. Only MiniMax models may call this."),
+                "parameters": {"type": "object", "properties": {
+                    "prompt": {"type": "string", "maxLength": 1500,
+                               "description": "What should be in the picture: subject, setting, style, light."},
+                    "aspect_ratio": {"type": "string", "enum": ["1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9"],
+                                     "default": "1:1"},
+                    "reference": {"type": "string", "maxLength": 2000,
+                                  "description": "Optional public image URL to keep the subject from."},
+                    "caption": {"type": "string", "maxLength": 120,
+                                "description": "Optional one line to send with it."},
+                }, "required": ["prompt"], "additionalProperties": False}},
+        handler=_make_image,
+        description="Generate an image and send it to the chat.",
+    )
+    ctx.register_tool(
+        name="transcribe_audio",
+        toolset="minimax_media",
+        schema={"name": "transcribe_audio",
+                "description": ("Transcribe one audio file (a voice message someone saved into the "
+                                "inbox, or a file in the outbox) with MiniMax asr-1.0. Returns the "
+                                "text. Only MiniMax models may call this."),
+                "parameters": {"type": "object", "properties": {
+                    "name": {"type": "string", "maxLength": 300,
+                             "description": "File name inside the inbox/outbox folder, or an absolute path inside them."},
+                    "language": {"type": "string", "maxLength": 12,
+                                 "description": "Optional BCP-47 language like zh or en; leave empty to auto-detect."},
+                }, "required": ["name"], "additionalProperties": False}},
+        handler=_transcribe_audio,
+        description="Turn one audio file into text.",
+    )
+    ctx.register_tool(
         name="make_video",
-        toolset="digital_life",
+        toolset="minimax_media",
         schema={"name": "make_video",
                 "description": ("Generate a short video from a text description with MiniMax "
                                 "Hailuo and send it to this chat when it is done. Takes a few "

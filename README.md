@@ -163,6 +163,12 @@ QQ 会话里模型能调用的工具分几组，权限和预算都不一样：
   后台会话，后台只能用 `read_source` 和 `memory_write`（`pre_tool_call` 硬拦 terminal/搜索/代码执行），
   读完给会话回一句结论。
 - **空间**：`qzone_feed` 每轮最多 2 页、5 条，且调用前必须先 `memory_recall` 查这段是否读过。
+- **MiniMax 媒体**（toolset `minimax_media`，只有当前模型是 MiniMax 时才放行）：
+  `make_video` 用一句描述生成 6/10 秒视频（每天 3 条、最多 2 个并发，后台做完直接发）；
+  `make_image` 用 `image-01` 出图（1:1 到 21:9，可选参考图 URL，每天 6 张，直接发）；
+  `transcribe_audio` 用 `asr-1.0` 转写 `inbox/` 或 `outbox/` 里的一段音频（≤50MB、≤500 秒，每天 20 段）。
+  生成的视频/图片落在 `plugin-data/<profile>/outbox/`，需要主动重发时用 `share_video`。
+
 - **后台**：`background_task` / `search_later` 交出去后不占本轮预算，结果直接发回会话。
 - **只读状态**：`digital_life_status` 里 `proactive` 字段说明 beat 是否排程、今天响过几次、哪些工具只在
   定时轮可用；普通聊天轮调 `beat_send` 会被拒，这是设计，不是权限没开。同一个 chat 10 分钟内只发

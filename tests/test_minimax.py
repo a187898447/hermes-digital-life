@@ -1,7 +1,7 @@
 import unittest
 from unittest.mock import patch
 
-from digital_life import hailuo
+from digital_life import minimax as hailuo
 
 
 class CreateTests(unittest.TestCase):

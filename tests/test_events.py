@@ -449,7 +449,7 @@ class RegistrationTests(unittest.TestCase):
     def test_state_mutation_is_not_llm_callable_and_cli_control_is_registered(self):
         ctx = RecordingContext()
         plugin.register(ctx)
-        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "study_source", "background_task", "read_source", "library_list", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "memory_revoke", "digital_life_status", "close_gap", "share_video", "make_video"])
+        self.assertEqual([entry["name"] for entry in ctx.tools], ["beat_targets", "beat_send", "search_later", "study_source", "background_task", "read_source", "library_list", "qzone_bridge", "qzone_feed", "memory_write", "memory_recall", "memory_revoke", "digital_life_status", "close_gap", "share_video", "make_image", "transcribe_audio", "make_video"])
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertEqual(set(schemas["memory_write"]) & {"sources", "refs"}, {"sources", "refs"})
         self.assertIn("kind", schemas["memory_recall"])
@@ -1190,7 +1190,7 @@ class MakeVideoTests(unittest.TestCase):
         hl = sys.modules["hermes_plugins.digital_life"]
         self.hl = hl
         self.budget = importlib.import_module("hermes_plugins.digital_life.digital_life.budget")
-        self.hailuo = importlib.import_module("hermes_plugins.digital_life.digital_life.hailuo")
+        self.hailuo = importlib.import_module("hermes_plugins.digital_life.digital_life.minimax")
         self.sent = []
         hl._TURN_META["s-make"] = {"platform": "qqbot"}
         self.addCleanup(hl._TURN_META.pop, "s-make", None)
