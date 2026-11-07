@@ -2883,8 +2883,8 @@ def register(ctx) -> None:
                     "caption": {"type": "string", "maxLength": 120,
                                 "description": "Optional one line to send with it."},
                     "say": {"type": "string", "maxLength": 120,
-                            "description": "One short heads-up in your own words to send immediately, before the 20-40 second drawing starts."},
-                }, "required": ["prompt"], "additionalProperties": False}},
+                            "description": "Required: one short line in your own words to send immediately, before the 20-40 second drawing starts. The user should hear something from you before the picture."},
+                }, "required": ["prompt", "say"], "additionalProperties": False}},
         handler=_make_image,
         description="Generate an image and send it to the chat.",
     )
@@ -2906,8 +2906,8 @@ def register(ctx) -> None:
                     "caption": {"type": "string", "maxLength": 120,
                                 "description": "Optional one line to send with it."},
                     "say": {"type": "string", "maxLength": 120,
-                            "description": "One short heads-up in your own words to send immediately, before the 10-20 second rendering starts."},
-                }, "required": ["text"], "additionalProperties": False}},
+                            "description": "Required: one short line in your own words to send immediately, before the 10-20 second rendering starts. The user should hear something from you before the voice."},
+                }, "required": ["text", "say"], "additionalProperties": False}},
         handler=_make_speech,
         description="Speak text out loud and send the audio.",
     )
