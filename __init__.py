@@ -392,7 +392,9 @@ def _maybe_wake(session_id: str = "") -> None:
 
 def _distill_prompt(chat_id: str, fact_day: str, journal_day: str) -> str:
     """The one-shot job that writes a day's facts and diary outside the chat turn."""
-    lines = [f"[lover-child:journal chat={chat_id}]",
+    from .digital_life import research as _research  # noqa: PLC0415
+
+    lines = [_research.child_tag("journal", chat_id),
              "你是记忆维护子会话，只做下面这件事，不要回复用户、不要发消息。"]
     if fact_day:
         lines.append(
@@ -489,24 +491,20 @@ def _remember_child(session_id: str, kind: str | None) -> None:
 
 
 def _child_kind(session_id: str) -> str | None:
-    """Which background child this session is ("study"/"task"/"search"), else None.
+    """Which background child this session is ("study"/"task"/"journal"...), else None.
 
     A child is a gateway-hosted one-shot session, so env vars set by the spawner never
     reach it; the prompt tag does, and it survives the queue.
 
-    The tag is user text, so anyone can type it. Only a session the host itself
-    opened as a one-shot can be treated as a child; a chat that merely contains
-    "[lover-child:...]" stays an ordinary chat and keeps its own scope.
+    The tag text is user input, so the tag alone proves nothing. ``research`` issues a
+    random nonce per spawn and accepts only a tag whose nonce it still remembers; a
+    chat that merely types "[lover-child:...]" gets no nonce and stays ordinary. This
+    also survives the host renaming its one-shot session source.
     """
     if not session_id:
         return None
     if session_id in _CHILD_SESSIONS:
         return _CHILD_SESSIONS[session_id]
-    source = _session_source(session_id)
-    if source != "oneshot":
-        if source is not None:  # remember "not a child"; on a read error, retry later
-            _remember_child(session_id, None)
-        return None
     db = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes")) / "state.db"
     try:
         with sqlite3.connect(str(db), timeout=2) as conn:
@@ -522,11 +520,18 @@ def _child_kind(session_id: str) -> str | None:
     if start >= 0:
         end = text.find("]", start)
         if end > start:
-            tag = text[start + len(_CHILD_MARK):end].strip()
-            kind, _, chat = tag.partition(" chat=")
-            kind = kind.strip() or None
-            if chat.strip():
-                _CHILD_CHATS[session_id] = chat.strip()
+            fields = text[start + len(_CHILD_MARK):end].split()
+            kind = (fields[0] if fields else "").strip() or None
+            chat = next((f[len("chat="):] for f in fields if f.startswith("chat=")), "")
+            nonce = next((f[len("nonce="):] for f in fields if f.startswith("nonce=")), "")
+            from .digital_life import research as _research  # noqa: PLC0415
+            resolved = _research.resolve_nonce(nonce) if kind and nonce else None
+            if resolved is None or resolved[0] != kind:
+                kind = None
+            else:
+                _CHILD_CHATS[session_id] = resolved[1] or chat.strip()
+    if kind is None:
+        _CHILD_CHATS.pop(session_id, None)
     _remember_child(session_id, kind)
     return kind
 

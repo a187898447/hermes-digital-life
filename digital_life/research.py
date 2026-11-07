@@ -7,10 +7,12 @@ short answer, and sends it back to the originating chat.
 from __future__ import annotations
 
 import os
+import secrets
 import shutil
 import signal
 import subprocess
 import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -33,16 +35,55 @@ _ACTIVE: set[str] = set()
 _SLOTS = threading.BoundedSemaphore(MAX_CHILDREN)
 
 
+# A child session is recognised by an unguessable nonce issued in this process, not by
+# the tag text (which is user input) and not by the host's session source name (which
+# can change under us). One-hour TTL is well past the longest child job.
+_NONCE_TTL = 3600.0
+_NONCES: dict[str, tuple[str, str, float]] = {}
+_NONCE_LOCK = threading.Lock()
+
+
+def issue_nonce(kind: str, chat: str = "") -> str:
+    """Register one child spawn and return the token that goes into its prompt."""
+    token = secrets.token_hex(16)
+    now = time.time()
+    with _NONCE_LOCK:
+        for old_token, (_kind, _chat, expiry) in list(_NONCES.items()):
+            if expiry <= now:
+                _NONCES.pop(old_token, None)
+        _NONCES[token] = (kind, str(chat or ""), now + _NONCE_TTL)
+    return token
+
+
+def resolve_nonce(token: str) -> tuple[str, str] | None:
+    """The (kind, chat) behind a live nonce, or None when it was not ours."""
+    now = time.time()
+    with _NONCE_LOCK:
+        entry = _NONCES.get(str(token or ""))
+        if entry is None:
+            return None
+        kind, chat, expiry = entry
+        if expiry <= now:
+            _NONCES.pop(str(token), None)
+            return None
+        return kind, chat
+
+
+def child_tag(kind: str, chat: str = "") -> str:
+    """The marker plus a nonce; the plugin accepts only a tag whose nonce it issued."""
+    tag = f"[lover-child:{kind}"
+    if chat:
+        tag += f" chat={chat}"
+    return f"{tag} nonce={issue_nonce(kind, chat)}]"
+
+
 def child_marker(kind: str, chat: str = "") -> str:
     """The prompt prefix a child session carries; the plugin reads it back from state.db.
 
     The origin chat rides along so background work writes memories where the
     conversation can see them, instead of under the child's own local session.
     """
-    tag = f"[lover-child:{kind}"
-    if chat:
-        tag += f" chat={chat}"
-    return tag + "]"
+    return child_tag(kind, chat)
 
 
 def spawn_child(kind: str, prompt: str, *, timeout: float,

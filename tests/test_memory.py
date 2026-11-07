@@ -139,8 +139,8 @@ class MemoryTests(unittest.TestCase):
         prompts = [call.args[0] for call in spawned.call_args_list]
         self.assertEqual(len(prompts), 2)
         self.assertIn("2026-11-01", prompts[0])
-        self.assertIn("[lover-child:journal chat=chat-a]", prompts[0])
-        self.assertIn("[lover-child:journal chat=chat-b]", prompts[1])
+        self.assertIn("[lover-child:journal chat=chat-a nonce=", prompts[0])
+        self.assertIn("[lover-child:journal chat=chat-b nonce=", prompts[1])
         self.assertIn('kind="life"', prompts[0])
         self.assertIn("读的哪几页", prompts[0])
         entry = next(iter(e for e in self.store.read_entries().values() if e["text"] == "无归属的一条"))
