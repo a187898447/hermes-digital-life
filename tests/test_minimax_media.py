@@ -1,4 +1,5 @@
 import base64
+import importlib
 import io
 import json
 import tempfile
@@ -130,6 +131,58 @@ class ModelGateTests(unittest.TestCase):
         with mock.patch.object(plugin, "_MODEL_SEEN", {"name": ""}):
             plugin._affect_request({"model": "MiniMax-M3.1-Flash", "messages": []}, session_id="")
             self.assertEqual(plugin._MODEL_SEEN["name"], "MiniMax-M3.1-Flash")
+
+
+class HandlerTests(unittest.TestCase):
+    def setUp(self):
+        import importlib
+        self.hl = sys.modules["hermes_plugins.digital_life"]
+        self.budget = importlib.import_module("hermes_plugins.digital_life.digital_life.budget")
+        self.minimax = importlib.import_module("hermes_plugins.digital_life.digital_life.minimax")
+        self.sent = []
+        self.hl._TURN_META["s-media"] = {"platform": "qqbot"}
+        self.addCleanup(self.hl._TURN_META.pop, "s-media", None)
+        for item in (mock.patch.object(self.hl, "_session_scope", lambda session_id: ("chat-1", "dm")),
+                     mock.patch.object(self.hl, "_host_send_message_tool", lambda: self.sent.append)):
+            item.start()
+            self.addCleanup(item.stop)
+
+    def test_image_is_drawn_and_sent_with_a_media_line(self):
+        from pathlib import Path as P
+        with mock.patch.object(self.minimax, "create_image", return_value=P("/tmp/x.jpeg")), \
+                mock.patch.object(self.budget, "spend", return_value=True):
+            out = json.loads(self.hl._make_image({"prompt": "一只橘猫", "caption": "画好了"},
+                                                 session_id="s-media"))
+        self.assertTrue(out["ok"])
+        self.assertEqual(self.sent[0]["target"], "qqbot:chat-1")
+        self.assertIn("MEDIA:/tmp/x.jpeg", self.sent[0]["message"])
+        self.assertIn("画好了", self.sent[0]["message"])
+
+    def test_a_refused_image_quota_is_reported(self):
+        with mock.patch.object(self.budget, "spend", return_value=False), \
+                mock.patch.object(self.minimax, "create_image") as create:
+            out = json.loads(self.hl._make_image({"prompt": "x"}, session_id="s-media"))
+        self.assertFalse(out["ok"])
+        create.assert_not_called()
+
+    def test_transcription_reads_from_the_inbox_and_returns_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            inbox = Path(tmp) / "inbox"
+            inbox.mkdir()
+            (inbox / "voice.mp3").write_bytes(b"ID3")
+            lib = importlib.import_module("hermes_plugins.digital_life.digital_life.library")
+            with mock.patch.object(lib, "inbox_root", lambda: inbox), \
+                    mock.patch.object(self.minimax, "transcribe",
+                                      return_value={"text": "你好", "duration": 3}), \
+                    mock.patch.object(self.budget, "spend", return_value=True):
+                out = json.loads(self.hl._transcribe_audio({"name": "voice.mp3"}, session_id="s-media"))
+        self.assertTrue(out["ok"])
+        self.assertEqual(out["text"], "你好")
+
+    def test_audio_outside_the_folders_is_refused(self):
+        out = json.loads(self.hl._transcribe_audio({"name": "/etc/passwd"}, session_id="s-media"))
+        self.assertFalse(out["ok"])
+        self.assertIn("inbox", out["error"])
 
 
 if __name__ == "__main__":
