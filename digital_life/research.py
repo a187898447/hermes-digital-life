@@ -105,6 +105,8 @@ def clean_answer(text: str, limit: int = MAX_ANSWER_CHARS) -> str:
 
 
 def run_search(question: str) -> str:
+    # Search runs with only ``-t web``: it has no plugin tools to gate and no memory to
+    # scope, so it deliberately carries no child tag and stays an ordinary session.
     return clean_answer(spawn_child("search", PROMPT.format(question=question),
                                timeout=TIMEOUT_SECONDS))
 

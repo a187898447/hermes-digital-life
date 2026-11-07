@@ -128,19 +128,37 @@ def _session_was_spawned(session_id: str) -> bool | None:
     """True when the host recorded a one-shot/local session, None when it cannot be read.
 
     The child process is a different OS process from the parent, so anything kept in
-    the parent's memory is invisible to it; this row is the shared, host-written fact.
+    the parent's memory is invisible to it; the host-written session row is the fact
+    both processes share. Cron sessions also report a local origin, so the origin is
+    only a fallback for sources this plugin does not know, and never for cron/cli/qqbot.
     """
     if not session_id:
         return False
     cached = _CHILD_GUESS_CACHE.get(session_id)
     if cached is not None:
         return cached
+    row = None
+    created = ""
+    origin = None
     try:
         home = Path(_plugin_env("HERMES_HOME") or (Path.home() / ".hermes"))
         connection = sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True, timeout=1)
         try:
-            row = connection.execute(
-                "SELECT source, origin_json FROM sessions WHERE id=?", (session_id,)).fetchone()
+            try:
+                row = connection.execute(
+                    "SELECT source, created_source FROM sessions WHERE id=?",
+                    (session_id,)).fetchone()
+                if row is not None:
+                    created = str(row[1] or "")
+            except sqlite3.OperationalError:  # older host without the column
+                row = connection.execute(
+                    "SELECT source FROM sessions WHERE id=?", (session_id,)).fetchone()
+            try:
+                origin_row = connection.execute(
+                    "SELECT origin_json FROM sessions WHERE id=?", (session_id,)).fetchone()
+                origin = origin_row[0] if origin_row else None
+            except sqlite3.OperationalError:  # origin is only a fallback; source suffices
+                origin = None
         finally:
             connection.close()
     except (sqlite3.Error, OSError):
@@ -148,12 +166,15 @@ def _session_was_spawned(session_id: str) -> bool | None:
     if row is None:
         return None  # the row may not be committed yet; retry rather than deny
     source = str(row[0] or "")
-    platform = ""
-    try:
-        platform = str((json.loads(row[1] or "{}") or {}).get("platform") or "")
-    except (TypeError, ValueError):
+    if source == "oneshot" or created == "oneshot":
+        spawned = True
+    else:
         platform = ""
-    spawned = source == "oneshot" or platform == "local"
+        try:
+            platform = str((json.loads(origin or "{}") or {}).get("platform") or "")
+        except (TypeError, ValueError):
+            platform = ""
+        spawned = platform == "local" and source not in ("cron", "cli", "qqbot")
     _remember(_CHILD_GUESS_CACHE, session_id, spawned)
     return spawned
 

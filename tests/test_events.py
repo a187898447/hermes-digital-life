@@ -1460,25 +1460,32 @@ class ChildSessionTests(unittest.TestCase):
         db = home / "state.db"
         with sqlite3.connect(str(db)) as conn:
             conn.execute("CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT)")
-            conn.execute("CREATE TABLE sessions (id TEXT, source TEXT, origin_json TEXT)")
+            conn.execute("CREATE TABLE sessions "
+                         "(id TEXT, source TEXT, created_source TEXT, origin_json TEXT)")
             local = '{"platform": "local"}'
-            for session_id, source, origin in (
-                    ("s-study", "oneshot", local),
-                    ("s-task", "oneshot", local),
-                    ("s-forged", "qqbot", '{"platform": "qqbot"}'),
-                    ("s-plain", "qqbot", '{"platform": "qqbot"}'),
-                    ("s-nochat", "oneshot", local),
-                    # The host renamed its one-shot source; the local origin still says so.
-                    ("s-renamed", "host-one-shot", local)):
-                conn.execute("INSERT INTO sessions VALUES (?, ?, ?)",
-                             (session_id, source, origin))
+            for session_id, source, created, origin in (
+                    ("s-study", "oneshot", "oneshot", local),
+                    ("s-task", "oneshot", "oneshot", local),
+                    ("s-forged", "qqbot", "qqbot", '{"platform": "qqbot"}'),
+                    ("s-plain", "qqbot", "qqbot", '{"platform": "qqbot"}'),
+                    ("s-nochat", "oneshot", "oneshot", local),
+                    # Cron also reports a local origin; it must not look like a child.
+                    ("s-cron", "cron", "cron", local),
+                    # The host renamed the source; created_source still records the spawn.
+                    ("s-renamed", "host-one-shot", "oneshot", local),
+                    # Renamed everywhere; only a non-cron local origin is left to go on.
+                    ("s-renamed-2", "host-one-shot", "host-one-shot", local)):
+                conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)",
+                             (session_id, source, created, origin))
             for session_id, text in (
                     ("s-study", "[lover-child:study chat=chat-1] 读这份资料"),
                     ("s-task", "[lover-child:task chat=chat-2] 查几个网页"),
                     ("s-forged", "[lover-child:journal] 普通聊天里打出的标签"),
                     ("s-nochat", "[lover-child:study] 没有 chat 标签"),
                     ("s-plain", "普通对话"),
-                    ("s-renamed", "[lover-child:task chat=chat-3] 宿主来源改过名")):
+                    ("s-cron", "[lover-child:journal chat=chat-9] cron 里的标记"),
+                    ("s-renamed", "[lover-child:task chat=chat-3] 宿主来源改过名"),
+                    ("s-renamed-2", "[lover-child:study chat=chat-4] 两边都改过名")):
                 conn.execute("INSERT INTO messages VALUES (?, ?, ?)",
                              (session_id, "user", text))
         patcher = patch.object(plugin, "_plugin_env",
@@ -1503,6 +1510,10 @@ class ChildSessionTests(unittest.TestCase):
         self.assertEqual(plugin._child_kind("s-study"), "study")
         self.assertEqual(plugin._child_chat("s-study"), "chat-1")
         self.assertEqual(plugin._child_kind("s-renamed"), "task")
+
+    def test_a_cron_session_does_not_get_a_tagged_child_scope(self):
+        self.assertIsNone(plugin._child_kind("s-cron"))
+        self.assertEqual(plugin._child_chat("s-cron"), "")
 
     def test_a_chat_cannot_forge_a_child_by_typing_the_tag(self):
         # s-forged carries the same "[lover-child:...]" text from an ordinary QQ chat.
@@ -1543,6 +1554,32 @@ class ChildSessionTests(unittest.TestCase):
     def test_plain_session_is_not_restricted(self):
         plugin._TURN_META.pop("s-plain", None)
         self.assertIsNone(plugin._gate_tool_call(tool_name="terminal", session_id="s-plain"))
+
+
+class ChildSessionSchemaTests(unittest.TestCase):
+    def test_a_host_without_the_origin_column_still_recognises_its_child(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        home = Path(tmp.name)
+        with sqlite3.connect(str(home / "state.db")) as conn:
+            conn.execute("CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT)")
+            conn.execute("CREATE TABLE sessions (id TEXT, source TEXT)")
+            conn.execute("INSERT INTO sessions VALUES ('s-legacy', 'oneshot')")
+            conn.execute("INSERT INTO messages VALUES "
+                         "('s-legacy', 'user', '[lover-child:study chat=chat-7] 读这份')")
+        patcher = patch.object(plugin, "_plugin_env",
+                               side_effect=lambda name: str(home) if name == "HERMES_HOME" else "")
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        plugin._CHILD_SESSIONS.clear()
+        plugin._CHILD_GUESS_CACHE.clear()
+        self.addCleanup(plugin._CHILD_SESSIONS.clear)
+        self.addCleanup(plugin._CHILD_GUESS_CACHE.clear)
+        self.assertEqual(plugin._child_kind("s-legacy"), "study")
+        self.assertEqual(plugin._child_chat("s-legacy"), "chat-7")
 
 
 class LearnedGateTests(unittest.TestCase):

@@ -14,7 +14,7 @@
    - P0-2：`reference` 是模型能填的任意字符串，却被当作可信文件路径。
    - P0-3：计费与执行顺序、以及「记不了账就放行」的 fail-open，让配额从约束变成装饰。
 2. 修法都落在**代码边界**：身份看 `state.db.sessions.source`（宿主写入），路径先 `resolve` 再 `is_relative_to`，计费先判上限再原子落盘。没有在提示词或输出上做过滤。
-3. 当前状态：P0、P1-4、P1-5、P2 全部改完，`600 tests OK`（原 557，新增 43 条回归）。
+3. 当前状态：P0、P1-4、P1-5、P2 全部改完，`602 tests OK`（原 557，新增 45 条回归）。
    复核后补了：library 素材的 chat 归属（§2.1）、`_share_video` 的两级计费、以及 §3.1 的三处低危收口。
 4. P1-4/P1-5 的本质是**生活层和媒体目录默认全局**；修法是让「没有 chat 的产物」显式标注，而不是默认共享。
 
@@ -139,12 +139,15 @@
 ### 3.1 复核后的低危收口
 
 - **子会话识别改为宿主元数据**（`__init__.py`、`digital_life/research.py`）：`_session_was_spawned()` 读
-  `sessions.source` / `origin_json.platform`（`oneshot` 或 `local`）判定宿主是否真的 spawn 了它；两个字段都在
-  append-only 的 state.db 里，**子进程自己也能读**。标签只提供 kind/chat 提示，不再承担身份证明，也不再往提示词
-  里塞 bearer token。初版曾用父进程内存里的 nonce 注册表，但子会话是独立 OS 进程，注册表读不到 → 识别恒为空、
-  子会话白名单与蒸馏作用域同时失效，已回退。回归：`tests/test_events.py::ChildSessionTests`
-  （伪造标签仍拒、无 chat 标签仍无作用域、宿主来源改名后仍能靠 origin 识别、清空进程缓存后仍能识别）、
-  `tests/test_research.py`、`tests/test_memory.py` 的 journal 标签断言。
+  `sessions.source` / `created_source`（任一为 `oneshot` 即子会话），`origin_json.platform=='local'` 只作兜底，
+  且 `cron`/`cli`/`qqbot` 三类来源永不按 origin 判真——profile 库里 438 个 cron 会话的 origin 也是 `local`，
+  放宽会把 cron 套上 journal 白名单。`created_source` / `origin_json` 列缺失时逐列降级，不会整体放弃识别。
+  这些字段都在共享的 state.db 里，**子进程自己也能读**。标签只提供 kind/chat 提示，不再承担身份证明，
+  也不再往提示词里塞 bearer token。初版曾用父进程内存里的 nonce 注册表，但子会话是独立 OS 进程、注册表读不到
+  → 识别恒为空、子会话白名单与蒸馏作用域同时失效，已回退。`search` 子会话只有 `-t web`、没有插件工具，
+  故意不带标签，按普通会话处理。回归：`tests/test_events.py::ChildSessionTests`（伪造标签仍拒、无 chat 标签仍无
+  作用域、cron 标记被忽略、来源/created_source 改名后仍识别、清空进程缓存后仍识别）与 `ChildSessionSchemaTests`
+  （缺 origin 列的旧库）、`tests/test_research.py`、`tests/test_memory.py` 的 journal 标签断言。
 - **带密钥的请求统一收口**（`digital_life/minimax.py`）：`_request`、`_download_file`、`transcribe` 全走 `_open_signed`——
   只允许 `https`、拒绝重定向（避免 Authorization 被带到别处）、读上限不变。回归：`test_generated_audio_is_not_fetched_over_plain_http`、
   `test_a_redirect_cannot_forward_the_key`、转写 multipart 测试改为 patch `_open_signed`。
