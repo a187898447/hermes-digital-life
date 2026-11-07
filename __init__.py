@@ -1247,30 +1247,35 @@ def _make_image(args, session_id="", **kwargs):
     media_model = _minimax.IMAGE_LIVE_MODEL if anime else _minimax.IMAGE_MODEL
     media_style = "漫画" if anime else ""
 
-    def work() -> None:
-        from .digital_life import minimax as media_mod  # noqa: PLC0415
-        from .digital_life import skills as media_skills  # noqa: PLC0415
+    from .digital_life import minimax as media_mod  # noqa: PLC0415
+    from .digital_life import skills as media_skills  # noqa: PLC0415
+    try:
+        path = media_mod.create_image(skilled, aspect_ratio=aspect, reference=reference,
+                                      model=media_model, style=media_style,
+                                      chat_id=chat_id,
+                                      negative=", ".join(x for x in (
+                                          media_skills.negative_prompt(_skill_level("make_image")),
+                                          CHARACTER_NEGATIVE if args.get("character") else "") if x))
+    except Exception as exc:  # noqa: BLE001
+        _refund_media("imagegen", chat_id)
+        _skill_grant("make_image", ok=False)
+        return json.dumps({"ok": False, "error": f"图没画出来：{str(exc)[:120]}"},
+                          ensure_ascii=False)
+    _skill_grant("make_image", ok=True)
+
+    def deliver() -> None:
         try:
-            path = media_mod.create_image(skilled, aspect_ratio=aspect, reference=reference,
-                                          model=media_model, style=media_style,
-                                          chat_id=chat_id,
-                                          negative=", ".join(x for x in (
-                                              media_skills.negative_prompt(_skill_level("make_image")),
-                                              CHARACTER_NEGATIVE if args.get("character") else "") if x))
             _send_media_now(chat_id, path, caption)
-            _skill_grant("make_image", ok=True)
         except Exception as exc:  # noqa: BLE001
             _refund_media("imagegen", chat_id)
-            _skill_grant("make_image", ok=False)
-            _send_text_now(chat_id, f"图没画出来：{str(exc)[:120]}")
+            _send_text_now(chat_id, f"图画好了，但没送出去：{str(exc)[:120]}")
 
-    if not _run_media_later(work):
+    if not _run_media_later(deliver):
         _refund_media("imagegen", chat_id)
-        return json.dumps({"ok": False, "error": "同时在做的媒体太多了，等一下再试。"},
+        return json.dumps({"ok": False, "error": "发送队列满了，这张先不发了，等一下再试。"},
                           ensure_ascii=False)
-    return json.dumps({"ok": True, "queued": True,
-                       "message": "已经在画了；画好直接发到这个会话，不用再问。手还生，画出来会偏简单，"
-                                  "别把它说得多精细。"},
+    return json.dumps({"ok": True, "path": str(path),
+                       "message": "画好了；你这条回复发出去之后，图就跟到。"},
                       ensure_ascii=False)
 
 
@@ -1296,21 +1301,27 @@ def _make_speech(args, session_id="", **kwargs):
             "语音", hit, "今天已经说过 10 段了，明天再说。")}, ensure_ascii=False)
     caption = " ".join(str(args.get("caption") or "").split())
 
-    def work() -> None:
-        from .digital_life import minimax as media_mod  # noqa: PLC0415
+    from .digital_life import minimax as media_mod  # noqa: PLC0415
+    try:
+        path = media_mod.create_speech(text, voice=voice, speed=speed, chat_id=chat_id)
+    except Exception as exc:  # noqa: BLE001
+        _refund_media("speech", chat_id)
+        return json.dumps({"ok": False, "error": f"语音没做出来：{str(exc)[:120]}"},
+                          ensure_ascii=False)
+
+    def deliver() -> None:
         try:
-            path = media_mod.create_speech(text, voice=voice, speed=speed, chat_id=chat_id)
             _send_media_now(chat_id, path, caption)
         except Exception as exc:  # noqa: BLE001
             _refund_media("speech", chat_id)
-            _send_text_now(chat_id, f"语音没做出来：{str(exc)[:120]}")
+            _send_text_now(chat_id, f"语音做好了，但没送出去：{str(exc)[:120]}")
 
-    if not _run_media_later(work):
+    if not _run_media_later(deliver):
         _refund_media("speech", chat_id)
-        return json.dumps({"ok": False, "error": "同时在做的媒体太多了，等一下再试。"},
+        return json.dumps({"ok": False, "error": "发送队列满了，这段先不发了，等一下再试。"},
                           ensure_ascii=False)
-    return json.dumps({"ok": True, "queued": True,
-                       "message": "已经在录了；做好直接发到这个会话，不用再问。"},
+    return json.dumps({"ok": True, "path": str(path),
+                       "message": "录好了；你这条回复发出去之后，语音就跟到。"},
                       ensure_ascii=False)
 
 
@@ -2848,8 +2859,10 @@ def register(ctx) -> None:
         toolset="minimax_media",
         schema={"name": "make_image",
                 "description": ("Draw one image from a text description with MiniMax image-01 "
-                                "and send it to this chat. Takes seconds. At most six per chat "
-                                "per day. Only MiniMax models may call this."),
+                                "and send it to this chat. Blocks for 20-40 seconds while it draws; "
+                                "the picture arrives right after your reply. If you want to say "
+                                "something before it lands, write that line before calling. At most "
+                                "six per chat per day. Only MiniMax models may call this."),
                 "parameters": {"type": "object", "properties": {
                     "prompt": {"type": "string", "maxLength": 1500,
                                "description": "What should be in the picture: subject, setting, style, light."},
@@ -2872,8 +2885,10 @@ def register(ctx) -> None:
         toolset="minimax_media",
         schema={"name": "make_speech",
                 "description": ("Speak a piece of text with MiniMax speech-2.8-hd and send the mp3 "
-                                "to this chat. At most 5000 characters and ten clips per chat per "
-                                "day. Only MiniMax models may call this."),
+                                "to this chat. Blocks for 10-20 seconds while it renders; the clip "
+                                "arrives right after your reply. If you want to say something before "
+                                "it lands, write that line before calling. At most 5000 characters "
+                                "and ten clips per chat per day. Only MiniMax models may call this."),
                 "parameters": {"type": "object", "properties": {
                     "text": {"type": "string", "maxLength": 5000,
                              "description": "Exactly what should be spoken."},

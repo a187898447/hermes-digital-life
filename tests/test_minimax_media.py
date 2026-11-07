@@ -174,18 +174,26 @@ class HandlerTests(unittest.TestCase):
             out = json.loads(self.hl._make_image({"prompt": "一只橘猫", "caption": "画好了"},
                                                  session_id="s-media"))
         self.assertTrue(out["ok"])
-        self.assertTrue(out["queued"])
+        self.assertIn("画好了", out["message"])
         self.assertEqual(self.sent[0]["target"], "qqbot:chat-1")
         self.assertIn("MEDIA:/tmp/x.jpeg", self.sent[0]["message"])
         self.assertIn("画好了", self.sent[0]["message"])
 
-    def test_the_image_call_answers_before_the_work_runs(self):
-        started = []
-        with mock.patch.object(self.hl, "_run_media_later", lambda work: started.append(work) or True), \
-                mock.patch.object(self.hl, "_charge_media", return_value=""):
+    def test_the_image_is_drawn_before_the_tool_answers(self):
+        from pathlib import Path as P
+        drawn = []
+
+        def fake_create(*args, **kwargs):
+            drawn.append(args[0])
+            return P("/tmp/x.jpeg")
+
+        with mock.patch.object(self.minimax, "create_image", fake_create), \
+                mock.patch.object(self.hl, "_charge_media", return_value=""), \
+                mock.patch.object(self.hl, "_run_media_later", lambda work: True):
             out = json.loads(self.hl._make_image({"prompt": "一只橘猫"}, session_id="s-media"))
-        self.assertTrue(out["queued"])
-        self.assertEqual(len(started), 1)
+        self.assertTrue(out["ok"])
+        self.assertEqual(len(drawn), 1)
+        self.assertEqual(out["path"], "/tmp/x.jpeg")
 
     def test_a_picture_of_herself_carries_the_mood(self):
         from pathlib import Path as P
@@ -248,9 +256,9 @@ class HandlerTests(unittest.TestCase):
                                   lambda kind, chat: refunds.append((kind, chat))), \
                 mock.patch.object(self.hl, "_run_media_later", self._inline):
             out = json.loads(self.hl._make_speech({"text": "x"}, session_id="s-media"))
-        self.assertTrue(out["queued"])
+        self.assertFalse(out["ok"])
+        self.assertIn("没做出来", out["error"])
         self.assertEqual(refunds, [("speech", "chat-1")])
-        self.assertTrue(any("没做出来" in item["message"] for item in self.sent))
 
     def test_audio_outside_the_folders_is_refused(self):
         out = json.loads(self.hl._transcribe_audio({"name": "/etc/passwd"}, session_id="s-media"))
