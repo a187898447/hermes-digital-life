@@ -1,9 +1,10 @@
 """Hands that get steadier with use: a small proficiency model for the media tools.
 
-The level is data, not a prompt. A novice's picture really is a stick figure: the
-generation prompt is padded with a crude style while the level is low, and the
-padding lifts as the skill grows. Practice in the daily agenda grants a little
-experience without spending a generation.
+The level bounds what the model is asked to attempt, not how it renders. The
+image model paints a polished picture either way — style words in the prompt are
+advisory to it — so the honest lever is the content budget: a new hand asks for
+one subject and no staging, and the budget widens as the skill grows. Practice in
+the daily agenda grants a little experience without spending a generation.
 """
 
 from __future__ import annotations
@@ -21,13 +22,13 @@ GAIN_OK = 10
 GAIN_FAIL = 2
 GAIN_PRACTICE = 6
 
-# Only the low levels get a style clause: at 像样 and above the prompt is passed
-# through as written, so the improvement is visible rather than permanent padding.
+# Only the low levels get a budget clause: at 像样 and above the prompt is passed
+# through as written.
 STYLES = {
-    ("make_image", 0): "风格：简笔画，单色线条，儿童涂鸦，画面粗糙，不要细节、不要阴影、不要写实",
-    ("make_image", 1): "风格：简单线稿，平涂上色，细节很少",
-    ("make_video", 0): "画面：手机随手拍，固定机位，动作简单，光线平，不要运镜",
-    ("make_video", 1): "画面：简单镜头，固定机位，少剪辑",
+    ("make_image", 0): "只画一个主体，不要背景、不要道具、不要光影，构图简单",
+    ("make_image", 1): "可以带一个简单背景，不要复杂道具和多人",
+    ("make_video", 0): "只拍一个主体和一个简单动作，固定机位，不要运镜",
+    ("make_video", 1): "可以有一个简单场景，动作少",
 }
 
 

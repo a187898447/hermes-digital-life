@@ -27,17 +27,17 @@ class SkillLevelTests(unittest.TestCase):
 
 
 class CraftTests(unittest.TestCase):
-    def test_a_new_hand_gets_a_crude_style(self):
+    def test_a_new_hand_may_only_ask_for_one_subject(self):
         text = skills.craft("make_image", 0, "一只橘猫坐在窗台上")
         self.assertIn("一只橘猫坐在窗台上", text)
-        self.assertIn("简笔画", text)
+        self.assertIn("只画一个主体", text)
 
-    def test_the_padding_lifts_and_then_disappears(self):
-        self.assertIn("线稿", skills.craft("make_image", 1, "一只橘猫"))
+    def test_the_budget_widens_and_then_disappears(self):
+        self.assertIn("简单背景", skills.craft("make_image", 1, "一只橘猫"))
         self.assertEqual(skills.craft("make_image", 2, "一只橘猫"), "一只橘猫")
         self.assertEqual(skills.craft("make_image", 3, "一只橘猫"), "一只橘猫")
 
-    def test_video_starts_as_a_plain_handheld_shot(self):
+    def test_video_starts_with_one_subject_and_one_action(self):
         self.assertIn("固定机位", skills.craft("make_video", 0, "夜里下雨的街"))
         self.assertEqual(skills.craft("make_video", 2, "夜里下雨的街"), "夜里下雨的街")
 
