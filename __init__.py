@@ -1227,8 +1227,46 @@ def _remember_bubbles(key: str, lines: list[str]) -> None:
         _RECENT_BUBBLES.pop(next(iter(_RECENT_BUBBLES)))
 
 
+def _phrase_hints(*contexts: str, chat_id: str = "", limit: int = 2) -> list[tuple[str, str]]:
+    """Pick the stored turns of phrase that fit this exchange, best first."""
+    factory = _MEMORY_STORE.get("factory")
+    if not callable(factory):
+        return []
+    try:
+        rows = factory().peek("phrase", 20, chat_id=chat_id, include_global=True)
+    except Exception:
+        return []
+    context = "".join(contexts)
+
+    def score(text: str) -> int:
+        grams = {text[i:i + 2] for i in range(max(0, len(text) - 1))}
+        return sum(1 for gram in grams if gram in context)
+
+    ranked = sorted(rows, key=lambda row: (score(str(row.get("text") or "")), row.get("weight", 0)),
+                    reverse=True)
+    picked = [(row["id"], str(row["text"])) for row in ranked[:limit] if row.get("text")]
+    return picked
+
+
+def _mark_phrase_use(picked: list[tuple[str, str]], text: str) -> None:
+    """Count a phrase when its wording actually shows up in the reply."""
+    if not picked or not text:
+        return
+    factory = _MEMORY_STORE.get("factory")
+    if not callable(factory):
+        return
+    try:
+        store = factory()
+        for identifier, phrase in picked:
+            body = "".join(ch for ch in phrase if ch.isalnum())
+            if len(body) >= 4 and body[:4] in "".join(ch for ch in text if ch.isalnum()):
+                store.mark_used(identifier)
+    except Exception:
+        logger.debug("hermes-lover: phrase use not counted", exc_info=True)
+
+
 def _polish_lines(lines: list[str], recent: list[str] | None = None,
-                  last_user: str = "") -> Optional[list[str]]:
+                  last_user: str = "", chat_id: str = "") -> Optional[list[str]]:
     """Run the tic-and-tone pass over the bubbles of one chat reply.
 
     In-process by default: one host-owned completion on the active model, no child
@@ -1250,9 +1288,11 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
     if mode != "always" and not speech.lint(lines, recent):
         return None
     habits = speech.habit_phrases(recent)
+    picked = _phrase_hints(last_user, "".join(lines), "".join(recent), chat_id=chat_id)
     prompt = speech.build_polish_prompt(
         count=len(lines), body="\n---\n".join(lines), recent=recent, habits=habits,
-        last_user=last_user, flagged=speech.ungrounded(lines, recent, last_user))
+        last_user=last_user, flagged=speech.ungrounded(lines, recent, last_user),
+        phrases=[text for _, text in picked])
     out = ""
     llm = getattr(_CTX, "llm", None)
     if llm is not None:
@@ -1276,7 +1316,9 @@ def _polish_lines(lines: list[str], recent: list[str] | None = None,
     parts = speech.parse_polish(out, len(lines))
     if not parts or speech.lint(parts, recent):
         return None
-    return speech.drop_unreadable(lines, parts, recent, last_user)
+    final = speech.drop_unreadable(lines, parts, recent, last_user)
+    _mark_phrase_use(picked, "".join(final))
+    return final
 
 
 def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs) -> Optional[str]:
@@ -1292,7 +1334,8 @@ def _transform_llm_output(response_text: str = "", platform: str = "", **kwargs)
     key = _session_scope(session)[0] or session or platform
     meta = _TURN_META.get(session) or {}
     polished = _polish_lines(lines, _RECENT_BUBBLES.get(key, []),
-                             last_user=str(meta.get("user") or ""))
+                             last_user=str(meta.get("user") or ""),
+                             chat_id=_session_scope(session)[0] or "")
     final = polished or lines
     from .digital_life import speech as _speech
     repaired = [_speech.repair(line) for line in final]
@@ -1460,6 +1503,13 @@ def register(ctx) -> None:
                 twin = _memory.similar_learned(args.get("text"), memory_store().read_entries())
                 if twin:
                     return json.dumps({"ok": False, "error": "learned entry rejected: already covered by " + twin},
+                                      ensure_ascii=False)
+            if args.get("kind") == "phrase":
+                from .digital_life import memory as _memory  # noqa: PLC0415
+
+                problem = _memory.phrase_problem(args.get("text") or "")
+                if problem:
+                    return json.dumps({"ok": False, "error": "phrase rejected: " + problem},
                                       ensure_ascii=False)
             chat_id, chat_type = _session_scope(session_id)
             if not chat_id:
@@ -1688,8 +1738,11 @@ def register(ctx) -> None:
             _research.child_marker("study") + " 你在后台读完一份资料，不要把原文贴回来。用 read_source 读 "
             f"{source} ，一次读不完就用 name 加 part 续读直到 finished；材料写了星期就用 applies_dow"
             "（0=周一…3=周四…6=周日）。"
-            "先判断材料类型：教程/文档/知识 → 提炼可复用的做法；段子库、文案集、小说 → 只提炼"
-            "「什么场合可以怎么接」的场合级习惯，原文的句子、角色、情节一句都不进记忆，来源与风格用 note 记。"
+            "先判断材料类型：教程/文档/知识 → 提炼可复用的做法；段子库、文案集、小说 → 提炼"
+            "「什么场合可以怎么接」的场合级习惯（learned），另外留意「有意思的说法」：只留句式、口气、转折"
+            "（kind=\"phrase\"，不超过 60 字，不要人名、情节、专有设定），原文的句子一句都不进记忆。"
+            "两类都按材料里实际有多少写多少：站得住的有几个写几个，写不出就不写，不要凑数也不要省；"
+            "同一个习惯/说法在材料里反复出现，只写一条——重复的次数由系统自己记，不用你标。"
             "每条 learned 过三问，有一个不过就不写：① 去掉原文还成立吗（不靠原文的台词、人名、情节）？"
             "② 这个场合在真实聊天里会出现吗，还是只在这份材料里成立？③ 这是在说做法，还是在复述一个包袱？"
             "text 写成「什么时候 → 你会怎么做」（自己的话，别抄原文）；同一触发只写一条，补充细节并进已有那条。"
@@ -1857,7 +1910,8 @@ def register(ctx) -> None:
             return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
         if isinstance(page, dict) and page.get("finished"):
             page["extract"] = ("读完了。先判断材料类型：教程/文档/知识 → 提炼可复用的做法；段子库、文案集、小说 → "
-                               "只提炼场合级习惯，原文的句子、角色、情节一句不进记忆。"
+                               "提炼场合级习惯（learned），并把有意思的说法写成 kind=\"phrase\"（≤60 字，只留句式/口气，"
+                               "不带人名情节），原文的句子一句不进记忆；条数由内容决定，有多少写多少，同一说法反复出现只写一条。"
                                "每条 learned 先过三问，有一个不过就不写：① 去掉原文还成立吗？② 这个场合真实聊天里会出现吗？③ 这是在说做法，还是在复述一个包袱？"
                                "写成：什么时候 → 你会怎么做（自己的话）→ "
                                "applies_dow（0=周一 1=周二 2=周三 3=周四 4=周五 5=周六 6=周日，材料没写就 null）。"
@@ -1979,7 +2033,7 @@ def register(ctx) -> None:
                 "description": "Remember a meaningful event, experience, decision, or a habit worth picking up (kind=learned) in this profile's dated event library. A learned entry is one sentence of the form \"when/situation -> what to say or do\" (e.g. 周四＝跟着喊 V我50；弱智吧式问题＝一本正经当真答), not a writing tutorial, structure analysis, or source citation — put those in a note if they matter. This is the profile's only memory. At most 4000 characters per entry; 20 new entries per session/day. `fact` entries are atomic: cite the `sources` turn ids they were drawn from. `journal` entries may cite the `refs` fact ids they are based on and must read as a diary, never as a list of clock times; a journal can only be written for a day that has already ended (next-day backfill). Never tell the user that you wrote something down; memory is a background action. Does not change life state.",
                 "parameters": {"type": "object", "properties": {
             "text": {"type": "string", "maxLength": 4000},
-            "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal", "learned"], "default": "note"},
+            "kind": {"type": "string", "enum": ["crisis", "daily", "fact", "decision", "note", "journal", "learned", "phrase"], "default": "note"},
             "weight": {"type": ["number", "null"]},
             "day": {"type": ["string", "null"], "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
                     "description": "Anchor a journal or fact entry to the day it describes. Journals must target a past day."},

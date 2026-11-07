@@ -601,6 +601,41 @@ class HybridRecallTests(unittest.TestCase):
         self.assertEqual(len(first), 2)
 
 
+class PhraseTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = memory.MemoryStore(Path(self.tmp.name), embedder=False)
+
+    def test_a_phrase_seen_again_deepens_instead_of_duplicating(self):
+        first = self.store.write("先把话认下来，再往上抬一句", kind="phrase", day="2026-11-01")
+        second = self.store.write("先把话认下来，再往上抬一句", kind="phrase", day="2026-11-05")
+        entries = [row for row in self.store.read_entries().values() if row["kind"] == "phrase"]
+        self.assertEqual(len(entries), 1)
+        self.assertTrue(second.get("bumped"))
+        self.assertEqual(second["id"], first["id"])
+        self.assertGreater(entries[0]["weight"], 0.6)
+
+    def test_different_phrases_stay_apart(self):
+        self.store.write("先把话认下来，再往上抬一句", kind="phrase", day="2026-11-01")
+        self.store.write("被问住了就先说不知道", kind="phrase", day="2026-11-02")
+        phrases = [row for row in self.store.read_entries().values() if row["kind"] == "phrase"]
+        self.assertEqual(len(phrases), 2)
+
+    def test_using_a_phrase_raises_its_weight(self):
+        identifier = self.store.write("被问住了就先说不知道", kind="phrase", day="2026-11-02")["id"]
+        before = self.store.read_entries()[identifier]["weight"]
+        self.assertTrue(self.store.mark_used(identifier))
+        after = self.store.read_entries()[identifier]
+        self.assertGreater(after["weight"], before)
+        self.assertEqual(after["hits"], 1)
+
+    def test_a_phrase_has_to_stay_short_and_unquoted(self):
+        self.assertTrue(memory.phrase_problem("很长" * 40))
+        self.assertTrue(memory.phrase_problem("“你引起了我的注意”"))
+        self.assertEqual(memory.phrase_problem("先把话认下来，再往上抬一句"), "")
+
+
 class DayBoundaryTests(unittest.TestCase):
     def _stamp(self, day: str, hour: int) -> float:
         from datetime import datetime

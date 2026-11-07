@@ -97,6 +97,12 @@ class SkillPromptTests(unittest.TestCase):
         self.assertIn("对方刚说的", prompt)
         self.assertIn("明早估计不吃了", prompt)
 
+    def test_phrases_from_reading_are_offered_as_shape_not_script(self):
+        prompt = speech.build_polish_prompt(count=1, body="行。", recent=[], habits=[],
+                                            phrases=["先把话认下来，再往上抬一句"])
+        self.assertIn("只借句式", prompt)
+        self.assertIn("先把话认下来，再往上抬一句", prompt)
+
     def test_a_missing_skill_falls_back_to_the_built_in_prompt(self):
         with mock.patch.object(speech, "_skill_candidates", lambda: []):
             prompt = speech.build_polish_prompt(count=1, body="x", recent=[], habits=[])

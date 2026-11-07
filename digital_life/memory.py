@@ -45,7 +45,7 @@ def day_key(now_ms: float | None = None) -> str:
 
 
 DEFAULT_WEIGHTS = {"crisis": 2.0, "daily": 1.0, "fact": 1.2, "decision": 1.5, "note": 0.8, "turn": 0.4,
-                   "journal": 2.5, "summary": 1.4, "learned": 0.9, "life": 0.7}
+                   "journal": 2.5, "summary": 1.4, "learned": 0.9, "life": 0.7, "phrase": 0.6}
 _WRITE_LOCK = threading.RLock()
 _WORDS = re.compile(r"[\u3400-\u9fff\U00020000-\U0002fa1f]+|[a-zA-Z0-9]+")
 _ID = re.compile(r"hp-(\d{8})-(\d{4,})\Z")
@@ -70,7 +70,7 @@ def decay(weight: float, last_access_at: float, now_ms: float) -> float:
 def attention(cortisol: float) -> dict[str, float]:
     crisis, daily = (3.0, 0.1) if cortisol >= 80 else (1.8, 0.4) if cortisol >= 55 else (1.0, 1.0)
     return {"crisis": crisis, "daily": daily, "fact": 1.0, "decision": 1.0, "note": 1.0, "turn": 0.5,
-            "journal": 1.2, "summary": 1.0, "learned": 1.5, "life": 0.8}
+            "journal": 1.2, "summary": 1.0, "learned": 1.5, "life": 0.8, "phrase": 0.9}
 
 
 def relevance(bm25: float) -> float:
@@ -186,6 +186,39 @@ def similar_learned(text: str, entries: dict[str, dict], threshold: float = 0.8)
             continue
         if difflib.SequenceMatcher(None, target, norm(row.get("text"))).ratio() >= threshold:
             return identifier
+    return ""
+
+
+def similar_phrase(text: str, entries: dict[str, dict], threshold: float = 0.72) -> str:
+    """Return an existing phrase that says the same thing, if any.
+
+    Seeing a turn of phrase again in another page or another book is evidence that
+    it is worth keeping, so a repeat bumps the one already there instead of
+    padding the list with near-identical lines.
+    """
+    import difflib  # noqa: PLC0415
+
+    def norm(value: str) -> str:
+        return "".join(ch for ch in str(value or "") if ch.isalnum())
+
+    target = norm(text)
+    if len(target) < 4:
+        return ""
+    for identifier, row in entries.items():
+        if row.get("kind") != "phrase":
+            continue
+        if difflib.SequenceMatcher(None, target, norm(row.get("text"))).ratio() >= threshold:
+            return identifier
+    return ""
+
+
+def phrase_problem(text: str) -> str:
+    if not text.strip():
+        return "empty"
+    if len(text) > 60:
+        return "one turn of phrase, at most 60 chars"
+    if re.search(r"[「『“\"]", text):
+        return "do not paste the source sentence; keep the shape of it"
     return ""
 
 
@@ -659,6 +692,22 @@ class MemoryStore:
                 if stamps >= 3:
                     raise ValueError(
                         "日记不要按时间点罗列；写你做了什么、当时的心情、脑子里在转什么，不用列时刻表")
+            if kind == "phrase":
+                seen = similar_phrase(text, entries)
+                if seen:
+                    row = entries[seen]
+                    event = {"op": "touch", "id": seen, "last_access_at": now_ms,
+                             "hits": row["hits"] + 1,
+                             "weight": min(3.0, row["weight"] + 0.3)}
+                    self._append([event], now_ms)
+                    if not self._index_events([event]):
+                        try:
+                            full, full_digest = self._replay()
+                            self._save_index(full, full_digest)
+                        except sqlite3.Error:
+                            logger.warning("Phrase repeat persisted but index update failed", exc_info=True)
+                    return {"ok": True, "id": seen, "bumped": True,
+                            "weight": event["weight"]}
             duplicate = next((e for e in entries.values()
                               if e["date"] == date and e["text"] == text
                               and e.get("chat_id", "") == (chat_id or "")), None)
@@ -955,6 +1004,26 @@ class MemoryStore:
                 except (sqlite3.Error, RuntimeError, OSError):
                     logger.warning("Rotated turns persisted but index update failed", exc_info=True)
             return {"ok": True, "turns": archived, "months": len(by_month)}
+
+    def mark_used(self, identifier: str, *, now_ms=None, boost: float = 0.2) -> bool:
+        """Count one real use of a phrase, so what gets reused rises on its own."""
+        now_ms = _now(now_ms)
+        with self._locked():
+            entries = self._replay()[0]
+            row = entries.get(identifier)
+            if row is None:
+                return False
+            event = {"op": "touch", "id": identifier, "hits": row["hits"] + 1,
+                     "last_access_at": now_ms,
+                     "weight": min(3.0, row["weight"] + boost)}
+            self._append([event], now_ms)
+            if not self._index_events([event]):
+                try:
+                    full, full_digest = self._replay()
+                    self._save_index(full, full_digest)
+                except sqlite3.Error:
+                    logger.warning("Phrase use persisted but index update failed", exc_info=True)
+            return True
 
     def peek(self, kind, k=10, *, chat_id="", include_global=True, now_ms=None):
         """Read-only top-k of one kind, ranked by current effective weight.
