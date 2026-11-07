@@ -251,7 +251,7 @@ def _download_file(file_id: str, *, key: str = "") -> Path:
 
 
 def create_image(prompt: str, *, aspect_ratio: str = "1:1", reference: str = "",
-                 model: str = IMAGE_MODEL, style: str = "") -> Path:
+                 model: str = IMAGE_MODEL, style: str = "", negative: str = "") -> Path:
     """Text-to-image (or image-to-image with one reference URL); returns the saved jpeg."""
     text = " ".join(str(prompt or "").split())
     if not text:
@@ -268,6 +268,9 @@ def create_image(prompt: str, *, aspect_ratio: str = "1:1", reference: str = "",
     }
     if model == IMAGE_LIVE_MODEL and style in IMAGE_STYLES:
         payload["style"] = {"style_type": style, "style_weight": 1}
+    keep_out = " ".join(str(negative or "").split())
+    if keep_out:
+        payload["negative_prompt"] = keep_out[:500]
     face = _as_reference(reference)
     if face:
         payload["subject_reference"] = [{"type": "character", "image_file": face}]

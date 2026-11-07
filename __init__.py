@@ -174,9 +174,10 @@ _WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "�
 _PHASE_WORDS = {"sleep": "夜里", "morning": "早上", "day": "白天", "evening": "傍晚", "late": "深夜"}
 
 
-CHARACTER_BRIEF = ("两侧头发分开、露出蓝色鲸鳍耳（不是人类耳朵），身后一条蓝色鲸尾，"
-                   "深蓝长发发梢转浅蓝、宝石蓝眼睛、白蕾丝发带配蓝蝴蝶结、"
-                   "深蓝女仆裙配白围裙和蓝宝石胸针，2D 动漫插画，手绘")
+CHARACTER_BRIEF = ("头两侧是蓝色鱼鳍状耳朵、像张开的小翅膀、边缘带白色绒毛（不是人类耳朵、不是精灵尖耳），"
+                   "身后一条蓝色鲸尾，深蓝长发、宝石蓝眼睛、白蕾丝发带配蓝蝴蝶结、"
+                   "深蓝女仆裙配白围裙和蓝宝石胸针，日系赛璐璐插画，冷蓝色调")
+CHARACTER_NEGATIVE = ("眼镜, 圆框眼镜, 猫耳, 人类耳朵, 精灵尖耳, 露齿笑, 3D, 写实, 手办, plastic")
 
 
 def _character_image() -> str:
@@ -984,7 +985,8 @@ def _make_image(args, session_id="", **kwargs):
         from .digital_life import budget as budget_mod, minimax as media_mod  # noqa: PLC0415
         try:
             path = media_mod.create_image(skilled, aspect_ratio=aspect, reference=reference,
-                                          model=media_model, style=media_style)
+                                          model=media_model, style=media_style,
+                                          negative=CHARACTER_NEGATIVE if args.get("character") else "")
             _send_media_now(chat_id, path, caption)
             _skill_grant("make_image", ok=True)
         except Exception as exc:  # noqa: BLE001
