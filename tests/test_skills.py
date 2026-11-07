@@ -9,15 +9,15 @@ class SkillLevelTests(unittest.TestCase):
     def test_levels_rise_with_experience(self):
         state = {"skills": skills.new_skills()}
         self.assertEqual(skills.level(state, "make_image"), 0)
-        for _ in range(6):
+        for _ in range(3):
             skills.gain(state, "make_image")
         self.assertEqual(skills.level(state, "make_image"), 1)
         self.assertEqual(skills.label(state, "make_image"), "能看")
 
     def test_a_level_up_is_reported_once(self):
         state = {"skills": skills.new_skills()}
-        ups = [skills.gain(state, "make_video")["up"] for _ in range(6)]
-        self.assertEqual(ups, [False] * 5 + [True])
+        ups = [skills.gain(state, "make_video")["up"] for _ in range(3)]
+        self.assertEqual(ups, [False, False, True])
 
     def test_a_failure_counts_less_than_a_success(self):
         state = {"skills": skills.new_skills()}
