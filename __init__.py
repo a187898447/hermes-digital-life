@@ -1545,7 +1545,7 @@ def register(ctx) -> None:
                             "SELECT m.role, m.content, m.timestamp FROM messages m "
                             "JOIN sessions s ON s.id = m.session_id "
                             "WHERE s.chat_id = ? AND s.source = 'qqbot' "
-                            "AND m.role IN ('user', 'assistant') AND m.content != '' "
+                            "AND m.role = 'user' AND m.content != '' "
                             "ORDER BY m.timestamp DESC LIMIT 3",
                             (chat_id,),
                         ).fetchall()
@@ -1564,7 +1564,7 @@ def register(ctx) -> None:
             {"chat_id": str(r[0]), "chat_type": str(r[1] or ""),
              "last_at": (r[2] or 0), "last_user_at": (r[3] or r[2] or 0),
              "minutes_ago": round(max(0.0, now_ms - (r[3] or r[2] or 0)) / 60000, 1),
-             "last_turns": recent.get(str(r[0]), [])}
+             "last_user_turns": recent.get(str(r[0]), [])}
             for r in rows
         ]
         try:

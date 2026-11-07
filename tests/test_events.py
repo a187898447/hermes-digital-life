@@ -349,6 +349,34 @@ class RegistrationTests(unittest.TestCase):
         schemas = {entry["name"]: entry["schema"]["parameters"]["properties"] for entry in ctx.tools}
         self.assertIn("chat_id", schemas["memory_recall"])
 
+    def test_beat_targets_gives_only_the_other_sides_messages(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        plugin.register(ctx)
+        handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["beat_targets"]
+        with tempfile.TemporaryDirectory() as tmp:
+            db = sqlite3.connect(str(Path(tmp) / "state.db"))
+            db.executescript("""
+                CREATE TABLE sessions (id TEXT, chat_id TEXT, chat_type TEXT, source TEXT, started_at REAL);
+                CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT, timestamp REAL);
+            """)
+            db.execute("INSERT INTO sessions VALUES ('s1', 'c1', 'dm', 'qqbot', 100)")
+            db.execute("INSERT INTO messages VALUES ('s1', 'user', '今天好累', 100)")
+            db.execute("INSERT INTO messages VALUES ('s1', 'assistant', '价签要是还挂 17，我那一块钱学费就算挣回来了', 101)")
+            db.commit()
+            db.close()
+            with patch.dict(os.environ, {"HERMES_HOME": tmp}), \
+                    patch.object(plugin.digital_life.proactive, "subscribed_chats", return_value={"c1"}), \
+                    patch.object(plugin, "_session_source", return_value="cron"):
+                result = json.loads(handler({}, session_id="s-cron"))
+        target = result["targets"][0]
+        self.assertNotIn("last_turns", target)
+        self.assertEqual([turn["text"] for turn in target["last_user_turns"]], ["今天好累"])
+
     def test_recall_caps_k_and_truncates_long_entries(self):
         ctx = RecordingContext()
         ctx.get_config = lambda key, default=None: default
