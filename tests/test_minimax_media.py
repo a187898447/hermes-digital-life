@@ -187,6 +187,23 @@ class HandlerTests(unittest.TestCase):
         self.assertTrue(out["queued"])
         self.assertEqual(len(started), 1)
 
+    def test_a_picture_of_herself_carries_the_mood(self):
+        from pathlib import Path as P
+        seen = {}
+
+        def fake_create(prompt, **kwargs):
+            seen["prompt"] = prompt
+            return P("/tmp/x.jpeg")
+
+        with mock.patch.object(self.minimax, "create_image", fake_create), \
+                mock.patch.object(self.hl, "_mood_flavor", lambda: "情绪底色是来劲，体力72"), \
+                mock.patch.object(self.hl, "_character_image", lambda: "/tmp/ref.jpg"), \
+                mock.patch.object(self.budget, "spend", return_value=True), \
+                mock.patch.object(self.hl, "_run_media_later", self._inline):
+            self.hl._make_image({"prompt": "坐在窗台上", "character": True}, session_id="s-media")
+        self.assertIn("情绪底色是来劲", seen["prompt"])
+        self.assertIn("坐在窗台上", seen["prompt"])
+
     def test_a_refused_image_quota_is_reported(self):
         with mock.patch.object(self.budget, "spend", return_value=False), \
                 mock.patch.object(self.minimax, "create_image") as create:
