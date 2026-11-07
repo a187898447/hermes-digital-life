@@ -97,6 +97,45 @@ def _sweep(folder: Path, now: float) -> None:
             continue
 
 
+_GENERATED_PREFIXES = ("video-", "speech-", "image-")
+_LEGACY_FOLDER = "legacy"
+
+
+def quarantine_legacy_generated() -> list[Path]:
+    """Move pre-scoping generated media out of the shared root, once.
+
+    Files this plugin wrote before media was scoped by chat carry these prefixes and
+    sat in the root beside the operator's deliberate hand-ins. The root is readable by
+    every chat, so they are moved into ``legacy/`` (a subfolder ``resolve`` refuses);
+    the operator can delete that folder when convenient.
+    """
+    root = root_dir()
+    legacy = root / _LEGACY_FOLDER
+    moved: list[Path] = []
+    try:
+        entries = list(root.iterdir())
+    except OSError:
+        return moved
+    for item in entries:
+        try:
+            if item.is_symlink() or not item.is_file():
+                continue
+            if not item.name.startswith(_GENERATED_PREFIXES):
+                continue
+            if item.suffix.lower() not in MEDIA_SUFFIXES:
+                continue
+            legacy.mkdir(exist_ok=True)
+            target = legacy / item.name
+            if target.exists():
+                item.unlink()  # a twin is already parked; both were cache
+            else:
+                os.replace(item, target)
+                moved.append(target)
+        except OSError:
+            continue
+    return moved
+
+
 def write_bytes(name: str, data: bytes, chat_id: str = "") -> Path:
     """Save generated media atomically in the folder of the chat that asked for it."""
     folder = chat_dir(chat_id) if chat_id else root_dir()

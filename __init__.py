@@ -420,6 +420,7 @@ _CHILD_SESSIONS: dict[str, str | None] = {}
 _CHILD_CHATS: dict[str, str] = {}
 _MAX_CHILD_SESSIONS = 256
 _CHILD_MARK = "[lover-child:"
+_OUTBOX_MIGRATED = False
 
 
 def _stop_old_bridge(home_dir: str) -> bool:
@@ -1933,6 +1934,14 @@ def register(ctx) -> None:
     global _CTX
     _CTX = ctx
     _sync_persona_card()
+    global _OUTBOX_MIGRATED
+    if not _OUTBOX_MIGRATED:  # once per process: move pre-scope media out of the shared root
+        try:
+            from .digital_life import outbox as _outbox  # noqa: PLC0415
+            _outbox.quarantine_legacy_generated()
+            _OUTBOX_MIGRATED = True
+        except Exception:  # never block registration on a housekeeping pass
+            logger.debug("hermes-lover: outbox migration skipped", exc_info=True)
     from .digital_life import domain as _configured_domain
     _configured_domain.configure(
         temperament=ctx.get_config("temperament", None),

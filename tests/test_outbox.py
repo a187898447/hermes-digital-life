@@ -22,6 +22,18 @@ class OutboxTests(unittest.TestCase):
         path.write_bytes(body)
         return path
 
+    def test_legacy_generated_media_leaves_the_shared_root(self):
+        self.video("video-123.mp4")
+        self.video("speech-9.mp3")
+        self.video("operator-clip.mp4")
+        moved = outbox.quarantine_legacy_generated()
+        self.assertEqual(len(moved), 2)
+        self.assertFalse((self.root / "video-123.mp4").exists())
+        self.assertTrue((self.root / "operator-clip.mp4").exists())
+        self.assertTrue((self.root / "legacy" / "video-123.mp4").is_file())
+        with self.assertRaises(ValueError):
+            outbox.resolve("video-123.mp4", "chat-1")
+
     def test_a_video_in_the_outbox_resolves(self):
         path = self.video()
         self.assertEqual(outbox.resolve("clip.mp4"), path.resolve())
