@@ -55,6 +55,18 @@ IMAGE_GEN_PER_DAY = 6
 SPEECH_PER_DAY = 10
 TRANSCRIBE_PER_DAY = 20
 MINIMAX_TOOLS = ("make_video", "make_image", "make_speech", "transcribe_audio")
+# Media generation belongs to this plugin: one path means one skill ladder, one character file.
+MEDIA_GENERATORS = ("make_image", "make_video", "make_speech")
+MEDIA_OUTSIDERS = frozenset(
+    name.strip().lower()
+    for name in os.environ.get(
+        "HERMES_LOVER_MEDIA_OUTSIDERS",
+        "apikey-image-gen,studio-image-gen,image_generation,image-generation,"
+        "generate_image,generate_images,text_to_video,text-to-video,video_generation,"
+        "video-generation,generate_video,text_to_speech,text-to-speech,generate_speech",
+    ).split(",")
+    if name.strip()
+)
 _MODEL_SEEN = {"name": ""}
 OPEN_LOOP_SHOWN = 3
 _SCOPE_CACHE: dict[str, tuple[str, str]] = {}
@@ -454,6 +466,9 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     if not tool_name or not session_id:
         return None
     kind = _child_kind(session_id)
+    if tool_name not in MEDIA_GENERATORS and tool_name.strip().lower() in MEDIA_OUTSIDERS:
+        return {"action": "block",
+                "message": "画图、视频、配音只走 make_image / make_video / make_speech，别用别的生成工具。"}
     if tool_name in MINIMAX_TOOLS and not _is_minimax_model():
         return {"action": "block",
                 "message": "MiniMax 的图片/视频/语音工具只给 MiniMax 模型用；现在不是，先别调。"}

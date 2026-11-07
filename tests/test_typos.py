@@ -6,6 +6,8 @@ import time
 import tempfile
 import types
 import unittest
+import datetime
+import time
 from datetime import date, timedelta
 from pathlib import Path
 from unittest.mock import patch
@@ -32,7 +34,10 @@ class JournalWarningTests(unittest.TestCase):
     def test_journal_write_reports_a_suspicious_character_without_rewriting(self):
         from test_events import RecordingContext, plugin
 
-        day = (date.today() - timedelta(days=1)).isoformat()
+        # a day counts as over at 05:00 the next morning, so "yesterday" is relative to that line
+        from digital_life import memory as _memory
+        now = int(time.time() * 1000)
+        day = (datetime.date.fromisoformat(_memory.day_key(now)) - datetime.timedelta(days=1)).isoformat()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "memory"
             conn = sqlite3.connect(Path(tmp) / "index.db")

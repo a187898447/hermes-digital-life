@@ -14,7 +14,7 @@ import tempfile
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import patch, patch as _patch
 
 ROOT = Path(__file__).resolve().parents[1]
 # The QQ rewrite may hand bubbles to a child session for polishing; the real call is
@@ -1595,6 +1595,18 @@ class BridgeProcessTests(unittest.TestCase):
         with patch.dict(os.environ, env):
             self.assertFalse(plugin._stop_old_bridge(self.tmp))
         self.assertIsNone(proc.poll())
+
+
+class MediaOutsiderTests(unittest.TestCase):
+    def test_a_foreign_image_tool_is_turned_away(self):
+        out = plugin._gate_tool_call("apikey-image-gen", session_id="s-media")
+        self.assertEqual(out["action"], "block")
+        self.assertIn("make_image", out["message"])
+
+    def test_our_own_generators_pass_this_gate(self):
+        with patch.object(plugin, "_is_minimax_model", lambda name="": True):
+            for name in ("make_image", "make_video", "make_speech"):
+                self.assertIsNone(plugin._gate_tool_call(name, session_id="s-quiet"))
 
 
 class MediaLineTests(unittest.TestCase):
