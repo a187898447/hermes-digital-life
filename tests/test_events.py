@@ -1485,7 +1485,9 @@ class ChildSessionTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         home = Path(self.tmp.name)
+        self.home = home
         db = home / "state.db"
+        self.db = db
         with sqlite3.connect(str(db)) as conn:
             conn.execute("CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT)")
             conn.execute("CREATE TABLE sessions "
@@ -1554,6 +1556,15 @@ class ChildSessionTests(unittest.TestCase):
         decision = plugin._gate_tool_call(tool_name="web_search", session_id="s-ghost")
         self.assertEqual(decision["action"], "block")
         self.assertIsNone(plugin._gate_tool_call(tool_name="memory_recall", session_id="s-ghost"))
+
+    def test_a_grey_child_is_rejudged_once_the_host_row_becomes_readable(self):
+        # A transient DB miss must not downgrade the child for the rest of its life.
+        self.assertEqual(plugin._child_kind("s-ghost"), "journal")
+        with sqlite3.connect(str(self.db)) as conn:
+            conn.execute("INSERT INTO sessions VALUES (?, ?, ?, ?)",
+                         ("s-ghost", "oneshot", "oneshot", '{"platform": "local"}'))
+        self.assertEqual(plugin._child_kind("s-ghost"), "study")
+        self.assertEqual(plugin._child_chat("s-ghost"), "chat-8")
 
     def test_a_spawned_child_without_a_tag_is_confined(self):
         self.assertEqual(plugin._child_kind("s-notag"), "journal")

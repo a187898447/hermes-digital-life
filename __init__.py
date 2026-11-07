@@ -594,9 +594,10 @@ def _child_kind(session_id: str) -> str | None:
     process sharing state.db can read them, including the child process itself, which
     is where this check actually runs. A chat that merely types the tag stays ordinary.
 
-    When the host row cannot be read but the prompt is child-shaped, the session is
-    treated as the narrowest child (journal) and gets no chat scope: a forged tag then
-    buys nothing, and a real child loses a retry instead of gaining every tool. A child
+    When the host row cannot be read but the prompt is child-shaped, that call is
+    answered as the narrowest child (journal) with no chat scope: a forged tag then
+    buys nothing. The answer is not cached, so once the row is readable the session is
+    re-judged as what it really is. A child
     whose tag was lost is also held to the journal allowlist rather than the full set.
     """
     if not session_id:
@@ -611,10 +612,11 @@ def _child_kind(session_id: str) -> str | None:
     if spawned is None:
         if not tag_kind:
             return None  # ordinary session we cannot classify yet; do not cache a guess
+        # A single unreadable row must not pin this session to the journal allowlist
+        # for the rest of its life: answer for this call only and re-read next time.
         logger.warning("session %s is child-shaped but its host row is unreadable; "
-                       "confining it to the journal allowlist", session_id)
+                       "confining this call to the journal allowlist", session_id)
         _CHILD_CHATS.pop(session_id, None)
-        _remember_child(session_id, "journal")
         return "journal"
     kind = tag_kind or "journal"
     if not tag_kind:
