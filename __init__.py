@@ -201,6 +201,14 @@ def _skill_craft(name: str, prompt: str) -> str:
     return digital_life.skills.craft(name, digital_life.skills.level(state, name), prompt)
 
 
+def _skill_level(name: str) -> int:
+    try:
+        state = digital_life.storage.read_state(time.time() * 1000)
+    except Exception:  # noqa: BLE001 - no host storage: treat as a steady hand
+        return 3
+    return int(digital_life.skills.level(state, name))
+
+
 def _skill_grant(name: str, *, ok: bool) -> None:
     now_ms = time.time() * 1000
     digital_life.storage.update_state(now_ms, lambda state: _note_skill(state, name, ok, now_ms))
@@ -986,7 +994,9 @@ def _make_image(args, session_id="", **kwargs):
         try:
             path = media_mod.create_image(skilled, aspect_ratio=aspect, reference=reference,
                                           model=media_model, style=media_style,
-                                          negative=CHARACTER_NEGATIVE if args.get("character") else "")
+                                          negative=", ".join(x for x in (
+                                              digital_life.skills.negative_prompt(_skill_level("make_image")),
+                                              CHARACTER_NEGATIVE if args.get("character") else "") if x))
             _send_media_now(chat_id, path, caption)
             _skill_grant("make_image", ok=True)
         except Exception as exc:  # noqa: BLE001

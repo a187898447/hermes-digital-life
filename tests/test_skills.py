@@ -75,3 +75,10 @@ class PracticeTests(unittest.TestCase):
         trace = life._finish_practice({"title": "练一练画图"}, {"type": "skill", "name": "make_image"}, 1.0)
         self.assertIn("画图", trace["text"])
         self.assertEqual(trace["source"]["name"], "make_image")
+
+
+class NegativeTests(unittest.TestCase):
+    def test_a_new_hand_leaves_the_background_out(self):
+        self.assertIn("背景", skills.negative_prompt(0))
+        self.assertIn("多个主体", skills.negative_prompt(1))
+        self.assertEqual(skills.negative_prompt(3), "")

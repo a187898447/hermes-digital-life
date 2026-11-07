@@ -123,3 +123,17 @@ def line(state: dict[str, Any]) -> str:
     """One short line for the system prompt: names and levels only."""
     parts = [f"{NAMES[name]}{LABELS[min(level(state, name), 3)]}" for name in NAMES]
     return "手上的活：" + "、".join(parts)
+
+
+# The prompt only asks for a simple picture; the negative list is what the model
+# actually honours when it wants to fill the frame with shelves and windows.
+NEGATIVE = {
+    0: "背景, 房间, 商店, 货架, 窗户, 门, 风景, 道具, 多个主体, 复杂构图, 细节, 光影, 地板",
+    1: "多个主体, 复杂构图, 人群",
+}
+NEGATIVE_HIGH = ""
+
+
+def negative_prompt(level: int) -> str:
+    """What the picture should leave out at this level, if anything."""
+    return NEGATIVE.get(int(level), NEGATIVE_HIGH)
