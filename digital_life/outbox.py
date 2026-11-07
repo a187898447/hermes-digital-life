@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+import time
 from pathlib import Path
 
 from .library import _data_dir
@@ -21,6 +22,8 @@ AUDIO_SUFFIXES = {".mp3", ".wav", ".m4a", ".aac", ".ogg", ".opus"}
 MEDIA_SUFFIXES = VIDEO_SUFFIXES | IMAGE_SUFFIXES | AUDIO_SUFFIXES
 MAX_MB = int(os.environ.get("HERMES_LOVER_VIDEO_MAX_MB", "30"))
 MAX_BYTES = MAX_MB * 1024 * 1024
+# Generated media is a cache, not an archive: keep it long enough to re-send, then drop it.
+KEEP_DAYS = int(os.environ.get("HERMES_LOVER_OUTBOX_KEEP_DAYS", "30"))
 
 
 def root_dir() -> Path:
@@ -73,14 +76,50 @@ def resolve(name: str, chat_id: str = "") -> Path:
     raise ValueError(f"no such file: {raw} (put it in {root} first)")
 
 
+def _sweep(folder: Path, now: float) -> None:
+    """Delete this folder's generated media older than KEEP_DAYS; never touch symlinks."""
+    if KEEP_DAYS <= 0:
+        return
+    cutoff = now - KEEP_DAYS * 86400
+    try:
+        entries = list(folder.iterdir())
+    except OSError:
+        return
+    for item in entries:
+        try:
+            if item.is_symlink() or not item.is_file():
+                continue
+            if item.suffix.lower() not in MEDIA_SUFFIXES:
+                continue
+            if item.stat().st_mtime < cutoff:
+                item.unlink()
+        except OSError:
+            continue
+
+
 def write_bytes(name: str, data: bytes, chat_id: str = "") -> Path:
     """Save generated media atomically in the folder of the chat that asked for it."""
-    root = chat_dir(chat_id) if chat_id else root_dir()
-    target = (root / Path(str(name)).name).resolve()
+    folder = chat_dir(chat_id) if chat_id else root_dir()
+    target = folder / Path(str(name)).name
     if target.suffix.lower() not in MEDIA_SUFFIXES:
         raise ValueError("only videos, images and audio can be stored")
-    with tempfile.NamedTemporaryFile(dir=root, suffix=target.suffix, delete=False) as handle:
-        handle.write(data)
-        temp = Path(handle.name)
-    os.replace(temp, target)
-    return target
+    # A same-uid attacker can pre-place a symlink at the target name; writing through it
+    # would land outside the outbox. Refuse the link instead of resolving it.
+    if target.is_symlink():
+        raise ValueError("refusing to write through a symlink in the outbox")
+    temp: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(dir=folder, suffix=target.suffix, delete=False) as handle:
+            handle.write(data)
+            temp = Path(handle.name)
+        os.replace(temp, target)
+        temp = None
+    finally:
+        if temp is not None:
+            try:
+                temp.unlink()
+            except OSError:
+                pass
+    if chat_id:
+        _sweep(folder, time.time())
+    return target.resolve()

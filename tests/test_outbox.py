@@ -67,6 +67,29 @@ class OutboxTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             outbox.resolve(f"{other.parent.name}/voice.mp3", "chat-a")
 
+    def test_write_bytes_refuses_a_preplaced_symlink(self):
+        outside = Path(self.tmp.name) / "outside.mp4"
+        outside.write_bytes(b"keep")
+        link = outbox.chat_dir("chat-a") / "gen.mp4"
+        link.symlink_to(outside)
+        with self.assertRaises(ValueError):
+            outbox.write_bytes("gen.mp4", b"bytes", chat_id="chat-a")
+        self.assertEqual(outside.read_bytes(), b"keep")
+
+    def test_old_generated_media_is_swept_but_the_shared_root_is_not(self):
+        folder = outbox.chat_dir("chat-a")
+        old = folder / "old.mp4"
+        old.write_bytes(b"old")
+        shared = self.root / "operator.mp4"
+        shared.write_bytes(b"operator")
+        stale = 1_000_000.0
+        os.utime(old, (stale, stale))
+        os.utime(shared, (stale, stale))
+        with mock.patch.object(outbox, "KEEP_DAYS", 30):
+            outbox.write_bytes("new.mp4", b"new", chat_id="chat-a")
+        self.assertFalse(old.exists())
+        self.assertTrue(shared.exists())
+
     def test_write_bytes_stores_a_generated_clip(self):
         target = outbox.write_bytes("gen.mp4", b"bytes")
         self.assertEqual(target.read_bytes(), b"bytes")
