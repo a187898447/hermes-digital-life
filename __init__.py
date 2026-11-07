@@ -34,6 +34,17 @@ _TURN_META: dict[str, dict[str, str]] = {}
 # Hard tool budget per user turn (QQ only): the model tends to page its way
 # through the whole zone instead of answering.
 _TOOL_TURNS: dict[str, dict[str, int]] = {}
+# How many times this turn's tool calls were refused after the budget ran out. One
+# refusal is a nudge; two means the model keeps reaching for tools instead of talking,
+# so the next request carries a system-level "answer now" and the gate hard-stops.
+_BUDGET_STOPS: dict[str, int] = {}
+
+
+def _budget_stopped(session_id: str) -> bool:
+    if _BUDGET_STOPS.get(session_id, 0) >= 2:
+        return True
+    return any(count >= 2 and (session_id.endswith(key) or key.endswith(session_id))
+               for key, count in _BUDGET_STOPS.items())
 TOOL_CALL_LIMIT = 8
 ZONE_PAGE_LIMIT = 2
 READ_SOURCE_TURN_LIMIT = 3
@@ -411,6 +422,9 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
     meta = _TURN_META.get(session_id) or {}
     if (meta.get("platform") or _session_source(session_id) or "") != "qqbot":
         return None
+    if _budget_stopped(session_id) and tool_name not in ("background_task", "search_later"):
+        return {"action": "block",
+                "message": "工具额度已经用完了，这一次必须直接回话；剩下的事交给 background_task。"}
     counts = _TOOL_TURNS.setdefault(session_id, {"total": 0, "zone": 0, "recall": 0,
                                                  "last_write": ""})
     if tool_name == "memory_recall":
@@ -448,8 +462,13 @@ def _gate_tool_call(tool_name: str = "", session_id: str = "", **kwargs) -> dict
         return {"action": "block",
                 "message": "本轮空间最多翻 2 页，已经到上限。用手上的内容回答，或者把后续交给 background_task。"}
     if counts["total"] >= TOOL_CALL_LIMIT:
+        stops = _BUDGET_STOPS.get(session_id, 0) + 1
+        _BUDGET_STOPS[session_id] = stops
+        if stops == 1:
+            return {"action": "block",
+                    "message": "本轮工具调用已达 8 次。先回话，把剩下的工作交给 background_task。"}
         return {"action": "block",
-                "message": "本轮工具调用已达 8 次。先回话，把剩下的工作交给 background_task。"}
+                "message": "额度用完了（8 次），而且你又伸手了。现在不要再调用任何工具，直接用手上已有的信息回话。"}
     counts["total"] += 1
     if tool_name == "qzone_feed":
         counts["zone"] += 1
@@ -940,6 +959,7 @@ def _on_user_message(
         "platform": platform or "",
     }
     _TOOL_TURNS.pop(meta["session"], None)
+    _BUDGET_STOPS.pop(meta["session"], None)
     meta["chat_id"], meta["chat_type"] = _session_scope(meta["session"])
     _remember(_TURN_META, meta["session"], meta)
     if meta["chat_id"]:
@@ -1106,6 +1126,9 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     directive = digital_life.domain.stress_directive(state["chemistry"]["cortisol"])
     wake_text = digital_life.runtime.wake_section(state, now_ms, chat_id=scope or "")
     header = "\n\n".join(part for part in (wake_text, directive) if part)
+    if _budget_stopped(str(kwargs.get("session_id") or "")):
+        stop_line = "工具额度已经用完（8 次）。现在不要再调用任何工具，直接用目前拿到的信息回话。"
+        note = f"{note}\n{stop_line}" if note else stop_line
     changed = result_temperature is not None
     result = dict(request)
     system = result.get("system")

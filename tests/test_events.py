@@ -1260,10 +1260,12 @@ class ToolBudgetTests(unittest.TestCase):
         self.hl = hl
         hl._TURN_META["s-budget"] = {"platform": "qqbot", "chat_id": "c1"}
         hl._TOOL_TURNS.pop("s-budget", None)
+        hl._BUDGET_STOPS.pop("s-budget", None)
 
     def tearDown(self):
         self.hl._TURN_META.pop("s-budget", None)
         self.hl._TOOL_TURNS.pop("s-budget", None)
+        self.hl._BUDGET_STOPS.pop("s-budget", None)
 
     def test_zone_needs_a_memory_check_first(self):
         hook = self.hl._gate_tool_call
@@ -1289,6 +1291,29 @@ class ToolBudgetTests(unittest.TestCase):
         blocked = hook(tool_name="terminal", session_id="s-budget")
         self.assertEqual(blocked["action"], "block")
         self.assertIn("8 次", blocked["message"])
+
+    def test_a_second_attempt_after_the_budget_is_a_hard_stop(self):
+        hook = self.hl._gate_tool_call
+        for _ in range(8):
+            self.assertIsNone(hook(tool_name="terminal", session_id="s-budget"))
+        first = hook(tool_name="terminal", session_id="s-budget")
+        self.assertIn("先回话", first["message"])
+        second = hook(tool_name="web_search", session_id="s-budget")
+        self.assertIn("不要", second["message"])
+        # From here on every tool is refused, including the ones that skip the budget.
+        third = hook(tool_name="memory_recall", session_id="s-budget")
+        self.assertEqual(third["action"], "block")
+        self.assertIn("回话", third["message"])
+        # Handing the rest off is still allowed.
+        self.assertIsNone(hook(tool_name="background_task", session_id="s-budget"))
+
+    def test_the_request_carries_the_stop_order(self):
+        self.hl._BUDGET_STOPS["s-budget"] = 2
+        result = self.hl._affect_request(
+            {"messages": [{"role": "user", "content": "然后呢"}]}, session_id="s-budget")
+        self.assertIsNotNone(result)
+        blob = json.dumps(result, ensure_ascii=False)
+        self.assertIn("不要再调用任何工具", blob)
 
     def test_memory_writes_do_not_consume_the_budget(self):
         hook = self.hl._gate_tool_call
