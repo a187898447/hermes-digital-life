@@ -25,6 +25,14 @@ class LibraryTests(unittest.TestCase):
         path.write_text(text, "utf-8")
         return path
 
+    def test_ingest_records_the_chat_that_brought_the_book(self):
+        body = "第一段。\n\n第二段。"
+        meta = library.ingest(str(self.write("owned.txt", body)), chat="chat-1")
+        self.assertEqual(meta["ingested_by"], "chat-1")
+        # another chat re-ingesting the same bytes does not take ownership
+        again = library.ingest(str(self.write("owned.txt", body)), chat="chat-2")
+        self.assertEqual(again["ingested_by"], "chat-1")
+
     def test_ingest_and_page_through_a_text_file(self):
         body = "\n".join(f"第{index}段。" + "字" * 60 for index in range(20))
         meta = library.ingest(str(self.write("rubbish-novel.txt", body)))

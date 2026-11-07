@@ -14,7 +14,8 @@
    - P0-2：`reference` 是模型能填的任意字符串，却被当作可信文件路径。
    - P0-3：计费与执行顺序、以及「记不了账就放行」的 fail-open，让配额从约束变成装饰。
 2. 修法都落在**代码边界**：身份看 `state.db.sessions.source`（宿主写入），路径先 `resolve` 再 `is_relative_to`，计费先判上限再原子落盘。没有在提示词或输出上做过滤。
-3. 当前状态：P0、P1-4、P1-5、P2 全部改完，`592 tests OK`（原 557，新增 35 条回归）。
+3. 当前状态：P0、P1-4、P1-5、P2 全部改完，`596 tests OK`（原 557，新增 39 条回归）。
+   复核后补了两处：library 素材的 chat 归属（§2.1）、`_share_video` 的两级计费。
 4. P1-4/P1-5 的本质是**生活层和媒体目录默认全局**；修法是让「没有 chat 的产物」显式标注，而不是默认共享。
 
 ---
@@ -84,14 +85,27 @@
   `_finish_think` 的 trace 文本不再回放 summary，并把 `gap.chat` 记到 trace 上；
   `life.remember` 把 `chat` 传给 writer，`life_writer` 按该 chat 写入 `kind="life"`（无 chat 的读/练痕迹仍是全局）；
   `beat_targets` 只交出 `share` 且没有 chat 归属的 trace，chat 内的 share trace 不再广播给所有订阅私聊。
-- 偏差：没有改 `library.ingest` 记来源 chat。书是 operator 共享的资料，read trace 不含任何会话的文本，
-  因此按全局处理；如果以后书单来自某个会话，再补来源归属。
+- 偏差（已补）：一开始没有改 `library.ingest` 记来源 chat，理由是「书是共享资料」。复核指出 read trace 带 90 字原文摘录，
+  这条全局痕迹会把 A 会话的私密材料带进全局记忆和 beat 广播；已在 §2.1 补齐。
 - P1-5：`outbox.chat_dir(chat_id)` 用 `sha1(chat_id)[:16]` 分子目录；`write_bytes`/`minimax.create_image`/
   `create_speech`/`download` 都带 `chat_id` 写入该目录；`resolve(name, chat_id)` 只查调用方目录 + 根目录（operator 投放），
   且只接受不含子目录的平铺文件名，另一个 chat 的目录名也走不进去；`_audio_path(value, chat_id)` 只接受调用方目录 + inbox。
 - 回归：`tests/test_outbox.py`（chat 隔离/根目录共享/子目录名拒绝）、`tests/test_minimax.py`（download 传 chat_id）、
   `tests/test_events.py`（另一个 chat 的媒体不能 share、`_audio_path` 拒绝共享根目录与他人目录）、
   `tests/test_life.py`（think 标题/trace 泛化且带 chat、旧标题擦除、writer 收 chat）。
+
+### 2.1 补漏：library 素材也有 chat 归属（复核后）
+
+- `library.ingest(source, chat=...)` 把首个 ingest 的 chat 记进 meta 的 `ingested_by`（后到的同内容不抢归属）；
+  `read_source` 把当前 chat 传进去。
+- `_finish_read` 的 trace 带 `chat=ingested_by`、`share=False`：读完一本别人带进来的书，痕迹只留在那个会话的记忆里，
+  不再进全局桶，也不再进 beat 广播。
+- `_now_line` 把 `读《书名》` 泛化成「在读点东西」；`_finish_note` 汇总时同理（`_note_title`），书名不进每个会话的提示词前缀。
+- 回归：`tests/test_library.py`（ingest 归属不抢注）、`tests/test_life.py`（read trace 带 chat 且不共享、note 标题泛化）、
+  `tests/test_events.py`（read_source 传 chat、`_now_line` 不含书名）。
+- 兼容：升级前 ingest 的书没有 `ingested_by`，read trace 仍按全局处理；重新 ingest 一次即可归属。
+
+---
 
 ## 3. 已实施（P2）
 
@@ -109,6 +123,8 @@
 - **P2-6 模型闸门**（`__init__.py`）：`_is_minimax_model` 优先读本会话 `_TURN_META[session]["model"]`，
   进程级 last-model 只作无会话时的兜底；`_gate_tool_call` 传 `session_id`。回归：`test_the_media_gate_follows_the_turn_model_not_the_last_one_seen`。
 - **P2-7 / P2-10**：polish 默认改 `auto`；删除无人读且无限增长的 `_VOICE_LLM_ERRORS`。
+- **补漏**：`_share_video` 原来仍用旧的 `_budget.spend("video:<chat>", …)`（无 profile 总额、存储异常 fail-open），
+  已改为 `_charge_media("video", …, VIDEO_PER_DAY, VIDEO_PER_PROFILE)`，失败时退 chat 与 profile 两级。
 - **P2-8 日界**（`digital_life/clock.py`）：配额与日记统一 05:00 换日。回归：`test_the_day_rolls_over_at_five_not_midnight`。
 - **P2-9 心跳与写入**（`digital_life/tick.py`、`library.py`、`gaps.py`）：
   `once()` 单飞锁（忙时返回 `{"ran": False, "reason": "busy"}`）；`set_enabled_probe` 让 `life.enabled` 热改即刻生效，

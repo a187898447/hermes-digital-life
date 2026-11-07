@@ -166,14 +166,15 @@ class StepTests(unittest.TestCase):
         self.assertGreater(out["pulses"]["cortisol"], 0)
         self.assertEqual(out["traces"], [])
 
-    def test_a_finished_read_leaves_a_shareable_trace(self):
+    def test_a_finished_read_keeps_its_chat_and_stays_unshared(self):
         state = self._state()
         item = {"id": "act-1", "kind": "read", "title": "读《夜航西飞》", "minutes": 25,
                 "status": "running", "started_at": NOW, "done_at": 0.0,
                 "source": {"type": "library", "file": "a.md", "part": 0}}
         state.update({"gaps": [], "chemistry": {}})
         state["life"].update({"day": life.local_day(NOW), "agenda": [item], "current": "act-1"})
-        with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS), \
+        book = dict(AgendaTests.BOOKS[0], ingested_by="chat-9")
+        with mock.patch.object(life, "_books", return_value=[book]), \
                 mock.patch.object(life.library, "read",
                                   return_value={"text": "夜里起飞的飞机", "progress": "10%",
                                                 "part": 1, "finished": True}):
@@ -181,7 +182,14 @@ class StepTests(unittest.TestCase):
         trace = out["traces"][0]
         self.assertIn("夜航西飞", trace["text"])
         self.assertIn("夜里起飞的飞机", trace["text"])
-        self.assertTrue(trace["share"])
+        self.assertEqual(trace["chat"], "chat-9")
+        self.assertFalse(trace["share"])
+
+
+class NoteTests(unittest.TestCase):
+    def test_a_note_does_not_replay_a_book_title(self):
+        self.assertEqual(life._note_title("读《夜航西飞》"), "读了一会儿书")
+        self.assertEqual(life._note_title("练了一会儿口语"), "练了一会儿口语")
 
 
 class PulseTests(unittest.TestCase):

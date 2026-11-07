@@ -200,10 +200,12 @@ def _write_json_atomic(path: Path, payload: dict) -> None:
             pass
 
 
-def ingest(source: str, *, fetcher=None) -> dict:
+def ingest(source: str, *, fetcher=None, chat: str = "") -> dict:
     """Copy a text file or URL into the library; returns its metadata.
 
     ``fetcher`` is a test seam: passing one means the caller owns URL validation.
+    ``chat`` records who put the book on the shelf, so the trace it later leaves
+    can stay in that conversation instead of the shared memory bucket.
     """
     source = str(source or "").strip()
     if not source:
@@ -244,6 +246,8 @@ def ingest(source: str, *, fetcher=None) -> dict:
         meta = {}
     meta.update({"title": title, "source": source, "file": book.name, "chars": len(text),
                  "pages": pages, "offset": int(meta.get("offset") or 0), "digest": digest})
+    if chat and not meta.get("ingested_by"):
+        meta["ingested_by"] = str(chat)
     _write_json_atomic(meta_path, meta)
     return meta
 

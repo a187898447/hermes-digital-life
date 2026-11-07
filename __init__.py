@@ -50,6 +50,7 @@ ZONE_PAGE_LIMIT = 2
 READ_SOURCE_TURN_LIMIT = 3
 READ_SOURCE_DAILY_INGESTS = 40
 VIDEO_PER_DAY = 2
+VIDEO_PER_PROFILE = 4
 VIDEO_GEN_PER_DAY = 3
 IMAGE_GEN_PER_DAY = 6
 SPEECH_PER_DAY = 10
@@ -295,6 +296,8 @@ def _now_line(state: dict[str, Any], now_ms: float) -> str:
     weekday = _WEEKDAY_NAMES[local.tm_wday]
     current = life.get("current") or {}
     doing = str(current.get("title") or "").strip()
+    if doing.startswith("读《"):
+        doing = "在读点东西"  # the title is someone's shelf, not everyone's prompt prefix
     if not doing:
         doing = "准备睡了" if phase == "sleep" else "在发呆"
     mood = str((state.get("mood") or {}).get("label") or "平常")
@@ -841,7 +844,7 @@ def _send_qq(chat_id: str, message: str) -> None:
 
 
 def _share_video(args, session_id="", **kwargs):
-    from .digital_life import budget as _budget, outbox as _outbox  # noqa: PLC0415
+    from .digital_life import outbox as _outbox  # noqa: PLC0415
 
     chat_id, _chat_type = _session_scope(session_id) or ("", "")
     if not chat_id:
@@ -854,13 +857,15 @@ def _share_video(args, session_id="", **kwargs):
         path = _outbox.resolve(str(args.get("name") or ""), chat_id)
     except ValueError as exc:
         return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
-    if not _budget.spend(f"video:{chat_id}", VIDEO_PER_DAY):
+    hit = _charge_media("video", chat_id, VIDEO_PER_DAY, VIDEO_PER_PROFILE)
+    if hit:
         return json.dumps({"ok": False,
-                           "error": f"今天已经发过 {VIDEO_PER_DAY} 条视频了，明天再说。"},
+                           "error": _media_quota_error("视频", hit,
+                                                       f"今天已经发过 {VIDEO_PER_DAY} 条视频了，明天再说。")},
                           ensure_ascii=False)
     send = _host_send_message_tool()
     if send is None:
-        _budget.refund(f"video:{chat_id}")
+        _refund_media("video", chat_id)
         return json.dumps({"ok": False, "error": "host send tool unavailable"},
                           ensure_ascii=False)
     caption = " ".join(str(args.get("caption") or "").split())[:120]
@@ -868,7 +873,7 @@ def _share_video(args, session_id="", **kwargs):
     try:
         result = send({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
     except Exception as exc:  # noqa: BLE001
-        _budget.refund(f"video:{chat_id}")
+        _refund_media("video", chat_id)
         logger.warning("hermes-lover could not send a video", exc_info=True)
         return json.dumps({"ok": False, "error": f"send failed: {exc}"[:200]},
                           ensure_ascii=False)
@@ -878,7 +883,7 @@ def _share_video(args, session_id="", **kwargs):
         except ValueError:
             result = {}
     if isinstance(result, dict) and result.get("error"):
-        _budget.refund(f"video:{chat_id}")
+        _refund_media("video", chat_id)
         return json.dumps({"ok": False, "error": str(result["error"])[:200]},
                           ensure_ascii=False)
     return json.dumps({"ok": True, "sent": path.name, "caption": caption},
@@ -892,7 +897,7 @@ _VIDEO_SLOTS = threading.BoundedSemaphore(2)
 
 def _deliver_video(chat_id: str, task_id: str, prompt: str, key: str = "") -> None:
     """Wait for one Hailuo task, save it, and send it to the chat that asked."""
-    from .digital_life import budget as _budget, minimax as _minimax  # noqa: PLC0415
+    from .digital_life import minimax as _minimax  # noqa: PLC0415
 
     send = _host_send_message_tool()
     try:
@@ -1884,6 +1889,41 @@ def _sync_persona_card(root: Path | None = None) -> None:
         logger.debug("hermes-lover: persona sync skipped", exc_info=True)
 
 
+def _read_source(args, session_id="", **kwargs):
+    from .digital_life import budget, library  # noqa: PLC0415
+
+    chat_id, _chat_type = _session_scope(session_id) or ("", "")
+    name = str(args.get("name") or "").strip()
+    source = str(args.get("source") or "").strip()
+    try:
+        if source:
+            if not budget.spend("read_source_ingest", READ_SOURCE_DAILY_INGESTS):
+                return json.dumps({"ok": False,
+                                   "error": "今天读进来的新东西够多了，先用库里已有的书。"},
+                                  ensure_ascii=False)
+            meta = library.ingest(source, chat=chat_id)
+        else:
+            matches = [book for book in library.books()
+                       if name and (book.get("title") == name or book.get("file") == name)]
+            if not matches:
+                return json.dumps({"ok": False, "error": "没有这本书；先用 source 指定文件或链接"})
+            meta = matches[0]
+        part = args.get("part")
+        page = library.read(meta, None if part is None else int(part),
+                            int(args.get("max_chars") or 4000))
+    except (ValueError, OSError) as exc:
+        return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
+    if isinstance(page, dict) and page.get("finished"):
+        page["extract"] = ("读完了。先判断材料类型：教程/文档/知识 → 提炼可复用的做法；段子库、文案集、小说 → "
+                           "提炼场合级习惯（learned），并把有意思的说法写成 kind=\"phrase\"（≤60 字，只留句式/口气，"
+                           "不带人名情节），原文的句子一句不进记忆；条数由内容决定，有多少写多少，同一说法反复出现只写一条。"
+                           "每条 learned 先过三问，有一个不过就不写：① 去掉原文还成立吗？② 这个场合真实聊天里会出现吗？③ 这是在说做法，还是在复述一个包袱？"
+                           "写成：什么时候 → 你会怎么做（自己的话）→ "
+                           "applies_dow（0=周一 1=周二 2=周三 3=周四 4=周五 5=周六 6=周日，材料没写就 null）。"
+                           "条数由材料决定：有几个站得住的场合写几个，写不出就不写，不凑数、不写大总结。")
+    return json.dumps(page, ensure_ascii=False)
+
+
 def register(ctx) -> None:
     global _CTX
     _CTX = ctx
@@ -2414,38 +2454,7 @@ def register(ctx) -> None:
         return json.dumps(answer)
 
     def read_source(args, session_id="", **kwargs):
-        from .digital_life import budget, library  # noqa: PLC0415
-
-        name = str(args.get("name") or "").strip()
-        source = str(args.get("source") or "").strip()
-        try:
-            if source:
-                if not budget.spend("read_source_ingest", READ_SOURCE_DAILY_INGESTS):
-                    return json.dumps({"ok": False,
-                                       "error": "今天读进来的新东西够多了，先用库里已有的书。"},
-                                      ensure_ascii=False)
-                meta = library.ingest(source)
-            else:
-                matches = [book for book in library.books()
-                           if name and (book.get("title") == name or book.get("file") == name)]
-                if not matches:
-                    return json.dumps({"ok": False, "error": "没有这本书；先用 source 指定文件或链接"})
-                meta = matches[0]
-            part = args.get("part")
-            page = library.read(meta, None if part is None else int(part),
-                                int(args.get("max_chars") or 4000))
-        except (ValueError, OSError) as exc:
-            return json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False)
-        if isinstance(page, dict) and page.get("finished"):
-            page["extract"] = ("读完了。先判断材料类型：教程/文档/知识 → 提炼可复用的做法；段子库、文案集、小说 → "
-                               "提炼场合级习惯（learned），并把有意思的说法写成 kind=\"phrase\"（≤60 字，只留句式/口气，"
-                               "不带人名情节），原文的句子一句不进记忆；条数由内容决定，有多少写多少，同一说法反复出现只写一条。"
-                               "每条 learned 先过三问，有一个不过就不写：① 去掉原文还成立吗？② 这个场合真实聊天里会出现吗？③ 这是在说做法，还是在复述一个包袱？"
-                               "写成：什么时候 → 你会怎么做（自己的话）→ "
-                               "applies_dow（0=周一 1=周二 2=周三 3=周四 4=周五 5=周六 6=周日，材料没写就 null）。"
-                               "条数由材料决定：有几个站得住的场合写几个，写不出就不写，不凑数、不写大总结。")
-        return json.dumps(page, ensure_ascii=False)
-
+        return _read_source(args, session_id=session_id, **kwargs)
     def library_list(args, **kwargs):
         from .digital_life import library  # noqa: PLC0415
 

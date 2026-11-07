@@ -281,7 +281,7 @@ def _finish_read(item: dict[str, Any], source: dict[str, Any], now_ms: float) ->
     trace_text = f"{headline}。{excerpt}" if excerpt else headline
     return {"at": now_ms, "kind": "read", "title": item["title"], "text": trace_text,
             "source": {"type": "library", "file": name, "part": result.get("part")},
-            "share": bool(result.get("finished"))}
+            "chat": str(meta.get("ingested_by") or ""), "share": False}
 
 
 def _finish_think(state: dict[str, Any], item: dict[str, Any], source: dict[str, Any],
@@ -310,11 +310,16 @@ def _finish_practice(item: dict[str, Any], source: dict[str, Any], now_ms: float
             "share": False}
 
 
+def _note_title(title: str) -> str:
+    """Generalize a diary line that would otherwise carry a book title."""
+    return "读了一会儿书" if title.startswith("读《") else title
+
+
 def _finish_note(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
     recent = [trace for trace in (state.get("life") or {}).get("traces") or [] if trace.get("kind") != "note"][-2:]
     if not recent:
         return None
-    parts = [str(trace.get("title") or "") for trace in recent if trace.get("title")]
+    parts = [_note_title(str(trace.get("title") or "")) for trace in recent if trace.get("title")]
     text = "今天" + "，".join(parts) + "。" if parts else ""
     if not text:
         return None

@@ -1168,7 +1168,7 @@ class ShareVideoTests(unittest.TestCase):
 
     def test_sends_the_file_as_a_media_attachment(self):
         hl = self.hl
-        with patch.object(self.budget, "spend", return_value=True):
+        with patch.object(hl, "_charge_media", return_value=""):
             out = json.loads(hl._share_video({"name": "clip.mp4", "caption": "新做的"}, session_id="s-video"))
         self.assertTrue(out["ok"])
         self.assertTrue(self.sent)
@@ -1182,20 +1182,20 @@ class ShareVideoTests(unittest.TestCase):
         outbox = importlib.import_module("hermes_plugins.digital_life.digital_life.outbox")
         stolen = outbox.chat_dir("chat-2") / "private.mp4"
         stolen.write_bytes(b"not yours")
-        with patch.object(self.budget, "spend", return_value=True) as spend:
+        with patch.object(hl, "_charge_media", return_value="") as charge:
             out = json.loads(hl._share_video({"name": "private.mp4"}, session_id="s-video"))
         self.assertFalse(out["ok"])
         self.assertIn("no such file", out["error"])
-        spend.assert_not_called()
+        charge.assert_not_called()
 
     def test_the_daily_cap_and_non_qq_platforms_are_enforced(self):
         hl = self.hl
-        with patch.object(self.budget, "spend", return_value=False):
+        with patch.object(hl, "_charge_media", return_value="chat"):
             out = json.loads(hl._share_video({"name": "clip.mp4"}, session_id="s-video"))
         self.assertFalse(out["ok"])
         self.assertIn("今天", out["error"])
         hl._TURN_META["s-video"] = {"platform": "cli"}
-        with patch.object(self.budget, "spend", return_value=True):
+        with patch.object(hl, "_charge_media", return_value=""):
             out = json.loads(hl._share_video({"name": "clip.mp4"}, session_id="s-video"))
         self.assertFalse(out["ok"])
         self.assertIn("QQ", out["error"])
@@ -1206,11 +1206,49 @@ class ShareVideoTests(unittest.TestCase):
         def boom(_args):
             raise RuntimeError("network down")
         with patch.object(hl, "_host_send_message_tool", lambda: boom), \
-                patch.object(self.budget, "spend", return_value=True), \
-                patch.object(self.budget, "refund", lambda name: refunds.append(name)):
+                patch.object(hl, "_charge_media", return_value=""), \
+                patch.object(hl, "_refund_media", lambda kind, chat: refunds.append((kind, chat))):
             out = json.loads(hl._share_video({"name": "clip.mp4"}, session_id="s-video"))
         self.assertFalse(out["ok"])
-        self.assertEqual(refunds, ["video:chat-1"])
+        self.assertEqual(refunds, [("video", "chat-1")])
+
+
+class ReadSourceTests(unittest.TestCase):
+    def setUp(self):
+        import importlib
+        hl = sys.modules["hermes_plugins.digital_life"]
+        self.hl = hl
+        self.budget = importlib.import_module("hermes_plugins.digital_life.digital_life.budget")
+        self.library = importlib.import_module("hermes_plugins.digital_life.digital_life.library")
+        p = patch.object(hl, "_session_scope", lambda session_id: ("chat-1", "dm"))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def test_ingesting_a_source_remembers_the_chat(self):
+        seen = {}
+
+        def ingest(source, *, chat="", fetcher=None):
+            seen["source"], seen["chat"] = source, chat
+            return {"file": "book.txt", "title": "book.txt"}
+
+        with patch.object(self.budget, "spend", return_value=True), \
+                patch.object(self.library, "ingest", side_effect=ingest), \
+                patch.object(self.library, "read",
+                             return_value={"text": "x", "part": 0, "finished": False}):
+            out = json.loads(self.hl._read_source({"source": "https://example.com/a.txt"},
+                                                 session_id="s-read"))
+        self.assertNotIn("error", out)
+        self.assertEqual(seen["chat"], "chat-1")
+
+
+class NowLineTests(unittest.TestCase):
+    def test_a_book_title_does_not_reach_the_shared_prompt_prefix(self):
+        hl = sys.modules["hermes_plugins.digital_life"]
+        state = {"life": {"phase": "day", "current": {"title": "读《夜航西飞》"}},
+                 "mood": {"label": "平常"}, "energy": 60}
+        line = hl._now_line(state, 1_700_000_000_000.0)
+        self.assertNotIn("夜航西飞", line)
+        self.assertIn("在读点东西", line)
 
 
 class MakeVideoTests(unittest.TestCase):
