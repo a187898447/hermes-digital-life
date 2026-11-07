@@ -211,7 +211,12 @@ def _skill_level(name: str) -> int:
 
 def _skill_grant(name: str, *, ok: bool) -> None:
     now_ms = time.time() * 1000
-    digital_life.storage.update_state(now_ms, lambda state: _note_skill(state, name, ok, now_ms))
+
+    def mutate(state):
+        _note_skill(state, name, ok, now_ms)
+        return state
+
+    digital_life.storage.update_state(now_ms, mutate)
 
 
 def _note_skill(state: dict[str, Any], name: str, ok: bool, now_ms: float) -> None:
@@ -276,7 +281,7 @@ def _reconcile_wake(session_id: str = "") -> None:
 
     def mutate(state):
         outcome["result"] = _wake.reconcile(state, now_ms, chat_id=chat_id)
-        return None
+        return state
 
     storage.update_state(now_ms, mutate)
     if outcome.get("result") == "unmet":
@@ -298,6 +303,7 @@ def _maybe_wake(session_id: str = "") -> None:
 
     def mutate(state):
         plan["wake"] = _wake.plan_wake(state, now_ms, chat_id=chat_id)
+        return state
 
     storage.update_state(now_ms, mutate)
     item = plan.get("wake")
@@ -307,11 +313,11 @@ def _maybe_wake(session_id: str = "") -> None:
 
     def drop(state):
         _wake.cancel(state, wake_id)
-        return None
+        return state
 
     def deliver(state):
         _wake.mark_delivered(state, wake_id, now_ms)
-        return None
+        return state
 
     fresh = storage.read_state(now_ms)
     if not _wake.verify_queued(fresh, wake_id):

@@ -82,3 +82,26 @@ class NegativeTests(unittest.TestCase):
         self.assertIn("背景", skills.negative_prompt(0))
         self.assertIn("多个主体", skills.negative_prompt(1))
         self.assertEqual(skills.negative_prompt(3), "")
+
+
+try:  # the host package is only importable inside a real Hermes install
+    import importlib as _il
+    _plugin = _il.import_module("hermes_plugins.digital_life")
+    _pstorage = _il.import_module("hermes_plugins.digital_life.digital_life.storage")
+except Exception:  # noqa: BLE001
+    _plugin = _pstorage = None
+
+
+@unittest.skipUnless(_plugin is not None and _pstorage is not None, "host package not on the path")
+class PersistedGrantTests(unittest.TestCase):
+    def test_the_grant_hands_the_state_back_so_it_is_actually_written(self):
+        seen = {}
+
+        def fake_update(now_ms, mutate):
+            seen["returned"] = mutate({"skills": skills.new_skills()})
+            return seen["returned"]
+
+        with mock.patch.object(_pstorage, "update_state", fake_update):
+            _plugin._skill_grant("make_image", ok=True)
+        self.assertIsInstance(seen.get("returned"), dict)
+        self.assertEqual(seen["returned"]["skills"]["levels"]["make_image"]["xp"], skills.GAIN_OK)
