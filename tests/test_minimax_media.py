@@ -147,16 +147,30 @@ class HandlerTests(unittest.TestCase):
             item.start()
             self.addCleanup(item.stop)
 
+    def _inline(self, work):
+        work()
+        return True
+
     def test_image_is_drawn_and_sent_with_a_media_line(self):
         from pathlib import Path as P
         with mock.patch.object(self.minimax, "create_image", return_value=P("/tmp/x.jpeg")), \
-                mock.patch.object(self.budget, "spend", return_value=True):
+                mock.patch.object(self.budget, "spend", return_value=True), \
+                mock.patch.object(self.hl, "_run_media_later", self._inline):
             out = json.loads(self.hl._make_image({"prompt": "一只橘猫", "caption": "画好了"},
                                                  session_id="s-media"))
         self.assertTrue(out["ok"])
+        self.assertTrue(out["queued"])
         self.assertEqual(self.sent[0]["target"], "qqbot:chat-1")
         self.assertIn("MEDIA:/tmp/x.jpeg", self.sent[0]["message"])
         self.assertIn("画好了", self.sent[0]["message"])
+
+    def test_the_image_call_answers_before_the_work_runs(self):
+        started = []
+        with mock.patch.object(self.hl, "_run_media_later", lambda work: started.append(work) or True), \
+                mock.patch.object(self.budget, "spend", return_value=True):
+            out = json.loads(self.hl._make_image({"prompt": "一只橘猫"}, session_id="s-media"))
+        self.assertTrue(out["queued"])
+        self.assertEqual(len(started), 1)
 
     def test_a_refused_image_quota_is_reported(self):
         with mock.patch.object(self.budget, "spend", return_value=False), \
@@ -182,7 +196,8 @@ class HandlerTests(unittest.TestCase):
     def test_speech_is_made_and_sent_with_a_media_line(self):
         from pathlib import Path as P
         with mock.patch.object(self.minimax, "create_speech", return_value=P("/tmp/v.mp3")), \
-                mock.patch.object(self.budget, "spend", return_value=True):
+                mock.patch.object(self.budget, "spend", return_value=True), \
+                mock.patch.object(self.hl, "_run_media_later", self._inline):
             out = json.loads(self.hl._make_speech({"text": "晚安", "caption": "听一下"},
                                                   session_id="s-media"))
         self.assertTrue(out["ok"])
@@ -195,10 +210,12 @@ class HandlerTests(unittest.TestCase):
         self.assertFalse(out["ok"])
         with mock.patch.object(self.minimax, "create_speech", side_effect=RuntimeError("boom")), \
                 mock.patch.object(self.budget, "spend", return_value=True), \
-                mock.patch.object(self.budget, "refund") as refund:
+                mock.patch.object(self.budget, "refund") as refund, \
+                mock.patch.object(self.hl, "_run_media_later", self._inline):
             out = json.loads(self.hl._make_speech({"text": "x"}, session_id="s-media"))
-        self.assertFalse(out["ok"])
+        self.assertTrue(out["queued"])
         refund.assert_called_once()
+        self.assertTrue(any("没做出来" in item["message"] for item in self.sent))
 
     def test_audio_outside_the_folders_is_refused(self):
         out = json.loads(self.hl._transcribe_audio({"name": "/etc/passwd"}, session_id="s-media"))

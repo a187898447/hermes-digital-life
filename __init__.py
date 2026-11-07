@@ -812,6 +812,43 @@ def _audio_path(value: str):
     raise ValueError(f"no such audio file: {raw}")
 
 
+MEDIA_JOBS_MAX = 2
+_MEDIA_JOBS: set[object] = set()
+_MEDIA_JOBS_LOCK = threading.Lock()
+
+
+def _run_media_later(work) -> bool:
+    """Run one generation off the turn so the chat gets words first, media after."""
+    token = object()
+    with _MEDIA_JOBS_LOCK:
+        if len(_MEDIA_JOBS) >= MEDIA_JOBS_MAX:
+            return False
+        _MEDIA_JOBS.add(token)
+
+    def run() -> None:
+        try:
+            work()
+        finally:
+            with _MEDIA_JOBS_LOCK:
+                _MEDIA_JOBS.discard(token)
+
+    threading.Thread(target=run, daemon=True, name="hermes-lover-media").start()
+    return True
+
+
+def _send_media_now(chat_id: str, path, caption: str = "") -> None:
+    sender = _host_send_message_tool()
+    message = f"{caption}\nMEDIA:{path}" if caption else f"MEDIA:{path}"
+    sender({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
+
+
+def _send_text_now(chat_id: str, text: str) -> None:
+    try:
+        _host_send_message_tool()({"action": "send", "target": f"qqbot:{chat_id}", "message": text})
+    except Exception:  # noqa: BLE001 - the chat is gone; nothing else to do
+        logger.warning("hermes-lover could not deliver a media failure", exc_info=True)
+
+
 def _make_image(args, session_id="", **kwargs):
     from .digital_life import budget as _budget, minimax as _minimax  # noqa: PLC0415
 
@@ -826,22 +863,26 @@ def _make_image(args, session_id="", **kwargs):
     if not _budget.spend(f"imagegen:{chat_id}", IMAGE_GEN_PER_DAY):
         return json.dumps({"ok": False, "error": f"今天已经画过 {IMAGE_GEN_PER_DAY} 张了，明天再说。"},
                           ensure_ascii=False)
-    try:
-        path = _minimax.create_image(prompt, aspect_ratio=str(args.get("aspect_ratio") or "1:1"),
-                                     reference=str(args.get("reference") or ""))
-    except Exception as exc:  # noqa: BLE001
-        _budget.refund(f"imagegen:{chat_id}")
-        return json.dumps({"ok": False, "error": str(exc)[:200]}, ensure_ascii=False)
+    aspect = str(args.get("aspect_ratio") or "1:1")
+    reference = str(args.get("reference") or "")
     caption = " ".join(str(args.get("caption") or "").split())
-    message = f"{caption}\nMEDIA:{path}" if caption else f"MEDIA:{path}"
-    try:
-        _host_send_message_tool()({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("hermes-lover could not send a generated image", exc_info=True)
+
+    def work() -> None:
+        from .digital_life import budget as budget_mod, minimax as media_mod  # noqa: PLC0415
+        try:
+            path = media_mod.create_image(prompt, aspect_ratio=aspect, reference=reference)
+            _send_media_now(chat_id, path, caption)
+        except Exception as exc:  # noqa: BLE001
+            budget_mod.refund(f"imagegen:{chat_id}")
+            _send_text_now(chat_id, f"图没画出来：{str(exc)[:120]}")
+
+    if not _run_media_later(work):
         _budget.refund(f"imagegen:{chat_id}")
-        return json.dumps({"ok": False, "error": f"画好了但没发出去：{str(exc)[:120]}"},
+        return json.dumps({"ok": False, "error": "同时在做的媒体太多了，等一下再试。"},
                           ensure_ascii=False)
-    return json.dumps({"ok": True, "sent": str(path), "caption": caption}, ensure_ascii=False)
+    return json.dumps({"ok": True, "queued": True,
+                       "message": "已经在画了；画好直接发到这个会话，不用再问。"},
+                      ensure_ascii=False)
 
 
 def _make_speech(args, session_id="", **kwargs):
@@ -862,25 +903,24 @@ def _make_speech(args, session_id="", **kwargs):
 
     if not _budget.spend(f"speech:{chat_id}", SPEECH_PER_DAY):
         return json.dumps({"ok": False, "error": "今天已经说过 10 段了，明天再说。"}, ensure_ascii=False)
-    try:
-        path = _minimax.create_speech(text, voice=voice, speed=speed)
-    except Exception as exc:  # noqa: BLE001 - report any provider failure as text
+    caption = " ".join(str(args.get("caption") or "").split())
+
+    def work() -> None:
+        from .digital_life import budget as budget_mod, minimax as media_mod  # noqa: PLC0415
+        try:
+            path = media_mod.create_speech(text, voice=voice, speed=speed)
+            _send_media_now(chat_id, path, caption)
+        except Exception as exc:  # noqa: BLE001
+            budget_mod.refund(f"speech:{chat_id}")
+            _send_text_now(chat_id, f"语音没做出来：{str(exc)[:120]}")
+
+    if not _run_media_later(work):
         _budget.refund(f"speech:{chat_id}")
-        return json.dumps({"ok": False, "error": f"语音没做出来：{exc}"}, ensure_ascii=False)
-    caption = str(args.get("caption") or "").strip()
-    sender = _host_send_message_tool()
-    if sender is None:
-        _budget.refund(f"speech:{chat_id}")
-        return json.dumps({"ok": False, "error": "this host cannot send media"}, ensure_ascii=False)
-    message = f"{caption}\nMEDIA:{path}" if caption else f"MEDIA:{path}"
-    try:
-        sender({"action": "send", "target": f"qqbot:{chat_id}", "message": message})
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("hermes-lover could not send generated speech", exc_info=True)
-        _budget.refund(f"speech:{chat_id}")
-        return json.dumps({"ok": False, "error": f"做好音了但没发出去：{str(exc)[:120]}"},
+        return json.dumps({"ok": False, "error": "同时在做的媒体太多了，等一下再试。"},
                           ensure_ascii=False)
-    return json.dumps({"ok": True, "sent": str(path)}, ensure_ascii=False)
+    return json.dumps({"ok": True, "queued": True,
+                       "message": "已经在录了；做好直接发到这个会话，不用再问。"},
+                      ensure_ascii=False)
 
 
 def _transcribe_audio(args, session_id="", **kwargs):
