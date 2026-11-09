@@ -84,6 +84,10 @@ settle（化学衰减/休息恢复）
   `mood_since` 给状态工具和 `[现在]` 用。
 - 情绪的来源有三类：对话事件（`events.classify`）、工具结果、生活脉冲。没有第四类；
   任何"凭感觉"的变化都要能指回这三类之一。
+- 主动消息属于"对话事件"里的等待：同一个 chat 连续 3 条主动消息没被回复就不再发
+  （`OUTREACH_REST_AT`），前一条没被回复时再发一条扣 8 点血清素（`outreach_unanswered`），
+  等待本身按 0.12 点/分钟继续下探（floor 20）；对方回一句就清空等待，并给 6 点血清素、
+  4 点多巴胺（`reconnected`）。beat 和 wake 没有 user message，不拿 `turn_complete` 的 5 点。
 
 ## 对话层怎么知道"现在"
 

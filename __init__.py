@@ -25,7 +25,15 @@ from .digital_life import typos as _typos
 from .digital_life import compaction as _compaction
 from .digital_life import library as _library
 from .digital_life import gaps as _gaps
-from .digital_life.runtime import record_api_error, record_request, record_turn
+from .digital_life.runtime import (
+    OUTREACH_REST_AT,
+    outreach_unanswered,
+    record_api_error,
+    record_outreach,
+    record_reply,
+    record_request,
+    record_turn,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -727,7 +735,10 @@ def _post_llm_call(assistant_response: str = "", session_id: str = "", platform:
     except Exception:
         logger.warning("hermes-lover wake reconciliation failed", exc_info=True)
     if assistant_response:
-        record_turn(time.time() * 1000, success=True, user_message=user_message or "")
+        # Only a turn that answered a person is a social reward. A beat or a wake
+        # that nobody replied to must not pay itself in dopamine for talking alone.
+        if str(user_message or "").strip():
+            record_turn(time.time() * 1000, success=True, user_message=user_message or "")
         try:
             if _CAPTURE is not None:
                 _CAPTURE(assistant_response, session_id=session_id or "", platform=platform or "",
@@ -1489,6 +1500,11 @@ def _on_user_message(
     _BUDGET_STOPS.pop(meta["session"], None)
     meta["chat_id"], meta["chat_type"] = _session_scope(meta["session"])
     _remember(_TURN_META, meta["session"], meta)
+    if meta["chat_id"] and (meta["platform"] or "") == "qqbot":
+        try:
+            record_reply(time.time() * 1000, meta["chat_id"])
+        except Exception:
+            logger.warning("hermes-lover could not end a waiting note", exc_info=True)
     if meta["chat_id"]:
         chat_scope = meta["chat_id"]
         # Deterministic fallback for the prompt rule: a loop the assistant raised is
@@ -2352,6 +2368,13 @@ def register(ctx) -> None:
     def beat_targets(args, session_id="", **kwargs):
         if _session_source(session_id) != "cron":
             return json.dumps({"ok": False, "error": "beat tools are only available to scheduled runs — 主动消息是开着的，被拒只说明本轮不是定时轮，不是权限没开"})
+        now_ms = time.time() * 1000
+        try:
+            # The cron tick is the only beat while a chat stays silent, so settle
+            # here: an unanswered nudge must keep depressing the mood with time.
+            digital_life.runtime.settle_state(now_ms)
+        except Exception:
+            logger.debug("hermes-lover could not settle the waiting clock", exc_info=True)
         import os
         from pathlib import Path as _Path
         home = os.environ.get("HERMES_HOME") or str(_Path.home() / ".hermes")
@@ -2395,13 +2418,21 @@ def register(ctx) -> None:
         opted_in = digital_life.proactive.subscribed_chats()
         rows = [row for row in rows if str(row[0]) in opted_in]
         now_ms = time.time() * 1000
-        targets = [
-            {"chat_id": str(r[0]), "chat_type": str(r[1] or ""),
-             "last_at": (r[2] or 0), "last_user_at": (r[3] or r[2] or 0),
-             "minutes_ago": round(max(0.0, now_ms - (r[3] or r[2] or 0)) / 60000, 1),
-             "last_user_turns": recent.get(str(r[0]), [])}
-            for r in rows
-        ]
+        targets = []
+        for r in rows:
+            chat_id = str(r[0])
+            unanswered = outreach_unanswered(now_ms, chat_id)
+            if unanswered >= OUTREACH_REST_AT:
+                # The person stopped answering this many nudges ago: go quiet and
+                # wait for them instead of sending a fourth message into silence.
+                continue
+            targets.append({
+                "chat_id": chat_id, "chat_type": str(r[1] or ""),
+                "last_at": (r[2] or 0), "last_user_at": (r[3] or r[2] or 0),
+                "minutes_ago": round(max(0.0, now_ms - (r[3] or r[2] or 0)) / 60000, 1),
+                "unanswered": unanswered,
+                "last_user_turns": recent.get(chat_id, []),
+            })
         try:
             from .digital_life import storage as _storage  # noqa: PLC0415
 
@@ -2424,6 +2455,11 @@ def register(ctx) -> None:
             return json.dumps({"ok": False, "error": "chat_id and text are required"})
         from .digital_life import proactive as _proactive  # noqa: PLC0415
 
+        now_ms = time.time() * 1000
+        if outreach_unanswered(now_ms, chat_id) >= OUTREACH_REST_AT:
+            return json.dumps({"ok": False,
+                               "error": "对方一直没回，先不打扰了；等他说话再继续。"},
+                              ensure_ascii=False)
         if not _proactive.can_send(chat_id):
             return json.dumps({"ok": False,
                                "error": "this chat has not subscribed to proactive messages"},
@@ -2449,6 +2485,11 @@ def register(ctx) -> None:
             result = {"ok": True, "raw": str(raw)[:200]}
         if result.get("error"):
             _proactive.release_send(chat_id)
+        else:
+            try:
+                record_outreach(time.time() * 1000, chat_id)
+            except Exception:
+                logger.warning("hermes-lover could not count a beat", exc_info=True)
         return json.dumps({"ok": not result.get("error"), "chat_id": chat_id, "result": result},
                           ensure_ascii=False)
 

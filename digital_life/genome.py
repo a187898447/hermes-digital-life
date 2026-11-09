@@ -18,7 +18,10 @@ from .chemistry import DEFAULT_TEMPERAMENT, clamp, float_or, normalize_temperame
 DEFAULT_CHEMICALS: dict[str, dict[str, Any]] = {
     "dopamine": {
         "baseline": 50.0, "initial": 50.0, "min": 0.0, "max": 100.0, "half_life_minutes": 45.0,
-        "rules": [{"event": "turn_complete", "delta": 5.0}],
+        "rules": [
+            {"event": "turn_complete", "delta": 5.0},
+            {"event": "reconnected", "delta": 4.0},
+        ],
     },
     "cortisol": {
         "baseline": 20.0, "initial": 20.0, "min": 0.0, "max": 100.0, "half_life_minutes": 30.0,
@@ -26,7 +29,14 @@ DEFAULT_CHEMICALS: dict[str, dict[str, Any]] = {
     },
     "serotonin": {
         "baseline": 50.0, "initial": 50.0, "min": 0.0, "max": 100.0, "half_life_minutes": 120.0,
-        "rules": [],
+        "rules": [
+            # Being left on read is a real social cost: each proactive message that
+            # goes unanswered before the next one presses serotonin down, and the
+            # runtime drains it further while the person stays silent. A reply ends
+            # the wait and gives it back.
+            {"event": "outreach_unanswered", "delta": -8.0},
+            {"event": "reconnected", "delta": 6.0},
+        ],
     },
 }
 

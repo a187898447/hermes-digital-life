@@ -140,6 +140,7 @@ def default_state(now_ms: float) -> dict[str, Any]:
             "mood": {"label": "平常", "since": now_ms, "valence": 0.0, "arousal": 0.0},
             "skills": skills_module.new_skills(),
             "affect_history": [],
+            "outreach": {},
             "affect_events": {"day": "", "total": 0.0, "cooldowns": {}}}
 
 
@@ -173,6 +174,20 @@ def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
                 entry["at"] = float(item["at"])
             cleaned.append(entry)
         state["affect_history"] = cleaned
+    outreach = raw.get("outreach")
+    cleaned_outreach: dict[str, dict[str, Any]] = {}
+    if isinstance(outreach, dict):
+        for key, item in list(outreach.items())[-64:]:
+            if not isinstance(item, dict):
+                continue
+            chat = str(key or "").strip()[:200]
+            if not chat:
+                continue
+            cleaned_outreach[chat] = {
+                "unanswered": max(0, min(10, int(float_or(item.get("unanswered"), 0.0)))),
+                "last_at": max(0.0, float_or(item.get("last_at"), 0.0)),
+            }
+    state["outreach"] = cleaned_outreach
     book = raw.get("affect_events")
     if not isinstance(book, dict):
         book = {}

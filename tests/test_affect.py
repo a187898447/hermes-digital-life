@@ -127,6 +127,78 @@ class IntegrationTests(unittest.TestCase):
 
 
 
+class OutreachTests(unittest.TestCase):
+    """Talking into silence costs mood; only a real reply pays it back."""
+
+    def _fake_update(self, state):
+        def update_state(now_ms, mutate):
+            result = mutate(state)
+            return state if result is None else result
+        return update_state
+
+    def _run(self, state, fn, now_ms):
+        from digital_life import storage
+
+        with patch.object(storage, "update_state", self._fake_update(state)):
+            return fn(now_ms, "chat-1")
+
+    def test_waiting_alone_drains_serotonin(self):
+        from digital_life import runtime
+
+        t0 = 2_000_000.0
+        # Energy stays mid so the "rested" drift does not mask the waiting drain.
+        state = state_with(energy=50)
+        state["last_settled_at"] = t0
+        state["outreach"] = {"chat-1": {"unanswered": 1, "last_at": t0}}
+        with patch("digital_life.storage.update_state", self._fake_update(state)):
+            runtime.settle_state(t0 + 3 * 60 * 60 * 1000)
+        self.assertLess(state["chemistry"]["serotonin"], 32.0)
+        self.assertEqual(affect.label(state), "低落")
+
+    def test_an_ignored_nudge_costs_more_than_one(self):
+        from digital_life import runtime
+
+        t0 = 2_000_000.0
+        state = state_with(energy=100)
+        self.assertTrue(self._run(state, runtime.record_outreach, t0))
+        first = state["chemistry"]["serotonin"]
+        self.assertEqual(state["outreach"]["chat-1"]["unanswered"], 1)
+        self._run(state, runtime.record_outreach, t0 + 2_000)
+        self.assertLess(state["chemistry"]["serotonin"], first - 7.0)
+        self.assertEqual(state["outreach"]["chat-1"]["unanswered"], 2)
+
+    def test_after_three_unanswered_nudges_the_chat_rests(self):
+        from digital_life import runtime
+
+        t0 = 2_000_000.0
+        state = state_with(energy=100)
+        for step in range(3):
+            self.assertTrue(self._run(state, runtime.record_outreach, t0 + step * 2_000))
+        self.assertEqual(state["outreach"]["chat-1"]["unanswered"], 3)
+        self.assertFalse(self._run(state, runtime.record_outreach, t0 + 10_000))
+        self.assertEqual(state["outreach"]["chat-1"]["unanswered"], 3)
+
+    def test_a_reply_ends_the_wait_and_gives_serotonin_back(self):
+        from digital_life import runtime
+
+        t0 = 2_000_000.0
+        state = state_with(energy=100)
+        self._run(state, runtime.record_outreach, t0)
+        self._run(state, runtime.record_outreach, t0 + 2_000)
+        low = state["chemistry"]["serotonin"]
+        self.assertTrue(self._run(state, runtime.record_reply, t0 + 4_000))
+        self.assertNotIn("chat-1", state.get("outreach") or {})
+        self.assertGreater(state["chemistry"]["serotonin"], low + 5.0)
+
+    def test_reading_the_wait_does_not_touch_the_state(self):
+        from digital_life import runtime
+
+        with patch("digital_life.storage.read_state",
+                   return_value={"outreach": {"chat-1": {"unanswered": 2, "last_at": 0}}}):
+            self.assertEqual(runtime.outreach_unanswered(1_000, "chat-1"), 2)
+            self.assertEqual(runtime.outreach_unanswered(1_000, "chat-2"), 0)
+
+
 def setUpModule():
     """Install one host stub for the whole module.
 

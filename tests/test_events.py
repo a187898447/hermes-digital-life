@@ -295,6 +295,16 @@ class RegistrationTests(unittest.TestCase):
         with patch.object(plugin, "record_turn"), patch.object(runtime, "observe_assistant_unknown", side_effect=RuntimeError):
             plugin._post_llm_call("我不知道火星营业时间。")
 
+    def test_a_turn_with_nobody_on_the_other_end_earns_no_reward(self):
+        # A beat or a wake has no user message: talking into silence must not pay dopamine.
+        with patch.object(plugin, "record_turn") as turn:
+            plugin._post_llm_call(assistant_response="……", session_id="s1")
+            plugin._post_llm_call(assistant_response="嗯", session_id="s1", user_message="   ")
+        turn.assert_not_called()
+        with patch.object(plugin, "record_turn") as turn:
+            plugin._post_llm_call(assistant_response="嗯", session_id="s1", user_message="在吗")
+        turn.assert_called_once()
+
     def setUp(self):
         self.snapshot = patch.object(plugin.digital_life.runtime, "status_snapshot", return_value=default_state(1_000_000))
         self.snapshot.start()
@@ -407,6 +417,33 @@ class RegistrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp,                 patch.dict(os.environ, {"HERMES_HOME": tmp}),                 patch.object(plugin, "_session_source", return_value="cron"),                 patch.object(plugin.digital_life.proactive, "subscribed_chats", return_value=set()),                 patch.object(plugin.digital_life.storage, "read_state", return_value=state):
             result = json.loads(handler({}, session_id="s-cron"))
         self.assertEqual([trace["text"] for trace in result["traces"]], ["读完了《夜航西飞》"])
+
+    def test_beat_targets_skips_a_chat_that_stopped_answering(self):
+        import tempfile
+
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        plugin.register(ctx)
+        handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["beat_targets"]
+        state = {"life": {"traces": []},
+                 "outreach": {"c1": {"unanswered": 3, "last_at": 0}}}
+        settle = patch.object(plugin.digital_life.runtime, "settle_state")
+        with tempfile.TemporaryDirectory() as tmp,                 patch.dict(os.environ, {"HERMES_HOME": tmp}),                 patch.object(plugin, "_session_source", return_value="cron"),                 patch.object(plugin.digital_life.proactive, "subscribed_chats", return_value={"c1"}),                 patch.object(plugin.digital_life.storage, "read_state", return_value=state),                 settle as settle_state:
+            result = json.loads(handler({}, session_id="s-cron"))
+        self.assertEqual(result["targets"], [])
+        settle_state.assert_called_once()
+
+    def test_beat_send_refuses_a_chat_that_stopped_answering(self):
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        plugin.register(ctx)
+        handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["beat_send"]
+        claim = patch.object(plugin.digital_life.proactive, "claim_send")
+        with patch.object(plugin, "_session_source", return_value="cron"),              patch.object(plugin, "outreach_unanswered", return_value=3),              claim as claim_send:
+            result = json.loads(handler({"chat_id": "c1", "text": "hi"}, session_id="s-cron"))
+        self.assertFalse(result["ok"])
+        self.assertIn("不打扰", result["error"])
+        claim_send.assert_not_called()
 
     def test_recall_caps_k_and_truncates_long_entries(self):
         ctx = RecordingContext()

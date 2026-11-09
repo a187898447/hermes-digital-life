@@ -14,6 +14,14 @@ from .domain import clamp, decay_chemistry, float_or, reorder_formatted_memory_b
 
 POOL = ChemicalPool()
 
+# One proactive message may be left unanswered; after this many in a row the
+# plugin stops sending until the person speaks, instead of turning into spam.
+OUTREACH_REST_AT = 3
+# Silent waiting itself erodes serotonin (about 7 points an hour); a reply ends
+# the drain and gives a little back. The floor keeps the mood low, never absurd.
+WAITING_DRAIN_PER_MINUTE = 0.12
+WAITING_SEROTONIN_FLOOR = 20.0
+
 
 def settle_state(now_ms: float) -> dict[str, Any]:
     def mutate(state):
@@ -30,6 +38,7 @@ def settle_state(now_ms: float) -> dict[str, Any]:
             state["chemistry"], elapsed, state["temperament"],
             energy=state["energy"], high_tension_gap=high_gap,
         )
+        _drain_waiting_silence(state, elapsed)
         rest = settle_rest(state["energy"], 100.0, elapsed, now_ms, False)
         state["energy"] = rest["energy"]
         if rest["sleep_ms"]:
@@ -42,6 +51,24 @@ def settle_state(now_ms: float) -> dict[str, Any]:
 
     from .storage import update_state
     return update_state(now_ms, mutate)
+
+
+def _drain_waiting_silence(state: dict[str, Any], elapsed_ms: float) -> None:
+    """A nudge that nobody answered costs mood while it sits there unanswered."""
+    book = state.get("outreach")
+    if not isinstance(book, dict) or elapsed_ms <= 0:
+        return
+    waiting = any(isinstance(entry, dict) and int(float_or(entry.get("unanswered"), 0.0)) > 0
+                  for entry in book.values())
+    if not waiting:
+        return
+    chemistry = state.get("chemistry")
+    if not isinstance(chemistry, dict):
+        return
+    current = float_or(chemistry.get("serotonin"), 50.0)
+    chemistry["serotonin"] = max(
+        WAITING_SEROTONIN_FLOOR, current - WAITING_DRAIN_PER_MINUTE * (elapsed_ms / 60_000.0)
+    )
 
 
 def _gap_visible(gap: dict[str, Any], scope: str | None) -> bool:
@@ -94,6 +121,75 @@ def record_request(now_ms: float) -> None:
         return state
     from .storage import update_state
     update_state(now_ms, mutate)
+
+
+def outreach_unanswered(now_ms: float, chat: str) -> int:
+    """How many proactive messages in ``chat`` are still waiting for a reply."""
+    chat = str(chat or "")
+    if not chat:
+        return 0
+    try:
+        from .storage import read_state
+        entry = (read_state(now_ms).get("outreach") or {}).get(chat)
+    except Exception:  # noqa: BLE001 - a missing state read must not block a send
+        return 0
+    return int(float_or(entry.get("unanswered"), 0.0)) if isinstance(entry, dict) else 0
+
+
+def record_outreach(now_ms: float, chat: str) -> bool:
+    """Count one proactive message to ``chat``.
+
+    Returns ``False`` once the chat has had :data:`OUTREACH_REST_AT` unanswered
+    nudges in a row: the caller must not send again until the person speaks.
+    Sending another nudge while the previous one is still unanswered applies the
+    ``outreach_unanswered`` rule (a serotonin drop), once per extra nudge.
+    """
+    chat = str(chat or "").strip()
+    outcome = {"ok": False}
+
+    def mutate(state):
+        if state["emergency_stop"] or not chat:
+            return None
+        state = settle_before_transition(state, now_ms)
+        book = state.setdefault("outreach", {})
+        entry = book.get(chat) if isinstance(book.get(chat), dict) else {}
+        unanswered = int(float_or(entry.get("unanswered"), 0.0))
+        if unanswered >= OUTREACH_REST_AT:
+            return state
+        if unanswered > 0:
+            POOL.apply("outreach_unanswered", state)
+        book[chat] = {"unanswered": unanswered + 1, "last_at": float(now_ms)}
+        state["last_settled_at"] = now_ms
+        outcome["ok"] = True
+        return state
+
+    from .storage import update_state
+    update_state(now_ms, mutate)
+    return outcome["ok"]
+
+
+def record_reply(now_ms: float, chat: str) -> bool:
+    """The person spoke in ``chat``: end the wait and give a little serotonin back."""
+    chat = str(chat or "").strip()
+    outcome = {"heard": False}
+
+    def mutate(state):
+        if not chat:
+            return None
+        state = settle_before_transition(state, now_ms)
+        book = state.get("outreach")
+        entry = book.pop(chat, None) if isinstance(book, dict) else None
+        if isinstance(entry, dict) and int(float_or(entry.get("unanswered"), 0.0)) > 0:
+            POOL.apply("reconnected", state)
+            outcome["heard"] = True
+        if isinstance(book, dict) and not book:
+            state.pop("outreach", None)
+        state["last_settled_at"] = now_ms
+        return state
+
+    from .storage import update_state
+    update_state(now_ms, mutate)
+    return outcome["heard"]
 
 
 def record_turn(now_ms: float, *, success: bool, user_message: str = "") -> None:
@@ -271,6 +367,7 @@ def settle_before_transition(state: dict[str, Any], now_ms: float) -> dict[str, 
             state["chemistry"], elapsed, state["temperament"],
             energy=state["energy"], high_tension_gap=high_gap,
         )
+        _drain_waiting_silence(state, elapsed)
         state["energy"] = settle_rest(state["energy"], 100.0, elapsed, now_ms, False)["energy"]
     return state
 
