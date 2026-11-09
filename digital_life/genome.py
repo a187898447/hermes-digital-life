@@ -30,11 +30,14 @@ DEFAULT_CHEMICALS: dict[str, dict[str, Any]] = {
     "serotonin": {
         "baseline": 50.0, "initial": 50.0, "min": 0.0, "max": 100.0, "half_life_minutes": 120.0,
         "rules": [
-            # Being left on read is a real social cost: each proactive message that
-            # goes unanswered before the next one presses serotonin down, and the
-            # runtime drains it further while the person stays silent. A reply ends
-            # the wait and gives it back.
-            {"event": "outreach_unanswered", "delta": -8.0},
+            # Being left on read is a real social cost, and ignoring the first
+            # nudge invites a louder one: the price of each proactive message
+            # stacks with how many earlier ones are still unanswered. The runtime
+            # also drains serotonin while the person stays silent; a reply ends
+            # the wait and gives a little back.
+            {"event": "outreach_unanswered_1", "delta": -4.0},
+            {"event": "outreach_unanswered_2", "delta": -10.0},
+            {"event": "outreach_unanswered_3", "delta": -18.0},
             {"event": "reconnected", "delta": 6.0},
         ],
     },

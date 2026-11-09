@@ -141,8 +141,9 @@ def record_outreach(now_ms: float, chat: str) -> bool:
 
     Returns ``False`` once the chat has had :data:`OUTREACH_REST_AT` unanswered
     nudges in a row: the caller must not send again until the person speaks.
-    Sending another nudge while the previous one is still unanswered applies the
-    ``outreach_unanswered`` rule (a serotonin drop), once per extra nudge.
+    Every nudge before that presses serotonin down by its stage
+    (``outreach_unanswered_1``, ``_2``, ``_3``): the first costs a little, the
+    third costs a lot, because the earlier ones are still hanging unanswered.
     """
     chat = str(chat or "").strip()
     outcome = {"ok": False}
@@ -156,8 +157,8 @@ def record_outreach(now_ms: float, chat: str) -> bool:
         unanswered = int(float_or(entry.get("unanswered"), 0.0))
         if unanswered >= OUTREACH_REST_AT:
             return state
-        if unanswered > 0:
-            POOL.apply("outreach_unanswered", state)
+        stage = min(unanswered + 1, OUTREACH_REST_AT)
+        POOL.apply(f"outreach_unanswered_{stage}", state)
         book[chat] = {"unanswered": unanswered + 1, "last_at": float(now_ms)}
         state["last_settled_at"] = now_ms
         outcome["ok"] = True

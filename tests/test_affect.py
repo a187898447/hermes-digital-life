@@ -155,17 +155,20 @@ class OutreachTests(unittest.TestCase):
         self.assertLess(state["chemistry"]["serotonin"], 32.0)
         self.assertEqual(affect.label(state), "低落")
 
-    def test_an_ignored_nudge_costs_more_than_one(self):
+    def test_each_ignored_nudge_costs_more_than_the_last(self):
         from digital_life import runtime
 
         t0 = 2_000_000.0
         state = state_with(energy=100)
-        self.assertTrue(self._run(state, runtime.record_outreach, t0))
-        first = state["chemistry"]["serotonin"]
-        self.assertEqual(state["outreach"]["chat-1"]["unanswered"], 1)
-        self._run(state, runtime.record_outreach, t0 + 2_000)
-        self.assertLess(state["chemistry"]["serotonin"], first - 7.0)
-        self.assertEqual(state["outreach"]["chat-1"]["unanswered"], 2)
+        levels = [state["chemistry"]["serotonin"]]
+        for step in range(3):
+            self.assertTrue(self._run(state, runtime.record_outreach, t0 + step * 2_000))
+            levels.append(state["chemistry"]["serotonin"])
+        self.assertEqual(state["outreach"]["chat-1"]["unanswered"], 3)
+        drops = [levels[index] - levels[index + 1] for index in range(3)]
+        self.assertLess(drops[0], drops[1])
+        self.assertLess(drops[1], drops[2])
+        self.assertGreater(drops[2], 15.0)
 
     def test_after_three_unanswered_nudges_the_chat_rests(self):
         from digital_life import runtime
