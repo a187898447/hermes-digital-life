@@ -89,6 +89,9 @@ settle（化学衰减/休息恢复）
   第三条再扣 18 点血清素（`outreach_unanswered_1/2/3`），等待本身按 0.12 点/分钟继续
   下探（floor 20）；对方回一句就清空等待，并给 6 点血清素、4 点多巴胺（`reconnected`）。
   beat 和 wake 没有 user message，不拿 `turn_complete` 的 5 点。
+  每条主动消息还会记下它接的是哪条 user 消息（`last_beat`）；下一条 beat 若最新用户消息
+  还是同一条，`beat_targets` 会把这条从 `last_user_turns` 里拿掉，并带上 `repeat` 提示，
+  让模型换件事说，而不是换个说法再嚼一遍同一个梗。
 
 ## 对话层怎么知道"现在"
 

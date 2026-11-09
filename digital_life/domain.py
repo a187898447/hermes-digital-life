@@ -183,10 +183,18 @@ def normalize_state(raw: Any, now_ms: float) -> dict[str, Any]:
             chat = str(key or "").strip()[:200]
             if not chat:
                 continue
-            cleaned_outreach[chat] = {
+            entry = {
                 "unanswered": max(0, min(10, int(float_or(item.get("unanswered"), 0.0)))),
                 "last_at": max(0.0, float_or(item.get("last_at"), 0.0)),
             }
+            beat = item.get("last_beat")
+            if isinstance(beat, dict):
+                entry["last_beat"] = {
+                    "text": str(beat.get("text") or "")[:200],
+                    "src_user_at": max(0.0, float_or(beat.get("src_user_at"), 0.0)),
+                    "at": max(0.0, float_or(beat.get("at"), 0.0)),
+                }
+            cleaned_outreach[chat] = entry
     state["outreach"] = cleaned_outreach
     book = raw.get("affect_events")
     if not isinstance(book, dict):

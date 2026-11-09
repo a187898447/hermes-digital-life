@@ -136,7 +136,7 @@ def outreach_unanswered(now_ms: float, chat: str) -> int:
     return int(float_or(entry.get("unanswered"), 0.0)) if isinstance(entry, dict) else 0
 
 
-def record_outreach(now_ms: float, chat: str) -> bool:
+def record_outreach(now_ms: float, chat: str, *, text: str = "", src_user_at: float = 0.0) -> bool:
     """Count one proactive message to ``chat``.
 
     Returns ``False`` once the chat has had :data:`OUTREACH_REST_AT` unanswered
@@ -159,7 +159,16 @@ def record_outreach(now_ms: float, chat: str) -> bool:
             return state
         stage = min(unanswered + 1, OUTREACH_REST_AT)
         POOL.apply(f"outreach_unanswered_{stage}", state)
-        book[chat] = {"unanswered": unanswered + 1, "last_at": float(now_ms)}
+        sent = {"unanswered": unanswered + 1, "last_at": float(now_ms)}
+        if text:
+            # Remember what was said and which turn it answered: the next beat must
+            # not chew the same user message again.
+            sent["last_beat"] = {
+                "text": str(text)[:200],
+                "src_user_at": float(src_user_at or 0.0),
+                "at": float(now_ms),
+            }
+        book[chat] = sent
         state["last_settled_at"] = now_ms
         outcome["ok"] = True
         return state

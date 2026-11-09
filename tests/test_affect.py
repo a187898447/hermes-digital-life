@@ -193,6 +193,21 @@ class OutreachTests(unittest.TestCase):
         self.assertNotIn("chat-1", state.get("outreach") or {})
         self.assertGreater(state["chemistry"]["serotonin"], low + 5.0)
 
+    def test_a_beat_remembers_what_it_said_and_which_turn_it_answered(self):
+        from digital_life import runtime
+        from digital_life.domain import normalize_state
+
+        t0 = 2_000_000.0
+        state = state_with(energy=100)
+        self._run(state, lambda now, chat: runtime.record_outreach(
+            now, chat, text="复读机也得挑料，这句我只说一遍。", src_user_at=123.0), t0)
+        beat = state["outreach"]["chat-1"]["last_beat"]
+        self.assertEqual(beat["text"], "复读机也得挑料，这句我只说一遍。")
+        self.assertEqual(beat["src_user_at"], 123.0)
+        self.assertEqual(beat["at"], t0)
+        again = normalize_state(state, t0 + 1_000)
+        self.assertEqual(again["outreach"]["chat-1"]["last_beat"]["src_user_at"], 123.0)
+
     def test_reading_the_wait_does_not_touch_the_state(self):
         from digital_life import runtime
 

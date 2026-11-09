@@ -2107,6 +2107,38 @@ def _read_source(args, session_id="", **kwargs):
     return json.dumps(page, ensure_ascii=False)
 
 
+def _state_db_path() -> Path:
+    home = os.environ.get("HERMES_HOME") or str(Path.home() / ".hermes")
+    return Path(home) / "state.db"
+
+
+def _latest_user_at(chat_id: str) -> float:
+    """When did this chat last say something? 0.0 when that cannot be read."""
+    db = _state_db_path()
+    if not db.exists():
+        return 0.0
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            row = conn.execute(
+                "SELECT MAX(m.timestamp) FROM messages m JOIN sessions s ON s.id = m.session_id "
+                "WHERE s.chat_id = ? AND s.source = 'qqbot' AND m.role = 'user'",
+                (chat_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return 0.0
+    return _num(row[0]) if row else 0.0
+
+
+def _num(value: Any) -> float:
+    try:
+        return float(value or 0.0)
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def register(ctx) -> None:
     global _CTX
     _CTX = ctx
@@ -2375,10 +2407,7 @@ def register(ctx) -> None:
             digital_life.runtime.settle_state(now_ms)
         except Exception:
             logger.debug("hermes-lover could not settle the waiting clock", exc_info=True)
-        import os
-        from pathlib import Path as _Path
-        home = os.environ.get("HERMES_HOME") or str(_Path.home() / ".hermes")
-        db = _Path(home) / "state.db"
+        db = _state_db_path()
         rows = []
         if db.exists():
             import sqlite3
@@ -2418,32 +2447,55 @@ def register(ctx) -> None:
         opted_in = digital_life.proactive.subscribed_chats()
         rows = [row for row in rows if str(row[0]) in opted_in]
         now_ms = time.time() * 1000
-        targets = []
-        for r in rows:
-            chat_id = str(r[0])
-            unanswered = outreach_unanswered(now_ms, chat_id)
-            if unanswered >= OUTREACH_REST_AT:
-                # The person stopped answering this many nudges ago: go quiet and
-                # wait for them instead of sending a fourth message into silence.
-                continue
-            targets.append({
-                "chat_id": chat_id, "chat_type": str(r[1] or ""),
-                "last_at": (r[2] or 0), "last_user_at": (r[3] or r[2] or 0),
-                "minutes_ago": round(max(0.0, now_ms - (r[3] or r[2] or 0)) / 60000, 1),
-                "unanswered": unanswered,
-                "last_user_turns": recent.get(chat_id, []),
-            })
         try:
             from .digital_life import storage as _storage  # noqa: PLC0415
 
             fresh = _storage.read_state(now_ms)
-            # Only traces with no chat of their own may be shown to every target;
-            # a chat-scoped trace would leak one conversation's thread to another.
-            traces = [trace for trace in (fresh.get("life") or {}).get("traces", [])
-                      if trace.get("share") and not str(trace.get("chat") or "")][-3:]
         except Exception:
-            logger.debug("hermes-lover could not read shareable traces", exc_info=True)
-            traces = []
+            logger.debug("hermes-lover could not read the outreach book", exc_info=True)
+            fresh = {}
+        # Only traces with no chat of their own may be shown to every target;
+        # a chat-scoped trace would leak one conversation's thread to another.
+        traces = [trace for trace in (fresh.get("life") or {}).get("traces", [])
+                  if trace.get("share") and not str(trace.get("chat") or "")][-3:]
+        book = fresh.get("outreach") if isinstance(fresh.get("outreach"), dict) else {}
+        targets = []
+        for r in rows:
+            chat_id = str(r[0])
+            entry = book.get(chat_id) if isinstance(book.get(chat_id), dict) else {}
+            unanswered = int(_num(entry.get("unanswered")))
+            if unanswered >= OUTREACH_REST_AT:
+                # The person stopped answering this many nudges ago: go quiet and
+                # wait for them instead of sending a fourth message into silence.
+                continue
+            beat = entry.get("last_beat") if isinstance(entry.get("last_beat"), dict) else {}
+            turns = list(recent.get(chat_id, []))
+            used_at = _num(beat.get("src_user_at"))
+            repeat = bool(used_at) and _num(r[3]) and int(round(_num(r[3]))) == int(round(used_at))
+            target = {
+                "chat_id": chat_id, "chat_type": str(r[1] or ""),
+                "last_at": (r[2] or 0), "last_user_at": (r[3] or r[2] or 0),
+                "minutes_ago": round(max(0.0, now_ms - (r[3] or r[2] or 0)) / 60000, 1),
+                "unanswered": unanswered,
+                "last_user_turns": turns,
+            }
+            if beat:
+                target["last_beat"] = {
+                    "text": str(beat.get("text") or ""),
+                    "src_user_at": used_at,
+                    "at": _num(beat.get("at")),
+                }
+            if repeat:
+                # The newest user turn is the one the last beat already answered.
+                # Hide it so the model cannot chew the same line again, and say why.
+                target["last_user_turns"] = [
+                    turn for turn in turns
+                    if int(round(_num(turn.get("at")))) != int(round(used_at))
+                ]
+                target["repeat"] = True
+                target["hint"] = ("上一次主动消息已经接过最新这条了；不要再用这条或同一个梗。"
+                                 "可以说一件别的事（比如下面 traces 里的），没别的可说就跳过这个 chat。")
+            targets.append(target)
         return json.dumps({"targets": targets, "traces": traces}, ensure_ascii=False)
 
     def beat_send(args, session_id="", **kwargs):
@@ -2487,7 +2539,8 @@ def register(ctx) -> None:
             _proactive.release_send(chat_id)
         else:
             try:
-                record_outreach(time.time() * 1000, chat_id)
+                record_outreach(time.time() * 1000, chat_id, text=text,
+                                src_user_at=_latest_user_at(chat_id))
             except Exception:
                 logger.warning("hermes-lover could not count a beat", exc_info=True)
         return json.dumps({"ok": not result.get("error"), "chat_id": chat_id, "result": result},

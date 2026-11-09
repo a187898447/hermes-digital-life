@@ -433,6 +433,56 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(result["targets"], [])
         settle_state.assert_called_once()
 
+    def test_beat_targets_hides_the_line_the_last_beat_already_answered(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        plugin.register(ctx)
+        handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["beat_targets"]
+        state = {"life": {"traces": []},
+                 "outreach": {"c1": {"unanswered": 0, "last_at": 200,
+                                     "last_beat": {"text": "复读机也得挑料", "src_user_at": 100,
+                                                   "at": 200}}}}
+        with tempfile.TemporaryDirectory() as tmp:
+            db = sqlite3.connect(str(Path(tmp) / "state.db"))
+            db.executescript("""
+                CREATE TABLE sessions (id TEXT, chat_id TEXT, chat_type TEXT, source TEXT, started_at REAL);
+                CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT, timestamp REAL);
+            """)
+            db.execute("INSERT INTO sessions VALUES ('s1', 'c1', 'dm', 'qqbot', 100)")
+            db.execute("INSERT INTO messages VALUES ('s1', 'user', '其实人类的本质是复读机', 100)")
+            db.commit()
+            db.close()
+            with patch.dict(os.environ, {"HERMES_HOME": tmp}),                  patch.object(plugin, "_session_source", return_value="cron"),                  patch.object(plugin.digital_life.runtime, "settle_state"),                  patch.object(plugin.digital_life.proactive, "subscribed_chats", return_value={"c1"}),                  patch.object(plugin.digital_life.storage, "read_state", return_value=state):
+                result = json.loads(handler({}, session_id="s-cron"))
+        target = result["targets"][0]
+        self.assertTrue(target["repeat"])
+        self.assertEqual(target["last_user_turns"], [])
+        self.assertEqual(target["last_beat"]["text"], "复读机也得挑料")
+        self.assertIn("不要再用这条", target["hint"])
+
+    def test_beat_send_records_which_line_it_answered(self):
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        plugin.register(ctx)
+        handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["beat_send"]
+        sent = []
+        module = types.ModuleType("tools.send_message_tool")
+        module.send_message_tool = lambda args: sent.append(args) or json.dumps({"ok": True})
+        tools = types.ModuleType("tools")
+        tools.send_message_tool = module
+        with patch.dict(sys.modules, {"tools": tools, "tools.send_message_tool": module}),              patch.object(plugin, "_session_source", return_value="cron"),              patch.object(plugin, "outreach_unanswered", return_value=0),              patch.object(plugin.digital_life.proactive, "can_send", lambda chat_id: True),              patch.object(plugin.digital_life.proactive, "claim_send", lambda chat_id, now_ms=None: True),              patch.object(plugin, "_latest_user_at", return_value=123.0),              patch.object(plugin, "record_outreach") as record:
+            result = json.loads(handler({"chat_id": "c1", "text": "晚上好呀"}, session_id="s-cron"))
+        self.assertTrue(result["ok"])
+        record.assert_called_once()
+        args, kwargs = record.call_args
+        self.assertEqual(args[1], "c1")
+        self.assertEqual(kwargs["text"], "晚上好呀")
+        self.assertEqual(kwargs["src_user_at"], 123.0)
+
     def test_beat_send_refuses_a_chat_that_stopped_answering(self):
         ctx = RecordingContext()
         ctx.get_config = lambda key, default=None: default
