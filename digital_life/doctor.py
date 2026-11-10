@@ -595,9 +595,11 @@ def _check_heartbeat(home: Path) -> Check:
     if minutes > LIFE_STALE_MINUTES:
         return Check("life.tick", WARN,
                      f"{minutes:.0f} 分钟没有心跳；网关可能在休眠，或者 life.enabled 关了")
-    current = life.get("current") or {}
-    return Check("life.tick", OK,
-                 f"{minutes:.0f} 分钟前刚走过 · {current.get('title') or '空档'}")
+    current_id = str(life.get("current") or "")
+    item = next((entry for entry in life.get("agenda") or []
+                 if isinstance(entry, dict) and entry.get("id") == current_id), None)
+    title = str((item or {}).get("title") or "空档")
+    return Check("life.tick", OK, f"{minutes:.0f} 分钟前刚走过 · {title}")
 
 
 MEMORY_WARN_BYTES = 50 * 1024 * 1024

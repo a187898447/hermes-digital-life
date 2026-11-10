@@ -134,6 +134,30 @@ class Fixture:
         return {check.key: check for check in checks}
 
 
+class HeartbeatCheckTests(unittest.TestCase):
+    def test_a_running_item_is_shown_by_title_not_by_its_id(self):
+        import json
+        import sqlite3
+        import time
+        with tempfile.TemporaryDirectory() as tmp:
+            home = Path(tmp)
+            data = home / "plugin-data" / "hermes-lover"
+            data.mkdir(parents=True)
+            db = sqlite3.connect(str(data / "data.db"))
+            db.execute("CREATE TABLE life_state (id TEXT PRIMARY KEY, payload TEXT, updated_at REAL)")
+            payload = json.dumps({"life": {
+                "last_tick_at": time.time() * 1000 - 60_000,
+                "current": "act-1",
+                "agenda": [{"id": "act-1", "kind": "read", "title": "读《夜航西飞》"}],
+            }})
+            db.execute("INSERT INTO life_state VALUES ('life-state', ?, ?)", (payload, time.time()))
+            db.commit()
+            db.close()
+            check = doctor._check_heartbeat(home)
+        self.assertEqual(check.status, doctor.OK)
+        self.assertIn("读《夜航西飞》", check.detail)
+
+
 class DoctorCheckTests(unittest.TestCase):
     def test_healthy_profile_has_no_fix_and_reports_every_area(self):
         with tempfile.TemporaryDirectory() as tmp:
