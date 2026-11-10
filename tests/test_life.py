@@ -122,6 +122,29 @@ class StepTests(unittest.TestCase):
         self.assertTrue(out["pulses"].get("cortisol", 0) > 0)
         self.assertEqual(len(out["started"]), 1)
 
+    def test_reading_and_drawing_share_one_five_hour_window(self):
+        state = self._state()
+        day = life.local_day(NOW)
+        state["life"].update({"day": day, "agenda": [], "current": None,
+                              "long_at": NOW - 4 * 60 * 60_000})
+        with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS):
+            out = life.step(state, NOW)
+        self.assertEqual(out["started"][0]["kind"], "note")  # read is still inside the window
+        state["life"].update({"agenda": [], "current": None,
+                              "long_at": NOW - 5 * 60 * 60_000 - 1,
+                              "short_at": NOW})
+        with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS):
+            out = life.step(state, NOW)
+        self.assertEqual(out["started"][0]["kind"], "read")
+
+    def test_a_note_does_not_start_before_its_own_gap(self):
+        state = self._state()
+        state["life"].update({"day": life.local_day(NOW), "agenda": [], "current": None,
+                              "long_at": NOW, "short_at": NOW - 30 * 60_000})
+        with mock.patch.object(life, "_books", return_value=[]):
+            out = life.step(state, NOW)
+        self.assertEqual(out["started"], [])
+
     def test_the_day_does_not_stop_when_the_plan_is_used_up(self):
         state = self._state()
         state["life"].update({"day": life.local_day(NOW), "agenda": [], "current": None})

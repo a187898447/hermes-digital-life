@@ -23,6 +23,13 @@ QUIET_HOURS = (0, 6)
 KINDS = ("read", "think", "note", "practice", "rest")
 AGENDA_SIZE = {"疲惫": 2, "低落": 2, "烦躁": 2, "来劲": 5, "平常": 4}
 MINUTES = {"read": 25, "think": 15, "note": 10, "practice": 15, "rest": 20}
+# Reading and drawing share one window: at most one of them per five hours, chosen
+# by which has waited longer. Notes and thoughts are lighter but still not back to
+# back, so the day is not a treadmill of traces.
+LONG_KINDS = ("read", "practice")
+SHORT_KINDS = ("think", "note")
+LONG_GAP_MINUTES = 300
+SHORT_GAP_MINUTES = 120
 PULSES = {
     "read": {"dopamine": 4.0, "serotonin": 1.0},
     "think": {"dopamine": 2.0},
@@ -215,16 +222,24 @@ def step(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
                 pulses[name] = pulses.get(name, 0.0) + amount
 
     if life.get("current") is None and phase(now_ms) != "sleep":
-        nxt = next((item for item in life["agenda"] if item["status"] == "pending"), None)
+        allowed = _allowed_kinds(life, now_ms)
+        nxt = next((item for item in life["agenda"]
+                    if item["status"] == "pending" and item["kind"] in allowed), None)
         if nxt is None:
             # The day's plan is a starting point, not a quota: when it runs out the
-            # body picks up whatever it has material for next, and keeps going.
-            nxt = _next_activity(state, now_ms)
-            life["agenda"] = _trim_agenda([*(life.get("agenda") or []), nxt])
-        nxt["status"] = "running"
-        nxt["started_at"] = now_ms
-        life["current"] = nxt["id"]
-        started.append(nxt)
+            # body picks up whatever it has material for next — inside the same limits.
+            nxt = _next_activity(state, now_ms, allowed)
+            if nxt is not None:
+                life["agenda"] = _trim_agenda([*(life.get("agenda") or []), nxt])
+        if nxt is not None:
+            nxt["status"] = "running"
+            nxt["started_at"] = now_ms
+            life["current"] = nxt["id"]
+            if nxt["kind"] in LONG_KINDS:
+                life["long_at"] = now_ms
+            elif nxt["kind"] in SHORT_KINDS:
+                life["short_at"] = now_ms
+            started.append(nxt)
 
     if traces:
         life["traces"] = (life.get("traces") or [])[-(MAX_TRACES - len(traces)):] + traces
@@ -244,7 +259,17 @@ def _trim_agenda(agenda: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [*(done[-(max(0, 12 - len(open_items))):]), *open_items]
 
 
-def _next_activity(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
+def _allowed_kinds(life: dict[str, Any], now_ms: float) -> set[str]:
+    allowed = {"rest"}
+    if now_ms - float_or(life.get("long_at"), 0.0) >= LONG_GAP_MINUTES * 60_000:
+        allowed.update(LONG_KINDS)
+    if now_ms - float_or(life.get("short_at"), 0.0) >= SHORT_GAP_MINUTES * 60_000:
+        allowed.update(SHORT_KINDS)
+    return allowed
+
+
+def _next_activity(state: dict[str, Any], now_ms: float,
+                   allowed: set[str] | None = None) -> dict[str, Any]:
     """Choose what to do next from real material, preferring what was done longest ago."""
     life = state.get("life") or {}
     last: dict[str, int] = {}
@@ -264,6 +289,10 @@ def _next_activity(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
     if gaps:
         options.append(("think", _THINK_TITLE, gaps[0]))
     options.append(("note", "记一笔", None))
+    if allowed is not None:
+        options = [option for option in options if option[0] in allowed]
+    if not options:
+        return None
     kind, title, extra = min(
         options,
         key=lambda option: (last.get(option[0], -1), _ACTIVITY_ORDER.index(option[0])),
