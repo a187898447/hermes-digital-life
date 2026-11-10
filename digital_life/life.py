@@ -20,15 +20,18 @@ MAX_AGENDA = 8
 MAX_TRACES = 20
 LIFE_PULSE_CAP = 20.0
 QUIET_HOURS = (0, 6)
-KINDS = ("read", "think", "note", "practice", "rest")
+KINDS = ("read", "think", "note", "practice", "write", "nap",
+         "cook", "shower", "chore", "gaze", "stretch", "reminisce", "rest")
 AGENDA_SIZE = {"疲惫": 2, "低落": 2, "烦躁": 2, "来劲": 5, "平常": 4}
 MINUTES = {"read": 25, "think": 15, "note": 10, "practice": 15,
-           "write": 20, "nap": 15, "rest": 20}
+           "write": 20, "nap": 15, "cook": 25, "shower": 20, "chore": 15,
+           "gaze": 10, "stretch": 10, "reminisce": 15, "rest": 20}
 # Reading and drawing share one window: at most one of them per five hours, chosen
 # by which has waited longer. Notes and thoughts are lighter but still not back to
 # back, so the day is not a treadmill of traces.
 LONG_KINDS = ("read", "practice")
-SHORT_KINDS = ("think", "note", "write", "nap")
+SHORT_KINDS = ("think", "note", "write", "nap", "cook", "shower", "chore",
+               "gaze", "stretch", "reminisce")
 LONG_GAP_MINUTES = 300
 SHORT_GAP_MINUTES = 120
 PULSES = {
@@ -38,11 +41,18 @@ PULSES = {
     "practice": {"dopamine": 3.0, "serotonin": 1.0},
     "write": {"dopamine": 3.0, "serotonin": 2.0},
     "nap": {"cortisol": -5.0, "serotonin": 2.0},
+    "cook": {"dopamine": 2.0},
+    "shower": {"serotonin": 1.0},
+    "chore": {"cortisol": -3.0, "dopamine": 1.0},
+    "gaze": {"cortisol": -2.0},
+    "stretch": {"cortisol": -2.0, "dopamine": 1.0},
+    "reminisce": {"dopamine": 2.0, "serotonin": 1.0},
     "rest": {"cortisol": -4.0, "serotonin": 2.0},
     "dropped": {"cortisol": 3.0},
 }
 
 _WRITER: Callable[..., Any] | None = None
+_READER: Callable[[], list[dict[str, Any]]] | None = None
 
 
 def set_writer(writer: Callable[..., Any] | None) -> None:
@@ -50,6 +60,12 @@ def set_writer(writer: Callable[..., Any] | None) -> None:
     """Install the memory writer used for traces (the plugin owns the store)."""
     global _WRITER
     _WRITER = writer
+
+
+def set_reader(reader: Callable[[], list[dict[str, Any]]] | None) -> None:
+    """Install a read-only view of the persona's own past entries (for reminiscence)."""
+    global _READER
+    _READER = reader
 
 
 def new_life_state(now_ms: float = 0.0) -> dict[str, Any]:
@@ -162,6 +178,8 @@ def _source(kind: str, extra: Any) -> dict[str, Any]:
         return {"type": "gap", "id": str(extra.get("id") or "")}
     if kind == "practice" and isinstance(extra, dict):
         return {"type": "skill", "name": str(extra.get("name") or "")}
+    if kind == "reminisce" and isinstance(extra, str) and extra:
+        return {"type": "memory", "day": extra}
     return {}
 
 
@@ -252,7 +270,8 @@ def step(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
             "traces": traces, "pulses": pulses}
 
 
-_ACTIVITY_ORDER = ("read", "practice", "write", "think", "note", "nap")
+_ACTIVITY_ORDER = ("read", "practice", "write", "think", "note", "cook", "chore",
+                   "stretch", "shower", "gaze", "reminisce", "nap")
 
 
 def _trim_agenda(agenda: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -271,6 +290,50 @@ def _allowed_kinds(life: dict[str, Any], now_ms: float) -> set[str]:
     if now_ms - float_or(life.get("short_at"), 0.0) >= SHORT_GAP_MINUTES * 60_000:
         allowed.update(SHORT_KINDS)
     return allowed
+
+
+_DIGITS = "零一二三四五六七八九"
+
+
+def _cn(n: int) -> str:
+    if n < 10:
+        return _DIGITS[n]
+    if n < 20:
+        return "十" + (_DIGITS[n - 10] if n % 10 else "")
+    if n < 100:
+        return _DIGITS[n // 10] + "十" + (_DIGITS[n % 10] if n % 10 else "")
+    return str(n)
+
+
+def _day_label(day: str) -> str:
+    """2026-11-08 -> 十一月八号, for a trace that only says it looked at a page."""
+    try:
+        year, month, date = (int(part) for part in day.split("-"))
+    except (TypeError, ValueError):
+        return "那天"
+    if year < 2000 or not 1 <= month <= 12 or not 1 <= date <= 31:
+        return "那天"
+    return f"{_cn(month)}月{_cn(date)}号"
+
+
+def _journal_days(limit: int = 6) -> list[str]:
+    if _READER is None:
+        return []
+    try:
+        entries = _READER()
+    except Exception:  # noqa: BLE001 - a broken reader just means no reminiscence
+        return []
+    days: list[str] = []
+    for entry in entries or []:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("kind") or "") not in ("journal", "life"):
+            continue
+        day = str(entry.get("date") or entry.get("day") or "")
+        if len(day) == 10 and day[4] == "-" and day not in days:
+            days.append(day)
+    days.sort(reverse=True)
+    return days[:limit]
 
 
 def _next_activity(state: dict[str, Any], now_ms: float,
@@ -295,7 +358,22 @@ def _next_activity(state: dict[str, Any], now_ms: float,
         options.append(("think", _THINK_TITLE, gaps[0]))
     options.append(("write", "写几行字", None))
     options.append(("note", "记一笔", None))
-    if phase(now_ms) != "sleep" and float_or(state.get("energy"), 60.0) < 85.0:
+    hour = datetime.fromtimestamp(now_ms / 1000.0).hour
+    energy = float_or(state.get("energy"), 60.0)
+    if 7 <= hour <= 8 or 11 <= hour <= 12 or 17 <= hour <= 18:
+        options.append(("cook", "做点吃的", None))
+    if 18 <= hour <= 22:
+        options.append(("shower", "冲个澡", None))
+    if 8 <= hour <= 21:
+        options.append(("chore", "收拾一下", None))
+    if energy < 80.0:
+        options.append(("stretch", "伸伸腰", None))
+    if energy < 60.0:
+        options.append(("gaze", "发会儿呆", None))
+    journal_days = _journal_days()
+    if journal_days:
+        options.append(("reminisce", "翻翻旧日记", journal_days[0]))
+    if phase(now_ms) != "sleep" and energy < 85.0:
         options.append(("nap", "打个盹", None))
     if allowed is not None:
         options = [option for option in options if option[0] in allowed]
@@ -344,6 +422,18 @@ def _finish(state: dict[str, Any], item: dict[str, Any], now_ms: float) -> dict[
         trace = _finish_write(state, now_ms)
     elif kind == "nap":
         trace = _finish_nap(state, now_ms)
+    elif kind == "cook":
+        trace = _finish_cook(state, now_ms)
+    elif kind == "shower":
+        trace = _finish_shower(state, now_ms)
+    elif kind == "chore":
+        trace = _finish_chore(state, now_ms)
+    elif kind == "gaze":
+        trace = _finish_gaze(state, now_ms)
+    elif kind == "stretch":
+        trace = _finish_stretch(state, now_ms)
+    elif kind == "reminisce":
+        trace = _finish_reminisce(state, item, source, now_ms)
     else:
         trace = None  # rest leaves no trace
     item["status"] = "done" if (trace is not None or kind == "rest") else "dropped"
@@ -417,6 +507,53 @@ def _finish_nap(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
     state["energy"] = min(100.0, float_or(state.get("energy"), 60.0) + 8.0)
     return {"at": now_ms, "kind": "nap", "title": "打了个盹",
             "text": "打了个盹，醒来手是暖的。", "source": {}, "share": False}
+
+
+def _finish_cook(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
+    """A meal at a meal hour: the one routine that starts with an empty stomach."""
+    state["energy"] = min(100.0, float_or(state.get("energy"), 60.0) + 5.0)
+    hour = datetime.fromtimestamp(now_ms / 1000.0).hour
+    if hour < 10:
+        title, text = "煎了个蛋", "煎了个蛋，热了杯牛奶，吃完才想起没刷锅。"
+    elif hour < 15:
+        title, text = "下了碗面", "下了碗面，吃完把碗洗了。"
+    else:
+        title, text = "煮了点东西", "煮了点东西，锅还在灶上温着。"
+    return {"at": now_ms, "kind": "cook", "title": title, "text": text,
+            "source": {}, "share": False}
+
+
+def _finish_shower(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
+    state["energy"] = min(100.0, float_or(state.get("energy"), 60.0) + 6.0)
+    return {"at": now_ms, "kind": "shower", "title": "冲了个澡",
+            "text": "冲了个澡，人松下来了。", "source": {}, "share": False}
+
+
+def _finish_chore(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
+    state["energy"] = max(0.0, float_or(state.get("energy"), 60.0) - 2.0)
+    return {"at": now_ms, "kind": "chore", "title": "收拾了一下",
+            "text": "把桌面收了收，顺手擦了擦。", "source": {}, "share": False}
+
+
+def _finish_gaze(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
+    return {"at": now_ms, "kind": "gaze", "title": "发了会儿呆",
+            "text": "靠着窗发了会儿呆。", "source": {}, "share": False}
+
+
+def _finish_stretch(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
+    state["energy"] = min(100.0, float_or(state.get("energy"), 60.0) + 1.0)
+    return {"at": now_ms, "kind": "stretch", "title": "伸了伸腰",
+            "text": "站起来伸了伸腰，脖子响了一声。", "source": {}, "share": False}
+
+
+def _finish_reminisce(state: dict[str, Any], item: dict[str, Any],
+                      source: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
+    day = str(source.get("day") or "")
+    if not day:
+        return None
+    return {"at": now_ms, "kind": "reminisce", "title": item["title"],
+            "text": f"翻到{_day_label(day)}那篇日记，又看了一遍。",
+            "source": {"type": "memory", "day": day}, "share": False}
 
 
 def _finish_note(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:

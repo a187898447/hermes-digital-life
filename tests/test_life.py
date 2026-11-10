@@ -13,7 +13,7 @@ LATER = NOW + 30 * 60_000
 class StateTests(unittest.TestCase):
     def test_normalize_keeps_only_well_formed_items(self):
         raw = {"day": "2026-11-06", "agenda": [{"id": "a", "kind": "read", "title": "读", "status": "pending"},
-                                               {"id": "b", "kind": "nap", "title": "睡", "status": "pending"}],
+                                               {"id": "b", "kind": "wander", "title": "走神", "status": "pending"}],
                "current": "a", "traces": [{"text": "  "}, {"text": "真的"}],
                "pulse": {"day": "2026-11-06", "total": 3.0}, "last_tick_at": 5}
         state = life.normalize_life(raw)
@@ -262,6 +262,87 @@ class StepTests(unittest.TestCase):
         self.assertIn("夜里起飞的飞机", trace["text"])
         self.assertEqual(trace["chat"], "chat-9")
         self.assertFalse(trace["share"])
+
+
+    def test_cooking_shows_up_at_mealtimes_only(self):
+        state = self._state()
+        state["life"].update({"day": life.local_day(NOW), "traces": [
+            {"kind": kind} for kind in
+            ("read", "practice", "write", "think", "note", "chore", "stretch", "nap")],
+            "agenda": [], "current": None})
+        with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS):
+            morning = life._next_activity(state, NOW)
+            noon = life._next_activity(state, NOW + 2 * 3600_000)
+        self.assertNotEqual(morning["kind"], "cook")
+        self.assertEqual(noon["kind"], "cook")
+
+    def test_a_shower_only_appears_in_the_evening_and_wakes_her_up(self):
+        state = self._state()
+        state["energy"] = 50.0
+        state["life"].update({"day": life.local_day(NOW), "traces": [
+            {"kind": kind} for kind in
+            ("read", "practice", "write", "think", "note", "cook", "chore", "stretch", "nap")],
+            "agenda": [], "current": None})
+        with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS):
+            noon = life._next_activity(state, NOW + 2 * 3600_000)
+            evening = life._next_activity(state, NOW + 10 * 3600_000)
+        self.assertNotEqual(noon["kind"], "shower")
+        self.assertEqual(evening["kind"], "shower")
+        state["life"]["agenda"] = [{"id": "act-1", "kind": "shower", "title": "冲个澡",
+                                    "minutes": 20, "status": "running", "started_at": NOW,
+                                    "done_at": 0.0, "source": {}}]
+        state["life"]["current"] = "act-1"
+        out = life.step(state, NOW + 21 * 60_000)
+        self.assertEqual(out["traces"][0]["title"], "冲了个澡")
+        self.assertEqual(state["energy"], 56.0)
+
+    def test_chores_cost_a_little_energy(self):
+        state = self._state()
+        state["energy"] = 60.0
+        state["life"].update({
+            "day": life.local_day(NOW),
+            "agenda": [{"id": "act-1", "kind": "chore", "title": "收拾一下", "minutes": 15,
+                        "status": "running", "started_at": NOW, "done_at": 0.0, "source": {}}],
+            "current": "act-1"})
+        out = life.step(state, NOW + 16 * 60_000)
+        self.assertEqual(out["traces"][0]["text"], "把桌面收了收，顺手擦了擦。")
+        self.assertEqual(state["energy"], 58.0)
+        self.assertLess(out["pulses"].get("cortisol", 0), 0)
+
+    def test_a_gaze_lowers_cortisol(self):
+        state = self._state()
+        state["chemistry"]["cortisol"] = 40.0
+        state["life"].update({
+            "day": life.local_day(NOW),
+            "agenda": [{"id": "act-1", "kind": "gaze", "title": "发会儿呆", "minutes": 10,
+                        "status": "running", "started_at": NOW, "done_at": 0.0, "source": {}}],
+            "current": "act-1"})
+        out = life.step(state, NOW + 11 * 60_000)
+        self.assertEqual(out["traces"][0]["title"], "发了会儿呆")
+        self.assertLess(out["pulses"].get("cortisol", 0), 0)
+
+    def test_reminiscence_opens_an_old_day_without_quoting_it(self):
+        state = self._state()
+        state["life"].update({"day": life.local_day(NOW), "traces": [
+            {"kind": kind} for kind in
+            ("read", "practice", "write", "think", "note", "cook", "chore", "stretch", "nap")],
+            "agenda": [], "current": None})
+        life.set_reader(lambda: [{"kind": "journal", "date": "2026-11-08", "text": "私密内容"}])
+        try:
+            with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS):
+                nxt = life._next_activity(state, NOW + 2 * 3600_000)
+            self.assertEqual(nxt["kind"], "reminisce")
+            self.assertEqual(nxt["source"]["day"], "2026-11-08")
+            state["life"]["agenda"] = [nxt]
+            nxt["status"] = "running"
+            nxt["started_at"] = NOW
+            state["life"]["current"] = nxt["id"]
+            out = life.step(state, NOW + 16 * 60_000)
+        finally:
+            life.set_reader(None)
+        trace = out["traces"][0]
+        self.assertIn("十一月八号", trace["text"])
+        self.assertNotIn("私密内容", trace["text"])
 
 
 class NoteTests(unittest.TestCase):

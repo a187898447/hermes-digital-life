@@ -2249,7 +2249,16 @@ def register(ctx) -> None:
         memory_store().write(text, kind="life", session_id="life", chat_id=chat_id,
                              chat_type="")
 
+    def life_reader() -> list[dict[str, Any]]:
+        """Read-only view of the persona's own days, for an occasional reread."""
+        try:
+            return [entry for entry in memory_store().read_entries()
+                    if str(entry.get("kind") or "") in ("journal", "life") and entry.get("date")]
+        except Exception:  # noqa: BLE001 - no memory means no reminiscence, not a crash
+            return []
+
     _life.set_writer(life_writer)
+    _life.set_reader(life_reader)
     if os.environ.get("HERMES_LOVER_TICK", "1") != "0":
         minutes = int(ctx.get_config("life.tick_minutes", _tick.TICK_SECONDS // 60) or 5)
         minutes = max(1, min(60, minutes))  # the docs promise 1–60; a hot edit can't starve or flood the tick

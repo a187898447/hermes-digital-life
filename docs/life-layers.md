@@ -56,13 +56,17 @@ settle（化学衰减/休息恢复）
 - **日程只装真实材料**：`read` 来自 `library.books()`，`think` 来自 open gap 但只写泛化标题
   （日程是所有会话共用的一条，不回放某个会话的具体内容；痕迹按 gap 所属 chat 归属），
   `write` 把最近几条痕迹写成两三句，`note` 折叠最近两条痕迹，`nap` 睡一小觉（体能 +8、皮质醇下），
+  在家还会 `cook`（只在饭点，体能 +5）、`shower`（只在傍晚，体能 +6）、`chore`（白天，皮质醇下、
+  体能 −2）、`stretch` / `gaze`（能量低时，皮质醇下）、`reminisce`（翻自己的一篇旧日记，只说日期不复述内容），
   `rest` 不产出。拿不到材料就 drop，并给 cortisol +3（"想做事没做成"），
   不编造地点、差事、见闻。
 - 日程规模由 mood 定（疲惫/低落/烦躁 2 项、平常 4 项、来劲 5 项），上限 8 项；夜里（0–6 点）不排 `rest`，
   也不开始新项目。当天排的这几项只是起点、不是配额：用完之后 `step` 会从真实素材里接着挑下一件，
-  按"最近做过什么"轮换（read → practice → write → think → note → nap）。但有节奏限制，不是连轴转：
+  按"最近做过什么"轮换（read → practice → write → think → note → cook → chore → stretch →
+  shower → gaze → reminisce → nap）。但有节奏限制，不是连轴转：
   `read` 和 `practice` 共用一条 5 小时窗口（二选一，每 5 小时最多开始一件），
-  `write`/`think`/`note`/`nap` 共用 2 小时窗口；窗口没开就不开始新活动。阅读一次按
+  `write`/`think`/`note`/`nap`/`cook`/`shower`/`chore`/`stretch`/`gaze`/`reminisce` 共用 2 小时窗口；
+  窗口没开就不开始新活动。阅读一次按
   `library.MAX_CHARS`（6000 字）取一页，不再用 1200 字的小口。
 - **痕迹**是这一天的可分享物，`share=true` 的（读完了、做完了一件事）才会出现在 `beat_targets` 的
   `traces` 里，由 beat 轮挑着说；`share=false` 的只留给模型自己看。
