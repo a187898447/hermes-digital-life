@@ -1201,6 +1201,18 @@ class HostSendFallbackTests(unittest.TestCase):
 
 
 
+class PromptSectionTests(unittest.TestCase):
+    def test_no_prompt_section_exceeds_the_host_cap(self):
+        # The host drops a plugin section above 4000 chars without failing the load;
+        # keeping each section under the cap is what makes the rules reach the model.
+        ctx = RecordingContext()
+        plugin.register(ctx)
+        self.assertTrue(ctx.sections)
+        for args, _kwargs in ctx.sections:
+            name, text = args[0], args[1]
+            self.assertLess(len(text), 4000, f"{name} is {len(text)} chars")
+
+
 class ElapsedGroundingTests(unittest.TestCase):
     def _db(self, tmp, stamps):
         import sqlite3
