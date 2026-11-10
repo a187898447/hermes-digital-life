@@ -129,7 +129,7 @@ class StepTests(unittest.TestCase):
                               "long_at": NOW - 4 * 60 * 60_000})
         with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS):
             out = life.step(state, NOW)
-        self.assertEqual(out["started"][0]["kind"], "note")  # read is still inside the window
+        self.assertEqual(out["started"][0]["kind"], "write")  # read is still inside the window
         state["life"].update({"agenda": [], "current": None,
                               "long_at": NOW - 5 * 60 * 60_000 - 1,
                               "short_at": NOW})
@@ -151,7 +151,7 @@ class StepTests(unittest.TestCase):
         with mock.patch.object(life, "_books", return_value=[]):
             out = life.step(state, NOW)
         self.assertEqual(len(out["started"]), 1)
-        self.assertEqual(out["started"][0]["kind"], "note")
+        self.assertEqual(out["started"][0]["kind"], "write")
         self.assertEqual(len(state["life"]["agenda"]), 1)
 
     def test_the_next_activity_picks_what_was_done_longest_ago(self):
@@ -161,11 +161,43 @@ class StepTests(unittest.TestCase):
             {"kind": "read"}, {"kind": "think"}], "agenda": [], "current": None})
         with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS):
             nxt = life._next_activity(state, NOW)
-        self.assertEqual(nxt["kind"], "note")
-        state["life"]["traces"] = [{"kind": "read"}, {"kind": "note"}]
+        self.assertEqual(nxt["kind"], "write")
+        state["life"]["traces"] = [{"kind": "read"}, {"kind": "note"},
+                                   {"kind": "write"}, {"kind": "nap"}]
         with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS):
             nxt = life._next_activity(state, NOW)
         self.assertEqual(nxt["kind"], "think")
+
+    def test_writing_leaves_a_line_from_the_day(self):
+        state = self._state()
+        state["life"].update({
+            "day": life.local_day(NOW),
+            "traces": [{"kind": "read", "title": "读《夜航西飞》"},
+                       {"kind": "practice", "title": "练一练画图"}],
+            "agenda": [{"id": "act-1", "kind": "write", "title": "写几行字", "minutes": 20,
+                        "status": "running", "started_at": NOW, "done_at": 0.0, "source": {}}],
+            "current": "act-1"})
+        out = life.step(state, NOW + 21 * 60_000)
+        trace = out["traces"][0]
+        self.assertEqual(trace["kind"], "write")
+        self.assertIn("写了几行：今天", trace["text"])
+        self.assertIn("读了一会儿书", trace["text"])
+        self.assertFalse(trace["share"])
+        self.assertGreater(out["pulses"].get("dopamine", 0), 0)
+
+    def test_a_nap_gives_energy_back(self):
+        state = self._state()
+        state["energy"] = 50.0
+        state["life"].update({
+            "day": life.local_day(NOW),
+            "agenda": [{"id": "act-1", "kind": "nap", "title": "打个盹", "minutes": 15,
+                        "status": "running", "started_at": NOW, "done_at": 0.0, "source": {}}],
+            "current": "act-1"})
+        out = life.step(state, NOW + 16 * 60_000)
+        self.assertEqual(out["finished"][0]["kind"], "nap")
+        self.assertEqual(out["traces"][0]["title"], "打了个盹")
+        self.assertEqual(state["energy"], 58.0)
+        self.assertLess(out["pulses"].get("cortisol", 0), 0)
 
     def test_rest_finishes_without_a_trace_or_a_penalty(self):
         state = self._state()

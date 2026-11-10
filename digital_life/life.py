@@ -22,12 +22,13 @@ LIFE_PULSE_CAP = 20.0
 QUIET_HOURS = (0, 6)
 KINDS = ("read", "think", "note", "practice", "rest")
 AGENDA_SIZE = {"疲惫": 2, "低落": 2, "烦躁": 2, "来劲": 5, "平常": 4}
-MINUTES = {"read": 25, "think": 15, "note": 10, "practice": 15, "rest": 20}
+MINUTES = {"read": 25, "think": 15, "note": 10, "practice": 15,
+           "write": 20, "nap": 15, "rest": 20}
 # Reading and drawing share one window: at most one of them per five hours, chosen
 # by which has waited longer. Notes and thoughts are lighter but still not back to
 # back, so the day is not a treadmill of traces.
 LONG_KINDS = ("read", "practice")
-SHORT_KINDS = ("think", "note")
+SHORT_KINDS = ("think", "note", "write", "nap")
 LONG_GAP_MINUTES = 300
 SHORT_GAP_MINUTES = 120
 PULSES = {
@@ -35,6 +36,8 @@ PULSES = {
     "think": {"dopamine": 2.0},
     "note": {"dopamine": 3.0},
     "practice": {"dopamine": 3.0, "serotonin": 1.0},
+    "write": {"dopamine": 3.0, "serotonin": 2.0},
+    "nap": {"cortisol": -5.0, "serotonin": 2.0},
     "rest": {"cortisol": -4.0, "serotonin": 2.0},
     "dropped": {"cortisol": 3.0},
 }
@@ -129,7 +132,9 @@ def build_agenda(now_ms: float, *, mood_label: str = "平常", books: Iterable[d
     practice = _practice_target(skills_state)
     if practice is not None:
         plan.append(("practice", f"练一练{practice['label']}", practice))
+    plan.append(("write", "写几行字", None))
     if rest:
+        plan.append(("nap", "打个盹", None))
         plan.append(("rest", "歇一会儿", None))
     while len(plan) < size:
         kind = "rest" if rest and len(plan) % 2 == 0 else "note"
@@ -247,7 +252,7 @@ def step(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
             "traces": traces, "pulses": pulses}
 
 
-_ACTIVITY_ORDER = ("read", "practice", "think", "note")
+_ACTIVITY_ORDER = ("read", "practice", "write", "think", "note", "nap")
 
 
 def _trim_agenda(agenda: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -288,7 +293,10 @@ def _next_activity(state: dict[str, Any], now_ms: float,
             if isinstance(gap, dict) and gap.get("status") == "open"]
     if gaps:
         options.append(("think", _THINK_TITLE, gaps[0]))
+    options.append(("write", "写几行字", None))
     options.append(("note", "记一笔", None))
+    if phase(now_ms) != "sleep" and float_or(state.get("energy"), 60.0) < 85.0:
+        options.append(("nap", "打个盹", None))
     if allowed is not None:
         options = [option for option in options if option[0] in allowed]
     if not options:
@@ -332,6 +340,10 @@ def _finish(state: dict[str, Any], item: dict[str, Any], now_ms: float) -> dict[
         trace = _finish_note(state, now_ms)
     elif kind == "practice":
         trace = _finish_practice(item, source, now_ms)
+    elif kind == "write":
+        trace = _finish_write(state, now_ms)
+    elif kind == "nap":
+        trace = _finish_nap(state, now_ms)
     else:
         trace = None  # rest leaves no trace
     item["status"] = "done" if (trace is not None or kind == "rest") else "dropped"
@@ -388,6 +400,23 @@ def _finish_practice(item: dict[str, Any], source: dict[str, Any], now_ms: float
 def _note_title(title: str) -> str:
     """Generalize a diary line that would otherwise carry a book title."""
     return "读了一会儿书" if title.startswith("读《") else title
+
+
+def _finish_write(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
+    """Writing is a longer pass over the same material: a line or two, not a summary."""
+    recent = [trace for trace in (state.get("life") or {}).get("traces") or []
+              if trace.get("kind") not in ("note", "write")][-3:]
+    parts = [_note_title(str(trace.get("title") or "")) for trace in recent if trace.get("title")]
+    text = "写了几行：今天" + "，".join(parts) + "。" if parts else "写了几行，又划掉了。"
+    return {"at": now_ms, "kind": "write", "title": "写了几行字", "text": text[:160],
+            "source": {"type": "traces"}, "share": False}
+
+
+def _finish_nap(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
+    """A short daytime sleep: the one activity that gives energy back on its own."""
+    state["energy"] = min(100.0, float_or(state.get("energy"), 60.0) + 8.0)
+    return {"at": now_ms, "kind": "nap", "title": "打了个盹",
+            "text": "打了个盹，醒来手是暖的。", "source": {}, "share": False}
 
 
 def _finish_note(state: dict[str, Any], now_ms: float) -> dict[str, Any] | None:
