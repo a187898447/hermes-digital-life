@@ -1201,6 +1201,70 @@ class HostSendFallbackTests(unittest.TestCase):
 
 
 
+class ElapsedGroundingTests(unittest.TestCase):
+    def _db(self, tmp, stamps):
+        import sqlite3
+        from pathlib import Path
+        db = sqlite3.connect(str(Path(tmp) / "state.db"))
+        db.executescript("""
+            CREATE TABLE sessions (id TEXT, chat_id TEXT, source TEXT);
+            CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT, timestamp REAL);
+        """)
+        db.execute("INSERT INTO sessions VALUES ('s1', 'c1', 'qqbot')")
+        for i, stamp in enumerate(stamps):
+            db.execute("INSERT INTO messages VALUES ('s1', 'user', ?, ?)", (f"m{i}", stamp))
+        db.commit()
+        db.close()
+
+    def test_the_gap_counts_from_the_message_before_the_current_one(self):
+        import tempfile
+        import time
+        from unittest.mock import patch
+        hl = sys.modules["hermes_plugins.digital_life"]
+        now = time.time()
+        with tempfile.TemporaryDirectory() as tmp:
+            self._db(tmp, [now - 2 * 86400, now - 30])
+            with patch.dict(os.environ, {"HERMES_HOME": tmp}):
+                self.assertAlmostEqual(hl._previous_user_at("c1"), now - 2 * 86400, delta=2)
+                self.assertIn("2 天", hl._elapsed_note("c1", now * 1000))
+                self.assertEqual(hl._previous_user_at(""), 0.0)
+
+    def test_a_chat_with_no_earlier_message_gets_no_gap_note(self):
+        import tempfile
+        import time
+        from unittest.mock import patch
+        hl = sys.modules["hermes_plugins.digital_life"]
+        with tempfile.TemporaryDirectory() as tmp:
+            self._db(tmp, [time.time() - 30])
+            with patch.dict(os.environ, {"HERMES_HOME": tmp}):
+                self.assertEqual(hl._elapsed_note("c1", time.time() * 1000), "")
+
+    def test_beat_targets_reports_real_minutes_not_milliseconds(self):
+        import sqlite3
+        import tempfile
+        import time
+        from pathlib import Path
+        from unittest.mock import patch
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        plugin.register(ctx)
+        handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["beat_targets"]
+        now = time.time()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = sqlite3.connect(str(Path(tmp) / "state.db"))
+            db.executescript("""
+                CREATE TABLE sessions (id TEXT, chat_id TEXT, chat_type TEXT, source TEXT, started_at REAL);
+                CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT, timestamp REAL);
+            """)
+            db.execute("INSERT INTO sessions VALUES ('s1', 'c1', 'dm', 'qqbot', ?)", (now - 600,))
+            db.execute("INSERT INTO messages VALUES ('s1', 'user', '在吗', ?)", (now - 300,))
+            db.commit()
+            db.close()
+            with patch.dict(os.environ, {"HERMES_HOME": tmp}),                 patch.object(plugin.digital_life.proactive, "subscribed_chats", return_value={"c1"}),                 patch.object(plugin, "_session_source", return_value="cron"):
+                result = json.loads(handler({}, session_id="s-cron"))
+        self.assertAlmostEqual(result["targets"][0]["minutes_ago"], 5.0, delta=1.0)
+
+
 class OpenLoopTests(unittest.TestCase):
     def test_close_gap_retires_only_the_calling_chat(self):
         from digital_life.domain import default_state

@@ -1678,6 +1678,9 @@ def _affect_request(request: dict[str, Any], **kwargs) -> dict[str, Any] | None:
     )
     note = digital_life.runtime.affect_note(now_ms, include_time=_asks_time(request))
     now_line = _now_line(state, now_ms) if _life_enabled() else ""
+    gap = _elapsed_note(scope or "", now_ms)
+    if gap:
+        now_line = f"{now_line} · {gap}" if now_line else f"[现在] {gap}"
     delivered = _delivered_line(scope or "", now_ms)
     prefix = "\n".join(part for part in (now_line, delivered) if part)
     if prefix:
@@ -2132,6 +2135,53 @@ def _latest_user_at(chat_id: str) -> float:
     return _num(row[0]) if row else 0.0
 
 
+def _previous_user_at(chat_id: str) -> float:
+    """The user message before the current one, in seconds; 0.0 when unknown."""
+    if not chat_id:
+        return 0.0
+    db = _state_db_path()
+    if not db.exists():
+        return 0.0
+    try:
+        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+        try:
+            rows = conn.execute(
+                "SELECT m.timestamp FROM messages m JOIN sessions s ON s.id = m.session_id "
+                "WHERE s.chat_id = ? AND s.source = 'qqbot' AND m.role = 'user' "
+                "ORDER BY m.timestamp DESC LIMIT 2",
+                (chat_id,),
+            ).fetchall()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return 0.0
+    return _num(rows[1][0]) if len(rows) > 1 else 0.0
+
+
+def _elapsed_words(seconds: float) -> str:
+    seconds = max(0.0, seconds)
+    if seconds < 90:
+        return "刚刚"
+    minutes = seconds / 60.0
+    if minutes < 90:
+        return f"{int(round(minutes))} 分钟"
+    hours = minutes / 60.0
+    if hours < 36:
+        return f"{int(round(hours))} 小时"
+    return f"{int(round(hours / 24.0))} 天"
+
+
+def _elapsed_note(chat_id: str, now_ms: float) -> str:
+    """How long the person was away, so the model does not read an old tail as last night."""
+    previous = _previous_user_at(chat_id)
+    if not previous:
+        return ""
+    age = now_ms / 1000.0 - previous
+    if age < 90:
+        return ""
+    return f"距他上一条消息 {_elapsed_words(age)}"
+
+
 def _num(value: Any) -> float:
     try:
         return float(value or 0.0)
@@ -2475,7 +2525,7 @@ def register(ctx) -> None:
             target = {
                 "chat_id": chat_id, "chat_type": str(r[1] or ""),
                 "last_at": (r[2] or 0), "last_user_at": (r[3] or r[2] or 0),
-                "minutes_ago": round(max(0.0, now_ms - (r[3] or r[2] or 0)) / 60000, 1),
+                "minutes_ago": round(max(0.0, now_ms / 1000.0 - (r[3] or r[2] or 0)) / 60.0, 1),
                 "unanswered": unanswered,
                 "last_user_turns": turns,
             }
