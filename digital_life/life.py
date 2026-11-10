@@ -216,16 +216,62 @@ def step(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
 
     if life.get("current") is None and phase(now_ms) != "sleep":
         nxt = next((item for item in life["agenda"] if item["status"] == "pending"), None)
-        if nxt is not None:
-            nxt["status"] = "running"
-            nxt["started_at"] = now_ms
-            life["current"] = nxt["id"]
-            started.append(nxt)
+        if nxt is None:
+            # The day's plan is a starting point, not a quota: when it runs out the
+            # body picks up whatever it has material for next, and keeps going.
+            nxt = _next_activity(state, now_ms)
+            life["agenda"] = _trim_agenda([*(life.get("agenda") or []), nxt])
+        nxt["status"] = "running"
+        nxt["started_at"] = now_ms
+        life["current"] = nxt["id"]
+        started.append(nxt)
 
     if traces:
         life["traces"] = (life.get("traces") or [])[-(MAX_TRACES - len(traces)):] + traces
     return {"started": started, "finished": finished, "dropped": dropped,
             "traces": traces, "pulses": pulses}
+
+
+_ACTIVITY_ORDER = ("read", "practice", "think", "note")
+
+
+def _trim_agenda(agenda: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep the open items and only the tail of the finished ones."""
+    if len(agenda) <= 12:
+        return agenda
+    open_items = [item for item in agenda if item.get("status") != "done"]
+    done = [item for item in agenda if item.get("status") == "done"]
+    return [*(done[-(max(0, 12 - len(open_items))):]), *open_items]
+
+
+def _next_activity(state: dict[str, Any], now_ms: float) -> dict[str, Any]:
+    """Choose what to do next from real material, preferring what was done longest ago."""
+    life = state.get("life") or {}
+    last: dict[str, int] = {}
+    for index, trace in enumerate(life.get("traces") or []):
+        kind = str((trace or {}).get("kind") or "")
+        if kind:
+            last[kind] = index
+    options: list[tuple[str, str, Any]] = []
+    book = _next_book(_books())
+    if book is not None:
+        options.append(("read", f"读《{str(book.get('title') or '那本书')[:20]}》", book))
+    practice = _practice_target(state.get("skills"))
+    if practice is not None:
+        options.append(("practice", f"练一练{practice['label']}", practice))
+    gaps = [gap for gap in (state.get("gaps") or [])
+            if isinstance(gap, dict) and gap.get("status") == "open"]
+    if gaps:
+        options.append(("think", _THINK_TITLE, gaps[0]))
+    options.append(("note", "记一笔", None))
+    kind, title, extra = min(
+        options,
+        key=lambda option: (last.get(option[0], -1), _ACTIVITY_ORDER.index(option[0])),
+    )
+    stamp = int(now_ms)
+    return {"id": f"act-{stamp}-next", "kind": kind, "title": title,
+            "minutes": MINUTES[kind], "status": "pending", "started_at": 0.0,
+            "done_at": 0.0, "source": _source(kind, extra)}
 
 
 def _due(item: dict[str, Any], now_ms: float) -> bool:
@@ -271,7 +317,7 @@ def _finish_read(item: dict[str, Any], source: dict[str, Any], now_ms: float) ->
     try:
         # Omit ``part``: the library resumes at the stored position, so reading in the
         # day and reading through read_source stay on the same bookmark.
-        result = library.read(dict(meta), max_chars=1200)
+        result = library.read(dict(meta), max_chars=library.MAX_CHARS)
     except (OSError, ValueError, KeyError):
         return None
     text = str(result.get("text") or "")

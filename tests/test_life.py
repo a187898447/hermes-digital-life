@@ -94,6 +94,7 @@ class ShelfTests(unittest.TestCase):
             out = life.step(state, LATER)
         read.assert_called_once()
         self.assertNotIn("part", read.call_args.kwargs)
+        self.assertEqual(read.call_args.kwargs.get("max_chars"), life.library.MAX_CHARS)
         self.assertIn("2/10", out["traces"][0]["text"])
 
 
@@ -120,6 +121,28 @@ class StepTests(unittest.TestCase):
         self.assertEqual(state["life"]["agenda"][0]["status"], "dropped")
         self.assertTrue(out["pulses"].get("cortisol", 0) > 0)
         self.assertEqual(len(out["started"]), 1)
+
+    def test_the_day_does_not_stop_when_the_plan_is_used_up(self):
+        state = self._state()
+        state["life"].update({"day": life.local_day(NOW), "agenda": [], "current": None})
+        with mock.patch.object(life, "_books", return_value=[]):
+            out = life.step(state, NOW)
+        self.assertEqual(len(out["started"]), 1)
+        self.assertEqual(out["started"][0]["kind"], "note")
+        self.assertEqual(len(state["life"]["agenda"]), 1)
+
+    def test_the_next_activity_picks_what_was_done_longest_ago(self):
+        state = self._state()
+        state["gaps"] = [{"id": "gap-1", "status": "open", "summary": "x", "chat": "c"}]
+        state["life"].update({"day": life.local_day(NOW), "traces": [
+            {"kind": "read"}, {"kind": "think"}], "agenda": [], "current": None})
+        with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS):
+            nxt = life._next_activity(state, NOW)
+        self.assertEqual(nxt["kind"], "note")
+        state["life"]["traces"] = [{"kind": "read"}, {"kind": "note"}]
+        with mock.patch.object(life, "_books", return_value=AgendaTests.BOOKS):
+            nxt = life._next_activity(state, NOW)
+        self.assertEqual(nxt["kind"], "think")
 
     def test_rest_finishes_without_a_trace_or_a_penalty(self):
         state = self._state()
