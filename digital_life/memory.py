@@ -827,8 +827,8 @@ class MemoryStore:
                        if not e.get("archived") and (chat_id is None or e.get("chat_id", "") == chat_id)]
             if not targets:
                 return 0
-            # /new means gone: a purge event drops the entry from every replay, so neither
-            # include_cold nor a later compaction can resurrect it.
+            # /forget means gone: a purge event drops the entry from every replay, so neither
+            # include_cold nor a later compaction can resurrect it. /new never calls this.
             self._append([{"version": 1, "id": e["id"], "op": "purge", "purged_at": stamp}
                           for e in targets], stamp)
             try:
