@@ -2512,6 +2512,7 @@ def register(ctx) -> None:
                         "GROUP BY s.chat_id ORDER BY seen DESC"
                     ).fetchall()
                     recent: dict[str, list[dict]] = {}
+                    replied_at: dict[str, float] = {}
                     for chat_id, in conn.execute(
                         "SELECT DISTINCT s.chat_id FROM sessions s "
                         "WHERE s.source = 'qqbot' AND s.chat_id NOT LIKE 'local-%'"
@@ -2528,6 +2529,17 @@ def register(ctx) -> None:
                             {"role": str(role), "text": str(text)[:120], "at": ts}
                             for role, text, ts in reversed(turns)
                         ]
+                        # When did this chat last hear from us? A user turn older
+                        # than that has already been answered, so a proactive
+                        # message must not pick it up again.
+                        row = conn.execute(
+                            "SELECT MAX(m.timestamp) FROM messages m "
+                            "JOIN sessions s ON s.id = m.session_id "
+                            "WHERE s.chat_id = ? AND s.source = 'qqbot' "
+                            "AND m.role = 'assistant' AND m.content != ''",
+                            (chat_id,),
+                        ).fetchone()
+                        replied_at[str(chat_id)] = float(row[0] or 0.0)
                 finally:
                     conn.close()
             except sqlite3.Error:
@@ -2558,6 +2570,11 @@ def register(ctx) -> None:
                 continue
             beat = entry.get("last_beat") if isinstance(entry.get("last_beat"), dict) else {}
             turns = list(recent.get(chat_id, []))
+            reply_at = replied_at.get(chat_id, 0.0)
+            # A turn we have already answered is not fresh material: answering it
+            # again (in any wording) is what makes a nudge feel like nagging.
+            fresh = [turn for turn in turns if not reply_at or _num(turn.get("at")) > reply_at]
+            answered = bool(turns) and not fresh
             used_at = _num(beat.get("src_user_at"))
             repeat = bool(used_at) and _num(r[3]) and int(round(_num(r[3]))) == int(round(used_at))
             local = time.localtime(now_ms / 1000.0)
@@ -2570,8 +2587,12 @@ def register(ctx) -> None:
                           "weekday": _WEEKDAY_NAMES[local.tm_wday],
                           "hour": local.tm_hour},
                 "learned_pick": _learned_beat_material(now_ms, chat_id),
-                "last_user_turns": turns,
+                "last_user_turns": fresh,
             }
+            if answered:
+                target["answered"] = True
+                target["hint"] = ("对方最新那条我们已经回过了：不要再接这个话题，也不要换个说法再答一遍。"
+                                  "说一件完全不相干的事（下面 traces 或 learned_pick），没有就跳过这个 chat。")
             if beat:
                 target["last_beat"] = {
                     "text": str(beat.get("text") or ""),
@@ -2582,12 +2603,12 @@ def register(ctx) -> None:
                 # The newest user turn is the one the last beat already answered.
                 # Hide it so the model cannot chew the same line again, and say why.
                 target["last_user_turns"] = [
-                    turn for turn in turns
+                    turn for turn in target["last_user_turns"]
                     if int(round(_num(turn.get("at")))) != int(round(used_at))
                 ]
                 target["repeat"] = True
-                target["hint"] = ("上一次主动消息已经接过最新这条了；不要再用这条或同一个梗。"
-                                 "可以说一件别的事（比如下面 traces 里的），没别的可说就跳过这个 chat。")
+                target.setdefault("hint", ("上一次主动消息已经接过最新这条了；不要再用这条或同一个梗。"
+                                           "可以说一件别的事（比如下面 traces 里的），没别的可说就跳过这个 chat。"))
             targets.append(target)
         return json.dumps({"targets": targets, "traces": traces}, ensure_ascii=False)
 
