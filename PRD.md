@@ -88,7 +88,7 @@ Hermes 的记忆是**文件落盘 + profile 级持久化**的：
 
 ### 3.1 宿主：Hermes Agent
 
-- **源码根**：`/Users/pengyu/.hermes/hermes-agent/`
+- **源码根**：`~/.hermes/hermes-agent/`
 - **版本**：`v0.22.5+1852.g085f562.dirty`
 - **插件契约**：`hermes_cli/plugins.py` → `class PluginContext`（第 230 行起）
 - **插件发现**：`hermes_cli/plugins_discovery.py:189` → `collect_directory_manifests()`
@@ -103,7 +103,7 @@ Hermes 的记忆是**文件落盘 + profile 级持久化**的：
 
 ### 3.2 生命体内核来源：digital-life-core
 
-- **源码**：`/Users/pengyu/workSpace/digital-life-core/`（已 clone 到本地）
+- **源码**：`<工作区>/digital-life-core/`（已 clone 到本地）
 - **上游**：`https://github.com/mashangshui/digital-life-core`（v1.0.1，MIT，社区维护）
 - **作者**：`mashangshui（温水）` + 数字生命「鱼小水」
 
@@ -145,7 +145,7 @@ $ grep -rn "@deepseek-ai\|cordis" src/
 
 ### 3.3 人格来源：nuwa-skill（女娲）
 
-- **源码**：`/Users/pengyu/workSpace/nuwa-skill/`
+- **源码**：`<工作区>/nuwa-skill/`
 - **上游**：`https://github.com/alchaincyf/nuwa-skill`（MIT）
 - **主文件**：`SKILL.md`（frontmatter: `name: huashu-nuwa`）
 - **产物格式**：`examples/<name>-perspective/` → `SKILL.md` + `FIDELITY.md` + `references/`
@@ -165,7 +165,7 @@ $ grep -rn "@deepseek-ai\|cordis" src/
 
 ### 3.4 主动性来源：proactive-agent
 
-- **源码**：`/Users/pengyu/.hermes/skills/openclaw-imports/proactive-agent/`
+- **源码**：`~/.hermes/skills/openclaw-imports/proactive-agent/`
 - **版本**：3.1.0（Hal Labs，Hal Stack）
 - **形态**：**skill**（不是 plugin）
 - **可复用资产**：
@@ -337,7 +337,7 @@ gateway:
 插件可注册的 hook 来自 `hermes_cli/plugins.py` 的 `VALID_HOOKS`（**共 46 个**）。**不在名单里的 hook 名会被静默忽略或抛错**，实施前务必核对：
 
 ```bash
-cd /Users/pengyu/.hermes/hermes-agent
+cd ~/.hermes/hermes-agent
 ./venv/bin/python -c "from hermes_cli.plugins import VALID_HOOKS; print(sorted(VALID_HOOKS))"
 ```
 
@@ -603,7 +603,7 @@ M1 环境地基 ──┬─→ M2 隔离验证 ──→ M3 QQ 移交 ──┐
 
 | # | 任务 | 细节 |
 | --- | --- | --- |
-| M10.1 | nuwa 蒸馏 | 用 `/Users/pengyu/workSpace/nuwa-skill` 蒸馏恋人人格 → `profiles/lover/skills/<name>/SKILL.md`（产物格式：`SKILL.md` + `FIDELITY.md` + `references/`）。**蒸馏档位成本差异大，需向用户确认档位** |
+| M10.1 | nuwa 蒸馏 | 用 `<工作区>/nuwa-skill` 蒸馏恋人人格 → `profiles/lover/skills/<name>/SKILL.md`（产物格式：`SKILL.md` + `FIDELITY.md` + `references/`）。**蒸馏档位成本差异大，需向用户确认档位** |
 | M10.2 | proactive-agent 裁剪 | 从 `assets/SOUL.md`（How I Operate / Principles / Boundaries）与 `assets/HEARTBEAT.md`（注入扫描 / 行为完整性）取结构，**裁掉工作型内容**，融入恋人 SOUL.md |
 | M10.3 | `SOUL.md` | 放 `profiles/lover/SOUL.md` |
 | M10.4 | `channel_overrides` | 写入 lover `config.yaml` 的 `platforms.qqbot.channel_overrides["F14CBB43F6D8925668407505AC05ACD2"].system_prompt`。**必须自包含**：override 是**替换**主 prompt 而非叠加，要重述语言/称呼/禁止语（见 `hermes-channel-persona` skill 的 Pitfall 4） |
@@ -821,35 +821,35 @@ STATE_KEY = "lifer"
 
 ```
 # 1. 插件契约（必读）
-/Users/pengyu/.hermes/hermes-agent/hermes_cli/plugins.py:230-1027   # PluginContext 全部 API
-/Users/pengyu/.hermes/hermes-agent/hermes_cli/plugins_discovery.py:189-220  # 插件目录扫描
-/Users/pengyu/.hermes/hermes-agent/hermes_cli/plugins_loader.py:465         # register_tools 约定
+~/.hermes/hermes-agent/hermes_cli/plugins.py:230-1027   # PluginContext 全部 API
+~/.hermes/hermes-agent/hermes_cli/plugins_discovery.py:189-220  # 插件目录扫描
+~/.hermes/hermes-agent/hermes_cli/plugins_loader.py:465         # register_tools 约定
 
 # 2. 隔离与路由（必读）
-/Users/pengyu/.hermes/hermes-agent/gateway/profile_routing.py:63-192        # ProfileRoute 与匹配规则
-/Users/pengyu/.hermes/hermes-agent/hermes_cli/profiles.py:1352-1420         # create_profile
-/Users/pengyu/.hermes/hermes-agent/hermes_cli/profile_channels.py:480-500   # clone_channels 拒绝逻辑
-/Users/pengyu/.hermes/hermes-agent/hermes_constants.py:399-425              # profile 身份标记
+~/.hermes/hermes-agent/gateway/profile_routing.py:63-192        # ProfileRoute 与匹配规则
+~/.hermes/hermes-agent/hermes_cli/profiles.py:1352-1420         # create_profile
+~/.hermes/hermes-agent/hermes_cli/profile_channels.py:480-500   # clone_channels 拒绝逻辑
+~/.hermes/hermes-agent/hermes_constants.py:399-425              # profile 身份标记
 
 # 3. 算法参考（逐字翻译对象）
-/Users/pengyu/workSpace/digital-life-core/src/chemistry-core.ts              # ★ 最重要，全文读
-/Users/pengyu/workSpace/digital-life-core/src/chemical-pool.ts               # 激素池
-/Users/pengyu/workSpace/digital-life-core/src/genome.ts
-/Users/pengyu/workSpace/digital-life-core/src/genome-file.ts
-/Users/pengyu/workSpace/digital-life-core/src/organs/memory-affinity.ts      # 记忆重排权重
-/Users/pengyu/workSpace/digital-life-core/src/epiphany.ts                    # 顿悟
-/Users/pengyu/workSpace/digital-life-core/src/sleep-energy.ts
-/Users/pengyu/workSpace/digital-life-core/src/host-metrics.ts
-/Users/pengyu/workSpace/digital-life-core/genome.json                        # 激素出厂定义
+<工作区>/digital-life-core/src/chemistry-core.ts              # ★ 最重要，全文读
+<工作区>/digital-life-core/src/chemical-pool.ts               # 激素池
+<工作区>/digital-life-core/src/genome.ts
+<工作区>/digital-life-core/src/genome-file.ts
+<工作区>/digital-life-core/src/organs/memory-affinity.ts      # 记忆重排权重
+<工作区>/digital-life-core/src/epiphany.ts                    # 顿悟
+<工作区>/digital-life-core/src/sleep-energy.ts
+<工作区>/digital-life-core/src/host-metrics.ts
+<工作区>/digital-life-core/genome.json                        # 激素出厂定义
 
 # 4. 平台与配置事实
-/Users/pengyu/.hermes/skills/openclaw-imports/qqbot-platform/SKILL.md        # QQ 平台事实
-/Users/pengyu/.hermes/skills/autonomous-ai-agents/hermes-channel-persona/SKILL.md  # 人格注入 4 个坑
-/Users/pengyu/.hermes/skills/devops/gateway-channel-diagnostics/references/per-channel-personas.md
-/Users/pengyu/.hermes/skills/openclaw-imports/proactive-agent/assets/SOUL.md
-/Users/pengyu/.hermes/skills/openclaw-imports/proactive-agent/assets/HEARTBEAT.md
-/Users/pengyu/workSpace/nuwa-skill/SKILL.md
-/Users/pengyu/workSpace/nuwa-skill/examples/andrej-karpathy-perspective/SKILL.md  # 产物格式样例
+~/.hermes/skills/openclaw-imports/qqbot-platform/SKILL.md        # QQ 平台事实
+~/.hermes/skills/autonomous-ai-agents/hermes-channel-persona/SKILL.md  # 人格注入 4 个坑
+~/.hermes/skills/devops/gateway-channel-diagnostics/references/per-channel-personas.md
+~/.hermes/skills/openclaw-imports/proactive-agent/assets/SOUL.md
+~/.hermes/skills/openclaw-imports/proactive-agent/assets/HEARTBEAT.md
+<工作区>/nuwa-skill/SKILL.md
+<工作区>/nuwa-skill/examples/andrej-karpathy-perspective/SKILL.md  # 产物格式样例
 
 # 5. 上游在线文档
 https://github.com/ranxianglei/billion-context/blob/master/CLIENTS.md#hermes-nous-research
