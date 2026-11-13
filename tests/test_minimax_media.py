@@ -41,7 +41,7 @@ class ImageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(outbox, "root_dir", return_value=Path(tmp)), \
                 mock.patch.object(minimax, "keys", lambda: ["k1"]), \
-                mock.patch.object(minimax, "_request", lambda *a, **k: {"data": {"image_base64": [encoded]}}):
+                mock.patch.object(minimax, "_request", lambda *a, **k: {"data": [{"b64_json": encoded}]}):
             path = minimax.create_image("一只鲸鱼在云上", aspect_ratio="16:9")
             self.assertTrue(path.exists())
             self.assertEqual(path.read_bytes(), raw)
@@ -52,7 +52,7 @@ class ImageTests(unittest.TestCase):
 
         def fake(path, *, key="", payload=None, timeout=60.0):
             seen.update(payload)
-            return {"data": {"image_base64": [base64.b64encode(b"x").decode()]}}
+            return {"data": [{"b64_json": base64.b64encode(b"x").decode()}]}
 
         with tempfile.TemporaryDirectory() as tmp, \
                 mock.patch.object(outbox, "root_dir", return_value=Path(tmp)), \
@@ -65,7 +65,7 @@ class ImageTests(unittest.TestCase):
 
     def test_no_image_in_the_response_is_an_error(self):
         with mock.patch.object(minimax, "keys", lambda: ["k1"]), \
-                mock.patch.object(minimax, "_request", lambda *a, **k: {"data": {}}):
+                mock.patch.object(minimax, "_request", lambda *a, **k: {"data": []}):
             with self.assertRaises(minimax.MiniMaxError):
                 minimax.create_image("x")
 

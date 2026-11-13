@@ -205,11 +205,12 @@ def download(file_id: str, *, key: str = "", name: str = "", chat_id: str = "") 
     return outbox.write_bytes(filename, body, chat_id=chat_id)
 
 
-IMAGE_MODEL = os.environ.get("HERMES_LOVER_IMAGE_MODEL", "image-01")
-IMAGE_LIVE_MODEL = "image-01-live"
-IMAGE_STYLES = ("漫画", "元气", "水彩", "赛博朋克", "清新", "暗黑", "古风", "油画")
+IMAGE_MODEL = os.environ.get("HERMES_LOVER_IMAGE_MODEL", "MiniMax-H3-Image")
+IMAGE_FAST_MODEL = os.environ.get("HERMES_LOVER_IMAGE_FAST_MODEL", "MiniMax-H3-Image-Highspeed")
+IMAGE_AREA = os.environ.get("HERMES_LOVER_IMAGE_AREA", "2K")
 IMAGE_RATIOS = ("1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9")
 IMAGE_MAX_BYTES = 20 * 1024 * 1024
+IMAGE_TIMEOUT = 360.0  # the server allows up to 600s; the host caps a tool call at 420s
 ASR_MODEL = os.environ.get("HERMES_LOVER_ASR_MODEL", "asr-1.0")
 ASR_MAX_BYTES = 50 * 1024 * 1024
 # The ASR API only reports duration after the upload, so the only pre-flight bound
@@ -285,56 +286,90 @@ def _download_file(file_id: str, *, key: str = "", chat_id: str = "") -> Path:
     return outbox.write_bytes(f"speech-{int(time.time())}-{file_id[-6:]}.mp3", body, chat_id=chat_id)
 
 
+def _image_item(answer: dict) -> dict:
+    """Return the first usable picture, refusing anything the API marked as failed."""
+    items = answer.get("data")
+    if not isinstance(items, list):
+        raise MiniMaxError("MiniMax returned no image")
+    failure = ""
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        error = item.get("error")
+        if isinstance(error, dict):
+            failure = str(error.get("code") or "")
+            continue
+        if item.get("b64_json") or item.get("url"):
+            return item
+    if failure:
+        raise MiniMaxError(f"MiniMax image failed ({failure})")
+    raise MiniMaxError("MiniMax returned no image")
+
+
 def create_image(prompt: str, *, aspect_ratio: str = "1:1", reference: str = "",
-                 model: str = IMAGE_MODEL, style: str = "", negative: str = "",
+                 model: str = IMAGE_MODEL, area: str = IMAGE_AREA,
                  chat_id: str = "") -> Path:
-    """Text-to-image (or image-to-image with one reference URL); returns the saved jpeg."""
+    """Text-to-image, or an edit when a character still is supplied; returns the saved jpeg.
+
+    H3 is a single synchronous API; with a reference picture it goes to /v1/images/edits,
+    otherwise /v1/images/generations. The endpoint is not idempotent, so this never
+    retries across keys: a retry would generate (and bill) a second picture.
+    """
     text = " ".join(str(prompt or "").split())
     if not text:
         raise MiniMaxError("the prompt is empty")
     if aspect_ratio not in IMAGE_RATIOS:
         aspect_ratio = "1:1"
-    model = IMAGE_LIVE_MODEL if model == IMAGE_LIVE_MODEL else IMAGE_MODEL
+    if model not in (IMAGE_MODEL, IMAGE_FAST_MODEL):
+        model = IMAGE_MODEL
     payload: dict = {
         "model": model,
-        "prompt": text[:1500],
-        "aspect_ratio": aspect_ratio,
-        "response_format": "base64",
+        "prompt": text[:30000],
         "n": 1,
+        "size": "auto",
+        "aspect_ratio": aspect_ratio,
+        "area": area if area in ("1K", "2K", "4K") else "2K",
+        "output_format": "jpeg",
+        "response_format": "b64_json",
     }
-    if model == IMAGE_LIVE_MODEL and style in IMAGE_STYLES:
-        payload["style"] = {"style_type": style, "style_weight": 1}
-    keep_out = " ".join(str(negative or "").split())
-    if keep_out:
-        payload["negative_prompt"] = keep_out[:500]
     face = _as_reference(reference)
+    endpoint = "/v1/images/generations"
     if face:
-        payload["subject_reference"] = [{"type": "character", "image_file": face}]
+        endpoint = "/v1/images/edits"
+        payload["images"] = [{"image_url": face}]
     available = keys()
     if not available:
         raise MiniMaxError("no MiniMax key is configured (MINIMAX_CN_API_KEY)")
-    last: Exception | None = None
-    for key in available:
+    data = _request(endpoint, key=available[0], payload=payload, timeout=IMAGE_TIMEOUT)
+    item = _image_item(data)
+    encoded = str(item.get("b64_json") or "")
+    if encoded:
         try:
-            data = _request("/v1/image_generation", key=key, payload=payload, timeout=180)
-        except MiniMaxError as exc:
-            last = exc
-            continue
-        images = ((data.get("data") or {}).get("image_base64")) or []
-        if not isinstance(images, list) or not images:
-            last = MiniMaxError("MiniMax returned no image")
-            continue
-        try:
-            raw = base64.b64decode(images[0])
+            raw = base64.b64decode(encoded, validate=True)
         except (ValueError, TypeError) as exc:
-            last = MiniMaxError(f"MiniMax returned an unreadable image: {exc}")
-            continue
-        if len(raw) > IMAGE_MAX_BYTES:
-            last = MiniMaxError("the generated image is larger than 20 MB")
-            continue
-        return outbox.write_bytes(f"image-{int(time.time())}-{abs(hash(text)) % 10000:04d}.jpeg",
-                                 raw, chat_id=chat_id)
-    raise last or MiniMaxError("MiniMax returned no image")
+            raise MiniMaxError(f"MiniMax returned an unreadable image: {exc}") from None
+    else:
+        return _download_image(str(item.get("url") or ""), chat_id=chat_id)
+    if len(raw) > IMAGE_MAX_BYTES:
+        raise MiniMaxError("the generated image is larger than 20 MB")
+    return outbox.write_bytes(f"image-{int(time.time())}-{abs(hash(text)) % 10000:04d}.jpeg",
+                             raw, chat_id=chat_id)
+
+
+def _download_image(url: str, *, chat_id: str = "") -> Path:
+    if not url.lower().startswith("https://"):
+        raise MiniMaxError("MiniMax returned an image link that is not https")
+    try:
+        body, _final, truncated = netguard.fetch_public(
+            url, max_bytes=IMAGE_MAX_BYTES + 1, timeout=180.0)
+    except netguard.BlockedURL as exc:
+        raise MiniMaxError(f"the image link was refused: {exc}") from None
+    except (urllib.error.URLError, OSError) as exc:
+        raise MiniMaxError(f"could not fetch the generated image: {exc}") from exc
+    if truncated or len(body) > IMAGE_MAX_BYTES:
+        raise MiniMaxError("the generated image is larger than 20 MB")
+    return outbox.write_bytes(f"image-{int(time.time())}-{abs(hash(url)) % 10000:04d}.jpeg",
+                             body, chat_id=chat_id)
 
 
 def _multipart(fields: dict[str, str], *, filename: str, payload: bytes, mime: str) -> tuple[bytes, str]:

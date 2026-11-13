@@ -211,31 +211,56 @@ class ReferenceTests(unittest.TestCase):
 
 
 class ModelChoiceTests(unittest.TestCase):
-    def test_the_live_model_carries_its_style(self):
-        seen = {}
-
+    def _fake(self, seen, answer=None):
         def fake(path, *, key="", payload=None, timeout=60.0):
+            seen["path"] = path
             seen.update(payload or {})
-            return {"data": {"image_base64": ["aGk="]}}
+            return answer if answer is not None else {"data": [{"b64_json": "aGk="}]}
+        return fake
 
-        with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", fake), \
-                patch.object(hailuo.outbox, "write_bytes", lambda name, raw, chat_id="": "out.jpeg"):
-            hailuo.create_image("一只鲸鱼", model=hailuo.IMAGE_LIVE_MODEL, style="漫画")
-        self.assertEqual(seen["model"], "image-01-live")
-        self.assertEqual(seen["style"]["style_type"], "漫画")
-
-    def test_the_detailed_model_ignores_an_unknown_style(self):
+    def test_text_to_image_uses_the_h3_generations_endpoint(self):
         seen = {}
-
-        def fake(path, *, key="", payload=None, timeout=60.0):
-            seen.update(payload or {})
-            return {"data": {"image_base64": ["aGk="]}}
-
-        with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", fake), \
+        with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", self._fake(seen)), \
                 patch.object(hailuo.outbox, "write_bytes", lambda name, raw, chat_id="": "out.jpeg"):
-            hailuo.create_image("一只猫", model=hailuo.IMAGE_MODEL, style="漫画")
-        self.assertEqual(seen["model"], "image-01")
-        self.assertNotIn("style", seen)
+            hailuo.create_image("一只猫")
+        self.assertEqual(seen["path"], "/v1/images/generations")
+        self.assertEqual(seen["model"], "MiniMax-H3-Image")
+        self.assertEqual(seen["response_format"], "b64_json")
+        self.assertEqual(seen["output_format"], "jpeg")
+        self.assertEqual(seen["size"], "auto")
+        self.assertEqual(seen["area"], "2K")
+        self.assertNotIn("images", seen)
+
+    def test_a_reference_picture_goes_through_the_edit_endpoint(self):
+        seen = {}
+        with patch.object(hailuo, "keys", lambda: ["k"]), patch.object(hailuo, "_request", self._fake(seen)), \
+                patch.object(hailuo, "_as_reference", lambda value: "data:image/jpeg;base64,AAA"), \
+                patch.object(hailuo.outbox, "write_bytes", lambda name, raw, chat_id="": "out.jpeg"):
+            hailuo.create_image("一只猫", reference="/tmp/ref.jpg", aspect_ratio="3:4")
+        self.assertEqual(seen["path"], "/v1/images/edits")
+        self.assertEqual(seen["images"], [{"image_url": "data:image/jpeg;base64,AAA"}])
+        self.assertEqual(seen["aspect_ratio"], "3:4")
+
+    def test_a_failed_picture_reports_only_its_code(self):
+        answer = {"data": [{"error": {"code": "1027",
+                                      "message": "output image failed content safety check"}}]}
+        with patch.object(hailuo, "keys", lambda: ["k"]), \
+                patch.object(hailuo, "_request", self._fake({}, answer)):
+            with self.assertRaises(hailuo.MiniMaxError) as caught:
+                hailuo.create_image("一只猫")
+        self.assertIn("1027", str(caught.exception))
+        self.assertNotIn("content safety", str(caught.exception))
+
+    def test_a_url_answer_is_downloaded_through_netguard(self):
+        seen = {}
+        answer = {"data": [{"url": "https://x/img.jpeg", "b64_json": None}]}
+        with patch.object(hailuo, "keys", lambda: ["k"]), \
+                patch.object(hailuo, "_request", self._fake(seen, answer)), \
+                patch.object(hailuo.netguard, "fetch_public",
+                             lambda url, max_bytes, timeout: (b"raw", url, False)), \
+                patch.object(hailuo.outbox, "write_bytes", lambda name, raw, chat_id="": "out.jpeg"):
+            hailuo.create_image("一只猫")
+        self.assertEqual(seen["path"], "/v1/images/generations")
 
 
 class SpeechTests(unittest.TestCase):

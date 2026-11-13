@@ -255,7 +255,6 @@ _PHASE_WORDS = {"sleep": "夜里", "morning": "早上", "day": "白天", "evenin
 CHARACTER_BRIEF = ("头两侧是蓝色鱼鳍状耳朵、像张开的小翅膀、边缘带白色绒毛（不是人类耳朵、不是精灵尖耳），"
                    "身后一条蓝色鲸尾，深蓝长发、宝石蓝眼睛、白蕾丝发带配蓝蝴蝶结、"
                    "深蓝女仆裙配白围裙和蓝宝石胸针，日系赛璐璐插画，冷蓝色调")
-CHARACTER_NEGATIVE = ("眼镜, 圆框眼镜, 猫耳, 人类耳朵, 精灵尖耳, 露齿笑, 3D, 写实, 手办, plastic")
 
 
 def _character_image() -> str:
@@ -1281,18 +1280,13 @@ def _make_image(args, session_id="", **kwargs):
     skilled = _skill_craft("make_image", prompt)
     look = str(args.get("look") or "auto")
     anime = look == "anime" or (look == "auto" and bool(args.get("character")))
-    media_model = _minimax.IMAGE_LIVE_MODEL if anime else _minimax.IMAGE_MODEL
-    media_style = "漫画" if anime else ""
+    if anime:
+        skilled = f"{skilled}，手绘动漫风"
 
     from .digital_life import minimax as media_mod  # noqa: PLC0415
-    from .digital_life import skills as media_skills  # noqa: PLC0415
     try:
         path = media_mod.create_image(skilled, aspect_ratio=aspect, reference=reference,
-                                      model=media_model, style=media_style,
-                                      chat_id=chat_id,
-                                      negative=", ".join(x for x in (
-                                          media_skills.negative_prompt(_skill_level("make_image")),
-                                          CHARACTER_NEGATIVE if args.get("character") else "") if x))
+                                      chat_id=chat_id)
     except Exception as exc:  # noqa: BLE001
         _refund_media("imagegen", chat_id)
         _skill_grant("make_image", ok=False)
@@ -3072,7 +3066,7 @@ def register(ctx) -> None:
         name="make_image",
         toolset="minimax_media",
         schema={"name": "make_image",
-                "description": ("Draw one image from a text description with MiniMax image-01 "
+                "description": ("Draw one image from a text description with MiniMax H3 "
                                 "and send it to this chat. Blocks for 20-40 seconds while it draws; "
                                 "the picture arrives right after your reply. Put your heads-up in "
                                 "`say`: it goes out before the drawing starts. At most "
@@ -3087,7 +3081,7 @@ def register(ctx) -> None:
                     "character": {"type": "boolean", "default": False,
                                   "description": "True when the picture is of you: uses your saved character still as the reference."},
                     "look": {"type": "string", "enum": ["auto", "anime", "photo"], "default": "auto",
-                             "description": "auto: hand-drawn when it is you, detailed otherwise. anime: image-01-live cartoon. photo: image-01."},
+                             "description": "auto: hand-drawn when it is you, detailed otherwise. anime: ask for a hand-drawn cartoon finish. photo: no style hint."},
                     "caption": {"type": "string", "maxLength": 120,
                                 "description": "Optional one line to send with it."},
                     "say": {"type": "string", "maxLength": 120,
