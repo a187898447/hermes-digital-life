@@ -473,7 +473,7 @@ class RegistrationTests(unittest.TestCase):
         ctx.get_config = lambda key, default=None: default
         plugin.register(ctx)
         handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["beat_targets"]
-        store = type("S", (), {"read_entries": lambda self: entries})()
+        store = type("S", (), {"read_entries": lambda self: {str(i): e for i, e in enumerate(entries)}})()
         with tempfile.TemporaryDirectory() as tmp:
             db = sqlite3.connect(str(Path(tmp) / "state.db"))
             db.executescript("""
@@ -498,6 +498,15 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(target["today"]["weekday"], "周四")
         self.assertEqual(target["today"]["date"], "2026-11-12")
         self.assertEqual(target["today"]["hour"], 10)
+        self.assertIn("v50", target["learned_pick"]["text"])
+
+    def test_a_study_note_can_also_supply_the_material(self):
+        import datetime
+
+        thursday = datetime.datetime(2026, 11, 12, 10, 0).timestamp()
+        entries = [{"kind": "note", "chat_id": "c1",
+                    "text": "【v50 骨架】星期四冷不丁插一句：荒谬的壳 + 具体价目 + 一句软话"}]
+        target = self._beat_target(entries, rand=0.01, ts=thursday)
         self.assertIn("v50", target["learned_pick"]["text"])
 
     def test_a_learned_note_is_only_offered_some_of_the_time(self):

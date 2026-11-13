@@ -268,8 +268,11 @@ def _learned_beat_material(now_ms: float, chat_id: str) -> dict[str, str] | None
     weekday = _WEEKDAY_NAMES[time.localtime(now_ms / 1000.0).tm_wday]
     digits = weekday[-1]
     aliases = (weekday, f"星期{digits}", f"礼拜{digits}")
-    mine = [entry for entry in entries
-            if str(entry.get("kind") or "") == "learned" and str(entry.get("text") or "")
+    rows = entries.values() if isinstance(entries, dict) else entries
+    mine = [entry for entry in rows
+            if isinstance(entry, dict)
+            and str(entry.get("kind") or "") in ("learned", "note", "fact")
+            and str(entry.get("text") or "")
             and str(entry.get("chat_id") or "") in ("", chat_id)]
     hits = [entry for entry in mine
             if any(alias in str(entry.get("text")) for alias in aliases)]
