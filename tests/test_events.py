@@ -464,6 +464,66 @@ class RegistrationTests(unittest.TestCase):
         self.assertEqual(target["last_beat"]["text"], "复读机也得挑料")
         self.assertIn("不要再用这条", target["hint"])
 
+    def _beat_target(self, entries, rand, ts):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+
+        ctx = RecordingContext()
+        ctx.get_config = lambda key, default=None: default
+        plugin.register(ctx)
+        handler = {entry["name"]: entry["handler"] for entry in ctx.tools}["beat_targets"]
+        store = type("S", (), {"read_entries": lambda self: entries})()
+        with tempfile.TemporaryDirectory() as tmp:
+            db = sqlite3.connect(str(Path(tmp) / "state.db"))
+            db.executescript("""
+                CREATE TABLE sessions (id TEXT, chat_id TEXT, chat_type TEXT, source TEXT, started_at REAL);
+                CREATE TABLE messages (session_id TEXT, role TEXT, content TEXT, timestamp REAL);
+            """)
+            db.execute("INSERT INTO sessions VALUES ('s1', 'c1', 'dm', 'qqbot', 100)")
+            db.execute("INSERT INTO messages VALUES ('s1', 'user', '今天好累', 100)")
+            db.commit()
+            db.close()
+            with patch.dict(os.environ, {"HERMES_HOME": tmp}),                  patch.object(plugin, "_session_source", return_value="cron"),                  patch.object(plugin.digital_life.proactive, "subscribed_chats", return_value={"c1"}),                  patch.object(plugin.digital_life.storage, "read_state", return_value={"life": {"traces": []}}),                  patch.object(plugin, "_MEMORY_STORE", {"factory": lambda: store}),                  patch.object(plugin.time, "time", return_value=ts),                  patch.object(plugin.random, "random", return_value=rand):
+                result = json.loads(handler({}, session_id="s-cron"))
+        return result["targets"][0]
+
+    def test_beat_targets_offers_a_learned_note_that_fits_the_weekday(self):
+        import datetime
+
+        thursday = datetime.datetime(2026, 11, 12, 10, 0).timestamp()
+        entries = [{"kind": "learned", "chat_id": "c1",
+                    "text": "【v50 骨架】星期四冷不丁发一句，荒谬的壳加一句真心话"}]
+        target = self._beat_target(entries, rand=0.01, ts=thursday)
+        self.assertEqual(target["today"]["weekday"], "周四")
+        self.assertEqual(target["today"]["date"], "2026-11-12")
+        self.assertEqual(target["today"]["hour"], 10)
+        self.assertIn("v50", target["learned_pick"]["text"])
+
+    def test_a_learned_note_is_only_offered_some_of_the_time(self):
+        import datetime
+
+        thursday = datetime.datetime(2026, 11, 12, 10, 0).timestamp()
+        entries = [{"kind": "learned", "chat_id": "c1", "text": "星期四可以发 v50 文案"}]
+        target = self._beat_target(entries, rand=0.99, ts=thursday)
+        self.assertIsNone(target["learned_pick"])
+
+    def test_a_learned_note_for_another_weekday_is_not_offered(self):
+        import datetime
+
+        thursday = datetime.datetime(2026, 11, 12, 10, 0).timestamp()
+        entries = [{"kind": "learned", "chat_id": "c1", "text": "周一该说早安"}]
+        target = self._beat_target(entries, rand=0.01, ts=thursday)
+        self.assertIsNone(target["learned_pick"])
+
+    def test_a_learned_note_stays_in_the_chat_that_learned_it(self):
+        import datetime
+
+        thursday = datetime.datetime(2026, 11, 12, 10, 0).timestamp()
+        entries = [{"kind": "learned", "chat_id": "c2", "text": "星期四可以发 v50 文案"}]
+        target = self._beat_target(entries, rand=0.01, ts=thursday)
+        self.assertIsNone(target["learned_pick"])
+
     def test_beat_send_records_which_line_it_answered(self):
         ctx = RecordingContext()
         ctx.get_config = lambda key, default=None: default

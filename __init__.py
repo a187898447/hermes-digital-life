@@ -6,6 +6,7 @@ import hashlib
 import json
 import logging
 import os
+import random
 import re
 import signal
 import sqlite3
@@ -249,6 +250,34 @@ def _close_gap(args: dict[str, Any], session_id: str = "", **kwargs) -> str:
 
 
 _WEEKDAY_NAMES = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+# One beat in about three on a matching weekday may reach for something learned
+# that day (a Thursday meme, a seasonal note) instead of the last chat line.
+LEARNED_BEAT_CHANCE = 0.35
+
+
+def _learned_beat_material(now_ms: float, chat_id: str) -> dict[str, str] | None:
+    """A learned note that fits today's weekday, offered only some of the time."""
+    factory = _MEMORY_STORE.get("factory")
+    if factory is None:
+        return None
+    try:
+        entries = factory().read_entries()
+    except Exception:  # noqa: BLE001 - the beat still works without this material
+        logger.debug("hermes-lover could not read learned notes for a beat", exc_info=True)
+        return None
+    weekday = _WEEKDAY_NAMES[time.localtime(now_ms / 1000.0).tm_wday]
+    digits = weekday[-1]
+    aliases = (weekday, f"星期{digits}", f"礼拜{digits}")
+    mine = [entry for entry in entries
+            if str(entry.get("kind") or "") == "learned" and str(entry.get("text") or "")
+            and str(entry.get("chat_id") or "") in ("", chat_id)]
+    hits = [entry for entry in mine
+            if any(alias in str(entry.get("text")) for alias in aliases)]
+    if not hits or random.random() >= LEARNED_BEAT_CHANCE:
+        return None
+    pick = random.choice(hits)
+    return {"text": str(pick.get("text"))[:300],
+            "why": f"你在别处学过、和{weekday}对得上的一句；可以用自己的话带出来"}
 _PHASE_WORDS = {"sleep": "夜里", "morning": "早上", "day": "白天", "evening": "傍晚", "late": "深夜"}
 
 
@@ -2528,11 +2557,16 @@ def register(ctx) -> None:
             turns = list(recent.get(chat_id, []))
             used_at = _num(beat.get("src_user_at"))
             repeat = bool(used_at) and _num(r[3]) and int(round(_num(r[3]))) == int(round(used_at))
+            local = time.localtime(now_ms / 1000.0)
             target = {
                 "chat_id": chat_id, "chat_type": str(r[1] or ""),
                 "last_at": (r[2] or 0), "last_user_at": (r[3] or r[2] or 0),
                 "minutes_ago": round(max(0.0, now_ms / 1000.0 - (r[3] or r[2] or 0)) / 60.0, 1),
                 "unanswered": unanswered,
+                "today": {"date": time.strftime("%Y-%m-%d", local),
+                          "weekday": _WEEKDAY_NAMES[local.tm_wday],
+                          "hour": local.tm_hour},
+                "learned_pick": _learned_beat_material(now_ms, chat_id),
                 "last_user_turns": turns,
             }
             if beat:
@@ -2605,7 +2639,7 @@ def register(ctx) -> None:
     ctx.register_tool(
         name="beat_targets", toolset="digital_life",
         schema={"name": "beat_targets",
-                "description": "List the QQ chats that subscribed to proactive beats. Use before a proactive run, then send one tailored line to each with beat_send.",
+                "description": "List the QQ chats that subscribed to proactive beats, with today's date/weekday and a learned_pick when something you once learned fits today. Use before a proactive run, then send one tailored line to each with beat_send.",
                 "parameters": {"type": "object", "properties": {}, "additionalProperties": False}},
         handler=beat_targets,
         description="List the QQ chats that subscribed to proactive beats.",
