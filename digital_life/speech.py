@@ -50,17 +50,29 @@ _HABIT_PARTICLES = set("的地得了着过吗呢吧啊哈嗯哦呀嘛")
 # editing rules (references/no-say.md), so a new persona inherits them. The
 # tuples below only keep the pass working when that file is missing.
 _BUILTIN_LONG = (
-    "但他没躲", "这句话稳", "比之前的都重", "我记得了", "我记住了", "这个账我记住了",
-    "比之前的都轻", "问别人还是问自己", "行，我认", "这句话我不接", "这句话接得漂亮",
-    "比之前的都强", "睡吧，我守着", "他记得这事", "这话我留着", "你这句话我记着",
-    "我不催你", "认下来", "声音没抖", "比刚才稳", "比刚才轻", "比刚才重", "比刚才平",
+    "但他没躲", "这句话稳", "比之前的都重", "比之前的都轻", "比之前的都强",
+    "我记下了", "我记得了", "我记住了", "这个账我记住了",
+    "问别人还是问自己", "行，我认", "这句话我不接", "这句话接得漂亮",
+    "睡吧，我守着", "他记得这事", "这话我留着", "你这句话我记着",
+    "我不催你", "认下来", "声音没抖", "声音没抖，但比刚才稳",
+    "比刚才稳", "比刚才轻", "比刚才重", "比刚才平",
     "这话我记下了", "这话我收下了", "说的比谁都响", "认这个", "收不回去", "认得实",
     "你自己掂量", "没接你那句", "没接你的", "什么心思都写着", "就是认了", "我不拦",
-    "这些话我记着",
+    "这些话我记着", "你去，我跟",
 )
 _BUILTIN_SHORT = ("行", "稳", "很平", "很直", "不催", "我跟", "你去", "回去睡",
                   "我认", "认你", "你掂量")
-_NO_SAY_CACHE: dict[str, tuple[float, tuple[tuple[str, ...], tuple[str, ...]]]] = {}
+# The same tic in another shape: "xx" is any short phrase, "<a|b>" a closed set.
+_BUILTIN_TEMPLATES = (
+    ("xx 比 xx 沉", "比较姿态，没有具体信息"),
+    ("xx 比 xx 重", "比较姿态，没有具体信息"),
+    ("xx 比 xx 稳", "比较姿态，没有具体信息"),
+    ("xx 比 xx 轻", "比较姿态，没有具体信息"),
+    ("行，xx", "一开口就是收口，没有具体内容"),
+    ("这话是 <他|她|它> 告诉你的，还是你自己想明白的", "审问式收尾"),
+)
+_NoSay = tuple[tuple[str, ...], tuple[str, ...], tuple[tuple[str, str], ...]]
+_NO_SAY_CACHE: dict[str, tuple[float, _NoSay]] = {}
 
 
 def _bundled_skill_root() -> Path:
@@ -111,26 +123,35 @@ def _no_say_candidates() -> list[Path]:
     ]
 
 
-def _parse_no_say(text: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+def _parse_no_say(text: str) -> _NoSay:
     long: list[str] = []
     short: list[str] = []
+    templates: list[tuple[str, str]] = []
     section = "long"
     for raw in text.splitlines():
         line = raw.strip()
         if line.startswith("## "):
-            section = "short" if "短词" in line else ("skip" if "模板" in line else "long")
+            section = ("short" if "短词" in line else
+                       "template" if "句式" in line else
+                       "skip" if "模板" in line else "long")
             continue
         if not line.startswith("-"):
             continue
         phrase = line.lstrip("-").strip()
         if not phrase or section == "skip":
             continue
-        (short if section == "short" else long).append(phrase)
-    return tuple(long), tuple(short)
+        if section == "short":
+            short.append(phrase)
+        elif section == "template":
+            pattern, _, note = phrase.partition("——")
+            templates.append((pattern.strip(), note.strip()))
+        else:
+            long.append(phrase)
+    return tuple(long), tuple(short), tuple(templates)
 
 
-def no_say() -> tuple[tuple[str, ...], tuple[str, ...]]:
-    """(long phrases, whole-bubble words) from the shared skill reference."""
+def no_say() -> _NoSay:
+    """(long phrases, whole-bubble words, tic shapes) from the shared skill reference."""
     for path in _no_say_candidates():
         try:
             stamp = path.stat().st_mtime
@@ -142,13 +163,56 @@ def no_say() -> tuple[tuple[str, ...], tuple[str, ...]]:
         if cached and cached[0] == stamp:
             return cached[1]
         try:
-            long, short = _parse_no_say(path.read_text(encoding="utf-8"))
+            parsed = _parse_no_say(path.read_text(encoding="utf-8"))
         except OSError:
             continue
-        if long or short:
-            _NO_SAY_CACHE[str(path)] = (stamp, (long, short))
-            return long, short
-    return _BUILTIN_LONG, _BUILTIN_SHORT
+        if any(parsed):
+            _NO_SAY_CACHE[str(path)] = (stamp, parsed)
+            return parsed
+    return _BUILTIN_LONG, _BUILTIN_SHORT, _BUILTIN_TEMPLATES
+
+
+# A shape is matched, not looked up: "xx" takes any short phrase, "<a|b>" one of
+# a closed set. A slot needs two characters, so "比较" does not pass for a
+# comparison ("他比较沉" is not the tic).
+_TEMPLATE_TOKEN = re.compile(r"(xx|<[^>]+>)")
+_TEMPLATE_SLOT = r"[\u4e00-\u9fff]{2,6}?"
+_TEMPLATE_RE_CACHE: dict[str, re.Pattern[str] | None] = {}
+
+
+def _template_regex(pattern: str) -> re.Pattern[str] | None:
+    body = re.sub(r"\s+", "", pattern)
+    if not body:
+        return None
+    parts: list[str] = []
+    for token in _TEMPLATE_TOKEN.split(body):
+        if not token:
+            continue
+        if token == "xx":
+            parts.append(_TEMPLATE_SLOT)
+        elif token.startswith("<"):
+            words = [word for word in token[1:-1].split("|") if word]
+            if not words:
+                return None
+            parts.append("(?:" + "|".join(re.escape(word) for word in words) + ")")
+        else:
+            parts.append(re.escape(token))
+    try:
+        return re.compile("".join(parts))
+    except re.error:
+        return None
+
+
+def template_matchers() -> list[tuple[str, re.Pattern[str]]]:
+    """Compiled tic shapes, ready to run against a bubble."""
+    matchers: list[tuple[str, re.Pattern[str]]] = []
+    for pattern, _note in no_say()[2]:
+        if pattern not in _TEMPLATE_RE_CACHE:
+            _TEMPLATE_RE_CACHE[pattern] = _template_regex(pattern)
+        compiled = _TEMPLATE_RE_CACHE[pattern]
+        if compiled is not None:
+            matchers.append((pattern, compiled))
+    return matchers
 
 
 def repeated(lines: list[str], recent: list[str], *, size: int = _REPEAT_SIZE) -> list[tuple[int, str]]:
@@ -225,13 +289,16 @@ def tics(line: str) -> list[str]:
         found.append("rhetorical-tail")
     body = re.sub(r"[\s。！？!?…~,，;；:：]+", "", line)
     squashed = re.sub(r"\s+", "", line)
-    long_phrases, short_words = no_say()
+    long_phrases, short_words, _templates = no_say()
     for phrase in long_phrases:
         if phrase in squashed:
             found.append(f"tic:{phrase}")
     for phrase in short_words:
         if body == phrase:
             found.append(f"tic:{phrase}")
+    for pattern, matcher in template_matchers():
+        if matcher.search(squashed):
+            found.append(f"tic-template:{pattern}")
     return found
 
 
@@ -286,10 +353,11 @@ def repair(line: str) -> str:
     if not text:
         return ""
     body = re.sub(r"[\s。！？!?…~,，;；:：]+", "", text)
-    long_phrases, short_words = no_say()
+    long_phrases, short_words, _templates = no_say()
     if body in short_words:
         return ""
-    for phrase in long_phrases:
+    # Longest first: "我记下了" must not eat the "我记下了" inside "这话我记下了".
+    for phrase in sorted(long_phrases, key=len, reverse=True):
         text = re.sub(r"\s*".join(map(re.escape, phrase)), "", text)
     stripped = _FILLER.sub("", text, count=1).lstrip("，, ")
     if stripped:
@@ -462,7 +530,12 @@ def build_polish_prompt(*, count: int, body: str, recent: list[str],
             count=count, body=body,
             habits="\n".join(f"- {phrase}" for phrase in habits) or "（无）",
             recent="\n".join(f"- {line}" for line in recent) or "（无）")
-    tic_text = "、".join(no_say()[0])
+    long_phrases, short_words, templates = no_say()
+    tic_text = "、".join(long_phrases)
+    short_text = "、".join(short_words)
+    template_text = "\n".join(
+        f"- {pattern}——{note}" if note else f"- {pattern}" for pattern, note in templates
+    )
     recent_text = "\n".join(f"- {str(line)[:200]}" for line in (recent or [])[:12]) or "（无）"
     user_text = last_user.strip()[:2000] or "（无）"
     flagged = [line for line in (flagged or []) if line.strip()]
@@ -490,7 +563,10 @@ def build_polish_prompt(*, count: int, body: str, recent: list[str],
 它的老毛病（下面这些说法只要出现就删掉；不要换成近义词，也不要换个说法留着）：
 {tic_text}
 
-其中这些短词只有当整条消息就是它时才算口癖，别的地方正常使用：行、稳、很平、很直、不催、我跟、你去、回去睡、我认、认你、你掂量。
+其中这些短词只有当整条消息就是它时才算口癖，别的地方正常使用：{short_text}。
+
+这些是同一个口癖换了说法、换了名词的形状，命中就整句删掉，或者改成一句具体的话，不能只是换个说法留着：
+{template_text}
 
 《说人话》规则：
 {skill}

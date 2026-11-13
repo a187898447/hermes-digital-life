@@ -164,6 +164,35 @@ class ReadbackGateTests(unittest.TestCase):
         self.assertFalse(speech.needs_readback(["那明天见。"], ["那明天见"], "那明天见"))
 
 
+class TicShapeTests(unittest.TestCase):
+    """A tic in another shape is matched, not looked up."""
+
+    def test_a_comparison_shape_is_flagged(self):
+        self.assertIn("tic-template:xx 比 xx 沉", speech.tics("他今天那句比之前那句沉"))
+        self.assertIn("tic-template:xx 比 xx 稳", speech.tics("他今天那句比之前那句稳"))
+
+    def test_a_plain_comparison_is_not_the_tic(self):
+        self.assertEqual([t for t in speech.tics("他比较沉重") if t.startswith("tic-template")], [])
+        self.assertEqual([t for t in speech.tics("今天风大") if t.startswith("tic-template")], [])
+
+    def test_the_opening_shape_is_flagged(self):
+        self.assertIn("tic-template:行，xx", speech.tics("行，我知道了"))
+
+    def test_the_asking_shape_is_flagged(self):
+        self.assertIn("tic-template:这话是 <他|她|它> 告诉你的，还是你自己想明白的",
+                      speech.tics("这话是他告诉你的，还是你自己想明白的"))
+
+    def test_the_shape_reaches_the_prompt(self):
+        prompt = speech.build_polish_prompt(count=1, body="甲", recent=[], habits=[])
+        self.assertIn("xx 比 xx 沉", prompt)
+        self.assertIn("换了说法、换了名词", prompt)
+
+    def test_the_short_words_in_the_prompt_come_from_the_file(self):
+        long_phrases, short_words, _templates = speech.no_say()
+        prompt = speech.build_polish_prompt(count=1, body="甲", recent=[], habits=[])
+        self.assertIn("、".join(short_words), prompt)
+
+
 class OperatorTicListTests(unittest.TestCase):
     """The operator's own list, normalized: long ones anywhere, short ones alone."""
 
@@ -180,6 +209,10 @@ class OperatorTicListTests(unittest.TestCase):
     def test_repair_cuts_the_tic_clause(self):
         self.assertEqual(speech.repair("我记得了，明天再说"), "明天再说")
 
+    def test_the_longer_tic_goes_first(self):
+        self.assertEqual(speech.repair("这话我记下了，明天再说"), "明天再说")
+        self.assertEqual(speech.repair("声音没抖，但比刚才稳，明天再说"), "明天再说")
+
     def test_repair_drops_a_bubble_that_is_only_a_short_tic(self):
         self.assertEqual(speech.repair("行。"), "")
         self.assertEqual(speech.repair("回去睡"), "")
@@ -195,10 +228,18 @@ class OperatorTicListTests(unittest.TestCase):
 
 class SharedNoSayListTests(unittest.TestCase):
     def test_the_skill_carries_the_list_for_every_persona(self):
-        long_phrases, short_words = speech.no_say()
+        long_phrases, short_words, templates = speech.no_say()
         self.assertIn("但他没躲", long_phrases)
         self.assertIn("行", short_words)
+        self.assertTrue(templates)
         self.assertNotIn("模板", "".join(long_phrases))
+
+    def test_the_list_the_operator_added_is_in_the_shared_file(self):
+        long_phrases, _short, templates = speech.no_say()
+        for phrase in ("我记下了", "你去，我跟", "声音没抖，但比刚才稳"):
+            self.assertIn(phrase, long_phrases)
+        self.assertTrue(any("比 xx 沉" in pattern for pattern, _note in templates))
+        self.assertTrue(any(pattern.startswith("行，") for pattern, _note in templates))
 
 
 class SkillIntegrityTests(unittest.TestCase):
@@ -245,5 +286,5 @@ class SkillIntegrityTests(unittest.TestCase):
             speech._NO_SAY_CACHE.clear()
             with mock.patch.object(speech, "_bundled_skill_root", lambda: shipped), \
                     mock.patch.object(speech, "_no_say_candidates", lambda: [profile]):
-                long_phrases, _short = speech.no_say()
+                long_phrases, _short, _templates = speech.no_say()
             self.assertNotIn("被改过的词", long_phrases)
